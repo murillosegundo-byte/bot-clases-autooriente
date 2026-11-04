@@ -2,11 +2,13 @@
 Bot de Seguimiento de Clases — CEA Auto Oriente (Versión Unificada lista para Render y PC).
 Incluye:
 - Formatos Oficiales A.O.C.E.A - F - 59 (A1), F - 60 (A2), F - 61 (B1) y F - 62 (C1 / Recat C1).
-- Extracción Híbrida (Regex avanzado + Gemini API opcional).
+- Soporta:
+  1) Foto con texto en el mismo mensaje.
+  2) Imagen enviada como archivo adjunto (.jpg/.png) con texto.
+  3) Foto enviada primero sola y el texto ("Alumno... Clase...") enviado en el mensaje siguiente.
 - Integración con Google Sheets (Alumnos, Instructores, Registro_Clases).
-- Integración con Google Drive / enlaces directos de evidencia fotográfica.
 - Generador de PDFs en memoria con ReportLab.
-- Servidor HTTP Health Check en segundo plano para Render Web Service.
+- Servidor HTTP Health Check + Auto-Ping cada 10 min para que Render Free no se duerma.
 """
 
 import difflib
@@ -17,7 +19,9 @@ import os
 import re
 import sys
 import threading
+import time
 import unicodedata
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -58,19 +62,17 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN").strip()
-GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID", "TU_ID_DE_GOOGLE_SHEETS").strip()
+GOOGLE_SHEET_ID = os.getenv(
+    "GOOGLE_SHEET_ID", "1xouy9DMkp4oZffZVx9E1y2IwY5qxRi5u2yr3p5wpj6U"
+).strip()
 GOOGLE_CREDENTIALS_FILE = os.getenv(
     "GOOGLE_CREDENTIALS_FILE", str(BASE_DIR / "credentials.json")
 ).strip()
 GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON", "").strip()
 GOOGLE_DRIVE_ROOT_FOLDER_ID = os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", "").strip()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-USE_GEMINI_VISION = os.getenv("USE_GEMINI_VISION", "false").lower() in (
-    "true",
-    "1",
-    "yes",
-    "si",
-)
+RENDER_EXTERNAL_URL = os.getenv(
+    "RENDER_EXTERNAL_URL", "https://bot-clases-autooriente.onrender.com"
+).strip()
 PORT = int(os.getenv("PORT", "10000"))
 
 SHEET_ALUMNOS = "Alumnos"
@@ -84,9 +86,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Memoria temporal de la última foto enviada sin texto en cada chat
+ULTIMA_FOTO_POR_CHAT: Dict[int, Dict[str, Any]] = {}
+
 
 def obtener_ruta_logo() -> Optional[Path]:
-    """Busca el logo tanto en la raíz del repositorio como en la carpeta assets/."""
     candidatos = [
         BASE_DIR / "logo_autooriente.png",
         BASE_DIR / "assets" / "logo_autooriente.png",
@@ -98,19 +102,22 @@ def obtener_ruta_logo() -> Optional[Path]:
 
 
 def obtener_credenciales_google(scopes: List[str]) -> Credentials:
-    """Carga credenciales desde GOOGLE_CREDENTIALS_JSON (Render) o archivo local."""
-    if GOOGLE_CREDENTIALS_JSON:
-        info = json.loads(GOOGLE_CREDENTIALS_JSON)
-        return Credentials.from_service_account_info(info, scopes=scopes)
+    """Carga credenciales desde GOOGLE_CREDENTIALS_JSON, GOOGLE_CREDENTIALS_FILE o Secret Files de Render."""
+    for raw_val in (GOOGLE_CREDENTIALS_JSON, GOOGLE_CREDENTIALS_FILE):
+        if raw_val and raw_val.lstrip().startswith("{"):
+            info = json.loads(raw_val)
+            return Credentials.from_service_account_info(info, scopes=scopes)
 
-    render_secret_path = Path("/etc/secrets/credentials.json")
-    if render_secret_path.exists():
-        return Credentials.from_service_account_file(
-            str(render_secret_path), scopes=scopes
-        )
+    for candidate in (
+        Path("/etc/secrets/credentials.json"),
+        BASE_DIR / "credentials.json",
+        Path(GOOGLE_CREDENTIALS_FILE),
+    ):
+        if candidate.is_file():
+            return Credentials.from_service_account_file(str(candidate), scopes=scopes)
 
-    return Credentials.from_service_account_file(
-        GOOGLE_CREDENTIALS_FILE, scopes=scopes
+    raise FileNotFoundError(
+        "Falta configurar GOOGLE_CREDENTIALS_JSON o Secret File credentials.json en Render -> Environment."
     )
 
 
@@ -588,11 +595,13 @@ def obtener_tema_oficial(categoria: str, clases: List[int]) -> str:
 
 
 # =============================================================================
-# 3. EXTRACTOR HÍBRIDO DE REPORTES (REGEX + GEMINI OPCIONAL)
+# 3. EXTRACTOR DE REPORTES
 # =============================================================================
 @dataclass
 class ReporteExtraido:
     alumno: str = "Desconocido"
+    documento_detectado: Optional[str] = None
+    categoria_detectada: Optional[str] = None
     clases_lista: List[int] = field(default_factory=list)
     clases_texto: str = "No identificada"
     tema: str = "Sin especificar"
@@ -627,16 +636,31 @@ def parsear_reporte_regex(texto: str) -> ReporteExtraido:
     if not texto or not texto.strip():
         return resultado
 
-    lineas = [l.strip() for l in texto.split("\n") if l.strip()]
+    # Limpiar posible hora pegada al final tipo "04:27 PM" al copiar de Telegram
+    texto_limpio = re.sub(r"\d{1,2}:\d{2}\s*(?:AM|PM|a\.?\s*m\.?|p\.?\s*m\.?)\s*$", "", texto.strip(), flags=re.IGNORECASE)
+
+    m_doc = re.search(
+        r"\b(?:cc|ti|ce|doc(?:umento)?|c[eé]dula)\s*[:#.\-]?\s*(\d{5,12})\b",
+        texto_limpio,
+        re.IGNORECASE,
+    )
+    if m_doc:
+        resultado.documento_detectado = m_doc.group(1)
+
+    m_cat = re.search(r"\b(recat[_\s\-]*c1|a1|a2|b1|c1)\b", texto_limpio, re.IGNORECASE)
+    if m_cat:
+        resultado.categoria_detectada = normalizar_categoria(m_cat.group(1))
+
+    lineas = [l.strip() for l in texto_limpio.split("\n") if l.strip()]
     posibles_alumnos = []
     posibles_temas = []
 
     patron_clase = re.compile(
-        r"(?:clases?|cl\.?)\s*[:#.]?\s*(\d{1,2}(?:\s*[-/,yY&aA]\s*\d{1,2})*)",
+        r"(?:clases?|cl\.?)\s*[:#.]?\s*(\d{1,2}(?:\s*(?:[-/,yY&aA]|\s+y\s+)\s*\d{1,2})*)",
         re.IGNORECASE,
     )
     patron_prefijo_alumno = re.compile(
-        r"^(?:alumn[oa]s?|aprendiz|estudiante|nombre)\s*[:.\-]?\s*(.+)$",
+        r"^(?:alumn[oa]s?|aprendiz|estudiante|nombre|para)\s*[:.\-]?\s*(.+)$",
         re.IGNORECASE,
     )
     patron_prefijo_instructor = re.compile(
@@ -672,14 +696,35 @@ def parsear_reporte_regex(texto: str) -> ReporteExtraido:
                 resultado.clases_lista = clases_nums
                 resultado.clases_texto = formatear_clases(clases_nums)
 
-            resto = linea[: m_clase.start()] + " " + linea[m_clase.end() :]
-            resto = re.sub(r"^[\s.\-:;]+|[\s.\-:;]+$", "", resto)
-            if resto:
-                m_alum_inline = patron_prefijo_alumno.match(resto)
-                if m_alum_inline:
-                    resultado.alumno = m_alum_inline.group(1).strip(" .-")
+            antes = linea[: m_clase.start()].strip(" .-,:;✅")
+            despues = linea[m_clase.end() :].strip(" .-,:;")
+
+            if antes and resultado.alumno == "Desconocido":
+                antes_limpio = re.sub(
+                    r"\b(?:cc|ti|ce|doc(?:umento)?|c[eé]dula)\s*[:#.\-]?\s*\d{5,12}\b",
+                    "",
+                    antes,
+                    flags=re.IGNORECASE,
+                ).strip(" .-,:;")
+                m_alum_antes = patron_prefijo_alumno.match(antes_limpio)
+                if m_alum_antes:
+                    resultado.alumno = m_alum_antes.group(1).strip(" .-")
+                elif antes_limpio and len(antes_limpio.split()) <= 5:
+                    resultado.alumno = antes_limpio.title()
+                elif antes_limpio:
+                    posibles_temas.append(antes_limpio)
+
+            if despues:
+                # Si dice "registrada para Camilo Torres"
+                m_para = re.search(r"(?:registrad[oa]\s+para|alumn[oa]:?)\s+([A-Za-zÁÉÍÓÚáéíóúÑñ\s]+)", despues, re.IGNORECASE)
+                if m_para and resultado.alumno == "Desconocido":
+                    resultado.alumno = m_para.group(1).strip(" .-")
                 else:
-                    posibles_temas.append(resto)
+                    m_alum_inline = patron_prefijo_alumno.match(despues)
+                    if m_alum_inline and resultado.alumno == "Desconocido":
+                        resultado.alumno = m_alum_inline.group(1).strip(" .-")
+                    else:
+                        posibles_temas.append(despues)
             continue
 
         palabras = linea.split()
@@ -903,7 +948,7 @@ sheets_service = SheetsService()
 
 
 def subir_foto_evidencia(
-    imagen_bytes: bytes,
+    imagen_bytes: Optional[bytes],
     documento_alumno: str,
     nombre_alumno: str,
     clases_texto: str,
@@ -911,8 +956,8 @@ def subir_foto_evidencia(
     fallback_file_id: str = "",
     fallback_url: str = "",
 ) -> str:
-    if not GOOGLE_DRIVE_ROOT_FOLDER_ID:
-        return fallback_url or f"telegram_file_id:{fallback_file_id}"
+    if not GOOGLE_DRIVE_ROOT_FOLDER_ID or not imagen_bytes:
+        return fallback_url or (f"telegram_file_id:{fallback_file_id}" if fallback_file_id else "Sin foto adjunta")
     try:
         creds = obtener_credenciales_google(["https://www.googleapis.com/auth/drive"])
         service = build("drive", "v3", credentials=creds, cache_discovery=False)
@@ -1194,15 +1239,16 @@ def generar_pdf_seguimiento(
 
 
 # =============================================================================
-# 6. MANEJADORES DE TELEGRAM
+# 6. MANEJADORES DE TELEGRAM (FOTOS, ARCHIVOS DE IMAGEN Y TEXTO SEPARADO)
 # =============================================================================
-async def procesar_reporte_foto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = update.effective_message
-    if not msg or not msg.photo or not msg.caption:
-        return
-
-    caption = msg.caption.strip()
-    user = update.effective_user
+async def _registrar_reporte_completo(
+    msg,
+    texto_reporte: str,
+    foto_bytes: Optional[bytes],
+    file_id: str,
+    file_url: str,
+    user,
+) -> None:
     nombre_telegram = user.full_name if user else "Instructor"
     telegram_user_id = user.id if user else 0
 
@@ -1212,10 +1258,7 @@ async def procesar_reporte_foto(update: Update, context: ContextTypes.DEFAULT_TY
     hora_reporte = dt_col.strftime("%H:%M")
 
     try:
-        foto_obj = await msg.photo[-1].get_file()
-        foto_bytes = bytes(await foto_obj.download_as_bytearray())
-
-        reporte = parsear_reporte(caption, imagen_bytes=foto_bytes)
+        reporte = parsear_reporte(texto_reporte, imagen_bytes=foto_bytes)
         if reporte.fecha_timemark:
             fecha_reporte = reporte.fecha_timemark
         if reporte.hora_timemark:
@@ -1225,19 +1268,31 @@ async def procesar_reporte_foto(update: Update, context: ContextTypes.DEFAULT_TY
         if reporte.instructor_detectado and instructor == nombre_telegram:
             instructor = reporte.instructor_detectado
 
-        ficha_alumno = sheets_service.buscar_alumno(reporte.alumno)
+        ficha_alumno = sheets_service.buscar_alumno(
+            reporte.documento_detectado or reporte.alumno
+        )
         if ficha_alumno:
             id_alumno = str(
-                ficha_alumno.get("Documento") or ficha_alumno.get("ID_Matricula") or "S/N"
+                ficha_alumno.get("Documento")
+                or ficha_alumno.get("ID_Matricula")
+                or reporte.documento_detectado
+                or "S/N"
             ).strip()
             nombre_alumno_oficial = str(
                 ficha_alumno.get("Nombre_Completo") or reporte.alumno
             ).strip()
-            categoria = normalizar_categoria(str(ficha_alumno.get("Categoria", "B1")))
+            categoria = normalizar_categoria(
+                str(ficha_alumno.get("Categoria") or reporte.categoria_detectada or "B1")
+            )
         else:
-            id_alumno = "Pendiente"
+            id_alumno = reporte.documento_detectado or "Pendiente"
             nombre_alumno_oficial = reporte.alumno
-            categoria = "C1" if any(c > 20 for c in reporte.clases_lista) else "B1"
+            if reporte.categoria_detectada:
+                categoria = reporte.categoria_detectada
+            elif any(c > 20 for c in reporte.clases_lista):
+                categoria = "C1"
+            else:
+                categoria = "B1"
 
         tema_final = reporte.tema
         if tema_final == "Sin especificar" and reporte.clases_lista:
@@ -1249,8 +1304,8 @@ async def procesar_reporte_foto(update: Update, context: ContextTypes.DEFAULT_TY
             nombre_alumno=nombre_alumno_oficial,
             clases_texto=reporte.clases_texto,
             fecha_reporte=fecha_reporte,
-            fallback_file_id=foto_obj.file_id,
-            fallback_url=foto_obj.file_path or "",
+            fallback_file_id=file_id,
+            fallback_url=file_url,
         )
 
         sheets_service.registrar_clase(
@@ -1276,15 +1331,84 @@ async def procesar_reporte_foto(update: Update, context: ContextTypes.DEFAULT_TY
             f"(Categoría {categoria} | Instructor: {instructor})"
         )
     except Exception as exc:
-        logger.exception("Error procesando el reporte fotográfico: %s", exc)
+        logger.exception("Error procesando el reporte: %s", exc)
         await msg.reply_text(f"⚠️ Error al registrar en Google Sheets: {exc}")
+
+
+async def procesar_mensaje_imagen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Maneja fotos comprimidas (msg.photo) o imágenes enviadas como archivo (msg.document).
+    - Si trae caption con 'clase', lo registra de inmediato.
+    - Si viene sin caption, guarda la foto temporalmente por si el instructor envía el texto en el mensaje siguiente.
+    """
+    msg = update.effective_message
+    if not msg:
+        return
+
+    foto_obj = None
+    if msg.photo:
+        foto_obj = await msg.photo[-1].get_file()
+    elif msg.document and msg.document.mime_type and msg.document.mime_type.startswith("image/"):
+        foto_obj = await msg.document.get_file()
+
+    if not foto_obj:
+        return
+
+    foto_bytes = bytes(await foto_obj.download_as_bytearray())
+    caption = (msg.caption or "").strip()
+
+    if caption and re.search(r"(?i)\b(clases?|cl\.?)\b", caption):
+        await _registrar_reporte_completo(
+            msg=msg,
+            texto_reporte=caption,
+            foto_bytes=foto_bytes,
+            file_id=foto_obj.file_id,
+            file_url=foto_obj.file_path or "",
+            user=update.effective_user,
+        )
+    else:
+        # Guardar la foto por si el instructor manda el texto justo en el siguiente mensaje
+        ULTIMA_FOTO_POR_CHAT[msg.chat_id] = {
+            "bytes": foto_bytes,
+            "file_id": foto_obj.file_id,
+            "file_url": foto_obj.file_path or "",
+            "timestamp": time.time(),
+        }
+
+
+async def procesar_texto_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Si el instructor envió primero la foto sola y luego el texto 'Alumno ... Clase ...' separado,
+    toma la foto recién enviada y registra la clase.
+    """
+    msg = update.effective_message
+    if not msg or not msg.text:
+        return
+
+    texto = msg.text.strip()
+    if texto.startswith("/"):
+        return
+
+    foto_guardada = ULTIMA_FOTO_POR_CHAT.pop(msg.chat_id, None)
+    foto_bytes = foto_guardada["bytes"] if foto_guardada else None
+    file_id = foto_guardada["file_id"] if foto_guardada else ""
+    file_url = foto_guardada["file_url"] if foto_guardada else ""
+
+    await _registrar_reporte_completo(
+        msg=msg,
+        texto_reporte=texto,
+        foto_bytes=foto_bytes,
+        file_id=file_id,
+        file_url=file_url,
+        user=update.effective_user,
+    )
 
 
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     texto = (
         "🚗 *Bot de Seguimiento de Clases — CEA Auto Oriente*\n\n"
         "📸 *1. Registro de Clases (Instructores):*\n"
-        "Envía una foto con el nombre del alumno, número de clase y tema.\n\n"
+        "Envía la foto con el nombre del alumno, número de clase y tema.\n\n"
         "📄 *2. Generar Formato PDF para Carpeta/Matrícula:*\n"
         "`/reporte [Documento o Nombre del Alumno]`\n\n"
         "⚙️ *3. Inicializar Hojas en Google Sheets:*\n"
@@ -1360,7 +1484,7 @@ async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 # =============================================================================
-# 7. SERVIDOR HEALTH CHECK (RENDER) Y ARRANQUE DEL BOT
+# 7. SERVIDOR HEALTH CHECK + AUTO-PING (RENDER KEEP-ALIVE) Y ARRANQUE DEL BOT
 # =============================================================================
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1373,12 +1497,25 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         return
 
 
+def _loop_keep_alive() -> None:
+    """Hace ping cada 10 minutos a la URL pública de Render para evitar que el plan Free se duerma."""
+    while True:
+        time.sleep(600)
+        if RENDER_EXTERNAL_URL:
+            try:
+                urllib.request.urlopen(RENDER_EXTERNAL_URL, timeout=15).read()
+            except Exception:
+                pass
+
+
 def iniciar_servidor_healthcheck() -> None:
     try:
         server = HTTPServer(("0.0.0.0", PORT), HealthCheckHandler)
         hilo = threading.Thread(target=server.serve_forever, daemon=True)
         hilo.start()
-        logger.info("🌐 Servidor Health Check activo en puerto %s", PORT)
+        hilo_ping = threading.Thread(target=_loop_keep_alive, daemon=True)
+        hilo_ping.start()
+        logger.info("🌐 Servidor Health Check + Keep-Alive activo en puerto %s", PORT)
     except Exception as exc:
         logger.warning("No se pudo iniciar servidor Health Check: %s", exc)
 
@@ -1395,8 +1532,12 @@ def main() -> None:
     app.add_handler(CommandHandler("inicializar", cmd_inicializar))
     app.add_handler(CommandHandler("reporte", cmd_reporte))
 
-    filtro_reporte = filters.PHOTO & filters.CaptionRegex(r"(?i)\b(clases?|cl\.?)\b")
-    app.add_handler(MessageHandler(filtro_reporte, procesar_reporte_foto))
+    # 1. Escuchar fotos comprimidas o imágenes enviadas como archivo
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, procesar_mensaje_imagen))
+
+    # 2. Escuchar texto separado que mencione "clase" o "cl" (cuando mandan foto primero y texto después)
+    filtro_texto_clase = filters.TEXT & (~filters.COMMAND) & filters.Regex(r"(?i)\b(clases?|cl\.?)\b")
+    app.add_handler(MessageHandler(filtro_texto_clase, procesar_texto_reporte))
 
     logger.info("🚗 Bot CEA Auto Oriente iniciado y escuchando mensajes...")
     app.run_polling(drop_pending_updates=True)
