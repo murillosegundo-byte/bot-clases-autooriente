@@ -1,14 +1,13 @@
 """
-Bot de Seguimiento de Clases — CEA Auto Oriente (Versión Unificada lista para Render y PC).
+Bot de Seguimiento de Clases — CEA Auto Oriente (Versión con Menús Interactivos + Render).
 Incluye:
-- Formatos Oficiales A.O.C.E.A - F - 59 (A1), F - 60 (A2), F - 61 (B1) y F - 62 (C1 / Recat C1).
-- Soporta:
-  1) Foto con texto en el mismo mensaje.
-  2) Imagen enviada como archivo adjunto (.jpg/.png) con texto.
-  3) Foto enviada primero sola y el texto ("Alumno... Clase...") enviado en el mensaje siguiente.
-- Integración con Google Sheets (Alumnos, Instructores, Registro_Clases).
-- Generador de PDFs en memoria con ReportLab.
-- Servidor HTTP Health Check + Auto-Ping cada 10 min para que Render Free no se duerma.
+- Flujo interactivo con Botones para el Instructor:
+  1) El instructor envía la foto (sola o con el nombre del alumno).
+  2) El bot despliega el MENÚ DE CATEGORÍAS (A1, A2, B1, C1, Recat C1).
+  3) Al tocar la categoría, se abre el SUBMENÚ DE CLASES de ese formato (F-59, F-60, F-61, F-62).
+  4) Al marcar la clase, el bot asigna automáticamente el TEMA OFICIAL de 45 min y registra todo en Google Sheets.
+- También permite elegir el alumno desde botones (leídos de la hoja 'Alumnos') o escribiendo su nombre.
+- Comando /reporte [Alumno] para emitir el PDF oficial con el logo de Auto Oriente.
 """
 
 import difflib
@@ -46,9 +45,15 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
-from telegram import ReactionTypeEmoji, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReactionTypeEmoji,
+    Update,
+)
 from telegram.ext import (
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -62,9 +67,14 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "TU_TELEGRAM_BOT_TOKEN").strip()
-GOOGLE_SHEET_ID = os.getenv(
+_RAW_SHEET_ID = os.getenv(
     "GOOGLE_SHEET_ID", "1xouy9DMkp4oZffZVx9E1y2IwY5qxRi5u2yr3p5wpj6U"
 ).strip()
+GOOGLE_SHEET_ID = (
+    "1xouy9DMkp4oZffZVx9E1y2IwY5qxRi5u2yr3p5wpj6U"
+    if _RAW_SHEET_ID.startswith("{")
+    else _RAW_SHEET_ID
+)
 GOOGLE_CREDENTIALS_FILE = os.getenv(
     "GOOGLE_CREDENTIALS_FILE", str(BASE_DIR / "credentials.json")
 ).strip()
@@ -86,8 +96,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Memoria temporal de la última foto enviada sin texto en cada chat
-ULTIMA_FOTO_POR_CHAT: Dict[int, Dict[str, Any]] = {}
+# Sesiones interactivas por usuario/chat cuando el instructor envía una foto
+# Clave: (chat_id, user_id)
+SESIONES_REPORTE: Dict[tuple, Dict[str, Any]] = {}
 
 
 def obtener_ruta_logo() -> Optional[Path]:
@@ -102,8 +113,7 @@ def obtener_ruta_logo() -> Optional[Path]:
 
 
 def obtener_credenciales_google(scopes: List[str]) -> Credentials:
-    """Carga credenciales desde GOOGLE_CREDENTIALS_JSON, GOOGLE_CREDENTIALS_FILE o Secret Files de Render."""
-    for raw_val in (GOOGLE_CREDENTIALS_JSON, GOOGLE_CREDENTIALS_FILE):
+    for raw_val in (GOOGLE_CREDENTIALS_JSON, GOOGLE_CREDENTIALS_FILE, _RAW_SHEET_ID):
         if raw_val and raw_val.lstrip().startswith("{"):
             info = json.loads(raw_val)
             return Credentials.from_service_account_info(info, scopes=scopes)
@@ -126,6 +136,7 @@ def obtener_credenciales_google(scopes: List[str]) -> Credentials:
 # =============================================================================
 FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
     "A1": {
+        "nombre_corto": "🏍️ A1 (Motocicleta)",
         "codigo_formato": "A.O.C.E.A - F - 59",
         "version": "01",
         "fecha_formato": "Mayo 05 de 2021",
@@ -138,53 +149,62 @@ FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
                 "etiqueta": "1.0",
                 "clases": [1],
                 "etapa": "pista",
+                "resumen": "Inspección preoperacional y mandos",
                 "tema": "Inspección pre operacional, documentos y equipos de prevención, adaptación viso espacial, ajuste del asiento, timón y espejos.\nExplicación elementos de seguridad activa y pasiva. Identificación del tablero de instrumentos, mandos y pedales. Encendido del motor y testigos.",
             },
             {
                 "etiqueta": "2.0",
                 "clases": [2],
                 "etapa": "pista",
+                "resumen": "Punto de contacto y selector",
                 "tema": "Maniobra de puesta en marcha con técnica punto de contacto del embrague. Conducción del vehículo hacia adelante.\nOperación del selector del vehículo. Coordinación: Acelerador - freno - embrague - desaceleración.",
             },
             {
                 "etiqueta": "3.0",
                 "clases": [3],
                 "etapa": "via",
+                "resumen": "Giros con conos, eslalon y parqueo",
                 "tema": "Conducción del vehículo hacia atrás y hacia adelante con giros haciendo uso de los conos. Eslalon.\nConducción del vehículo hacia atrás y hacia adelante con giros haciendo uso de los conos. Primeros indicios de parqueo.",
             },
             {
                 "etiqueta": "4.0",
                 "clases": [4],
                 "etapa": "via",
+                "resumen": "Vía urbana terreno plano (pares/arranques)",
                 "tema": "Conducción del vehículo en vía urbana en terreno plano. Pares y arranques.",
             },
             {
                 "etiqueta": "5.0",
                 "clases": [5],
                 "etapa": "via",
+                "resumen": "Terreno pendiente y adelantamiento",
                 "tema": "Arranque del vehículo en terreno pendiente, de frente y reversa.\nConducción en terreno plano con maniobras de adelantamiento.",
             },
             {
                 "etiqueta": "6.0",
                 "clases": [6],
                 "etapa": "via",
+                "resumen": "Parqueo y señales lumínicas/cambio carril",
                 "tema": "Parqueo y estacionamiento con y sin uso de espejo. Refuerzo.\nConducción en vías urbanas usando las señales lumínicas, corporales y acústicas. Cambio de calzada. Cambio de carril.",
             },
             {
                 "etiqueta": "7.0",
                 "clases": [7],
                 "etapa": "via",
+                "resumen": "Glorietas, puentes y tráfico masivo",
                 "tema": "Conducción en vías urbanas, glorietas, intersecciones, deprimidos, puentes elevados, zonas escolares.\nConducción en vías urbanas (Buses, taxis, trasporte Masivo)",
             },
             {
                 "etiqueta": "8.0",
                 "clases": [8],
                 "etapa": "via",
+                "resumen": "Vías principales y vías nacionales",
                 "tema": "Conducción en vías principales urbanas de la ciudad.\nConducción en vías nacionales. Piedecuesta - Bucaramanga - Girón - peaje vía aeropuerto.",
             },
         ],
     },
     "A2": {
+        "nombre_corto": "🏍️ A2 (Moto 15 clases)",
         "codigo_formato": "A.O.C.E.A - F - 60",
         "version": "04",
         "fecha_formato": "Octubre 29 de 2026",
@@ -197,95 +217,111 @@ FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
                 "etiqueta": "1.0",
                 "clases": [1],
                 "etapa": "pista",
+                "resumen": "Inspección preoperacional y postura",
                 "tema": "Inspección pre operacional, documentos y equipos de prevención, adaptación viso espacial, correcta postura en el manillar y espejos.",
             },
             {
                 "etiqueta": "2.0",
                 "clases": [2],
                 "etapa": "pista",
+                "resumen": "Seguridad activa/pasiva y encendido",
                 "tema": "Explicación elementos de seguridad activa y pasiva. Identificación del tablero de instrumentos, mandos y pedales. Encendido del motor y testigos.",
             },
             {
                 "etiqueta": "3.0",
                 "clases": [3],
                 "etapa": "pista",
+                "resumen": "Carreteo y punto de contacto embrague",
                 "tema": "Maniobra de carreteo o maniobra cero cale, maniobra de puesta en marcha con técnica punto de contacto del embrague.",
             },
             {
                 "etiqueta": "4.0",
                 "clases": [4],
                 "etapa": "pista",
+                "resumen": "Selector: acelerador, freno y embrague",
                 "tema": "Operación del selector del vehículo. Coordinación: Acelerador - freno - embrague - desaceleración.",
             },
             {
                 "etiqueta": "5.0",
                 "clases": [5],
                 "etapa": "pista",
+                "resumen": "Franja limitada, equilibrio y Giro en U",
                 "tema": "Circular sobre una franja de anchura limitada, ejercicio de equilibrio y control de la motocicleta, Giro en U.",
             },
             {
                 "etiqueta": "6.0",
                 "clases": [6],
                 "etapa": "via",
+                "resumen": "Eslalon con conos a baja velocidad",
                 "tema": "Conducción del vehículo hacia adelante con giros haciendo uso conos Eslalon a baja velocidad.",
             },
             {
                 "etiqueta": "7.0",
                 "clases": [7],
                 "etapa": "via",
+                "resumen": "Giros con conos y frenado controlado",
                 "tema": "Conducción del vehículo hacia adelante con giros haciendo uso conos Aceleración, embrague y frenado Controlado.",
             },
             {
                 "etiqueta": "8.0",
                 "clases": [8],
                 "etapa": "via",
+                "resumen": "Obstáculos y frenado de emergencia",
                 "tema": "Conducción: sorteo de obstáculos a alta velocidad (máx. 40 km/h) y frenado de emergencia. Slalom, cajón de frenado y evasión de barrera, Eslalon a alta velocidad",
             },
             {
                 "etiqueta": "9.0",
                 "clases": [9],
                 "etapa": "via",
+                "resumen": "Arranque en plano y desplazamientos en 8",
                 "tema": "Arranque del vehículo en terreno plano y Desplazamientos en ocho.",
             },
             {
                 "etiqueta": "10.0",
                 "clases": [10],
                 "etapa": "via",
+                "resumen": "Terreno inclinado con/sin acompañante",
                 "tema": "Arranque del vehículo en terreno inclinado, con y sin acompañante.",
             },
             {
                 "etiqueta": "11.0",
                 "clases": [11],
                 "etapa": "via",
+                "resumen": "Avance, detención y señales de tránsito",
                 "tema": "Maniobra de avance y detención, Interacción con señales de tránsito horizontales y verticales.",
             },
             {
                 "etiqueta": "12.0",
                 "clases": [12],
                 "etapa": "via",
+                "resumen": "Señales lumínicas y cambio de carril",
                 "tema": "Conducción en vías usando las señales lumínicas, corporales y acústicas. Cambio de calzada. Cambio de carril.",
             },
             {
                 "etiqueta": "13.0",
                 "clases": [13],
                 "etapa": "via",
+                "resumen": "Pares, arranques y señales en barrio",
                 "tema": "Conducción del vehículo en vía en terreno plano. Pares y arranques. Barrio de poco flujo vehicular, interacción con señales de tránsito",
             },
             {
                 "etiqueta": "14.0",
                 "clases": [14],
                 "etapa": "via",
+                "resumen": "Refuerzo de pruebas CALE",
                 "tema": "Refuerzo de pruebas CALE según resolución del Ministerio de Transporte.",
             },
             {
                 "etiqueta": "15.0",
                 "clases": [15],
                 "etapa": "via",
+                "resumen": "Evaluación general curso motocicleta",
                 "tema": "Evaluación general del curso de conducción de motocicleta, interacción con señales de tránsito.",
             },
         ],
     },
     "B1": {
+        "nombre_corto": "🚗 B1 (Carro Particular 20 clases)",
         "codigo_formato": "A.O.C.E.A - F - 61",
         "version": "02",
         "fecha_formato": "abril 05 de 2025",
@@ -298,125 +334,146 @@ FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
                 "etiqueta": "1.0",
                 "clases": [1],
                 "etapa": "pista",
+                "resumen": "Inspección preoperacional y adaptación",
                 "tema": "Inspección pre operacional, documentos y equipos de prevención, adaptación viso espacial, ajuste del asiento, timón y espejos.",
             },
             {
                 "etiqueta": "2.0",
                 "clases": [2],
                 "etapa": "pista",
+                "resumen": "Seguridad activa/pasiva, mandos y motor",
                 "tema": "Explicación elementos de seguridad activa y pasiva. Identificación del tablero de instrumentos, mandos y pedales. Encendido del motor y testigos.",
             },
             {
                 "etiqueta": "3.0",
                 "clases": [3],
                 "etapa": "pista",
+                "resumen": "Arranque con punto de contacto",
                 "tema": "Maniobra de puesta en marcha con técnica punto de contacto del embrague. Conducción del vehículo hacia adelante.",
             },
             {
                 "etiqueta": "4.0",
                 "clases": [4],
                 "etapa": "pista",
+                "resumen": "Selector: acelerador, freno y embrague",
                 "tema": "Operación del selector del vehículo. Coordinación: Acelerador - freno - embrague - desaceleración.",
             },
             {
                 "etiqueta": "5.0",
                 "clases": [5],
                 "etapa": "pista",
+                "resumen": "Giros con conos y eslalon",
                 "tema": "Conducción del vehículo hacia atrás y hacia adelante con giros haciendo uso de los conos. Eslalon.",
             },
             {
                 "etiqueta": "6.0",
                 "clases": [6],
                 "etapa": "pista",
+                "resumen": "Giros con conos e indicios de parqueo",
                 "tema": "Conducción del vehículo hacia atrás y hacia adelante con giros haciendo uso de los conos. Primeros indicios de parqueo.",
             },
             {
                 "etiqueta": "7.0",
                 "clases": [7],
                 "etapa": "via",
+                "resumen": "Vía urbana terreno plano (pares/arranques)",
                 "tema": "Conducción del vehículo en vía urbana en terreno plano. Pares y arranques.",
             },
             {
                 "etiqueta": "8.0",
                 "clases": [8],
                 "etapa": "via",
+                "resumen": "Vía urbana terreno plano (pares/arranques)",
                 "tema": "Conducción del vehículo en vía urbana en terreno plano. Pares y arranques.",
             },
             {
                 "etiqueta": "9.0",
                 "clases": [9],
                 "etapa": "via",
+                "resumen": "Arranque en pendiente frente y reversa",
                 "tema": "Arranque del vehículo en terreno pendiente, de frente y reversa.",
             },
             {
                 "etiqueta": "10.0",
                 "clases": [10],
                 "etapa": "via",
+                "resumen": "Arranque en pendiente frente y reversa",
                 "tema": "Arranque del vehículo en terreno pendiente, de frente y reversa.",
             },
             {
                 "etiqueta": "11.0",
                 "clases": [11],
                 "etapa": "via",
+                "resumen": "Terreno plano y adelantamiento",
                 "tema": "Conducción en terreno plano con maniobras de adelantamiento.",
             },
             {
                 "etiqueta": "12.0",
                 "clases": [12],
                 "etapa": "via",
+                "resumen": "Parqueo y estacionamiento con/sin espejo",
                 "tema": "Parqueo y estacionamiento con y sin uso de espejo. Refuerzo.",
             },
             {
                 "etiqueta": "13.0",
                 "clases": [13],
                 "etapa": "via",
+                "resumen": "Parqueo y estacionamiento (Refuerzo)",
                 "tema": "Parqueo y estacionamiento con y sin uso de espejo. Refuerzo.",
             },
             {
                 "etiqueta": "14.0",
                 "clases": [14],
                 "etapa": "via",
+                "resumen": "Señales lumínicas y cambio de carril",
                 "tema": "Conducción en vías urbanas usando las señales lumínicas, corporales y acústicas. Cambio de calzada. Cambio de carril.",
             },
             {
                 "etiqueta": "15.0",
                 "clases": [15],
                 "etapa": "via",
+                "resumen": "Glorietas, puentes y zonas escolares",
                 "tema": "Conducción en vías urbanas, glorietas, intersecciones, deprimidos, puentes elevados, zonas escolares.",
             },
             {
                 "etiqueta": "16.0",
                 "clases": [16],
                 "etapa": "via",
+                "resumen": "Tráfico masivo (buses y taxis)",
                 "tema": "Conducción en vías urbanas (Buses, taxis, trasporte Masivo)",
             },
             {
                 "etiqueta": "17.0",
                 "clases": [17],
                 "etapa": "via",
+                "resumen": "Tráfico masivo (buses y taxis)",
                 "tema": "Conducción en vías urbanas (Buses, taxis, trasporte Masivo)",
             },
             {
                 "etiqueta": "18.0",
                 "clases": [18],
                 "etapa": "via",
+                "resumen": "Vías principales urbanas de la ciudad",
                 "tema": "Conducción en vías principales urbanas de la ciudad.",
             },
             {
                 "etiqueta": "19.0",
                 "clases": [19],
                 "etapa": "via",
+                "resumen": "Vías principales urbanas de la ciudad",
                 "tema": "Conducción en vías principales urbanas de la ciudad.",
             },
             {
                 "etiqueta": "20.0",
                 "clases": [20],
                 "etapa": "via",
+                "resumen": "Vías nacionales (Piedecuesta-Girón-Aeropuerto)",
                 "tema": "Conducción en vías nacionales. Piedecuesta - Bucaramanga - Girón - peaje vía aeropuerto.",
             },
         ],
     },
     "C1": {
+        "nombre_corto": "🚕 C1 (Servicio Público 30 clases)",
         "codigo_formato": "A.O.C.E.A - F - 62",
         "version": "02",
         "fecha_formato": "abril 05 de 2025",
@@ -429,101 +486,118 @@ FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
                 "etiqueta": "1.0",
                 "clases": [1],
                 "etapa": "pista",
+                "resumen": "Inspección preoperacional y adaptación",
                 "tema": "Inspección pre operacional, documentos y equipos de prevención, adaptación viso espacial, ajuste del asiento, timón y espejos.",
             },
             {
                 "etiqueta": "2.0",
                 "clases": [2],
                 "etapa": "pista",
+                "resumen": "Seguridad activa/pasiva y encendido",
                 "tema": "Explicación elementos de seguridad activa y pasiva. Identificación del tablero de instrumentos, mandos y pedales. Encendido del motor y testigos.",
             },
             {
                 "etiqueta": "3,4",
                 "clases": [3, 4],
                 "etapa": "pista",
+                "resumen": "Arranque con punto de contacto",
                 "tema": "Maniobra de puesta en marcha con técnica punto de contacto del embrague. Conducción del vehículo hacia adelante.",
             },
             {
                 "etiqueta": "5,6",
                 "clases": [5, 6],
                 "etapa": "pista",
+                "resumen": "Selector: acelerador, freno y embrague",
                 "tema": "Operación del selector del vehículo. Coordinación: Acelerador - freno - embrague - desaceleración.",
             },
             {
                 "etiqueta": "7,8",
                 "clases": [7, 8],
                 "etapa": "pista",
+                "resumen": "Giros con conos y eslalon",
                 "tema": "Conducción del vehículo hacia atrás y hacia adelante con giros haciendo uso de los conos. Eslalon.",
             },
             {
                 "etiqueta": "9,10",
                 "clases": [9, 10],
                 "etapa": "pista",
+                "resumen": "Conos y primeros indicios de parqueo",
                 "tema": "Conducción del vehículo hacia atrás y hacia adelante con giros haciendo uso de los conos. Primeros indicios de parqueo.",
             },
             {
                 "etiqueta": "11,12",
                 "clases": [11, 12],
                 "etapa": "via",
+                "resumen": "Vía urbana en plano (pares y arranques)",
                 "tema": "Conducción del vehículo en vía urbana en terreno plano. Pares y arranques.",
             },
             {
                 "etiqueta": "13,14",
                 "clases": [13, 14],
                 "etapa": "via",
+                "resumen": "Vía urbana en plano (pares y arranques)",
                 "tema": "Conducción del vehículo en vía urbana en terreno plano. Pares y arranques.",
             },
             {
                 "etiqueta": "15,16",
                 "clases": [15, 16],
                 "etapa": "via",
+                "resumen": "Arranque en pendiente frente y reversa",
                 "tema": "Arranque del vehículo en terreno pendiente, de frente y reversa.",
             },
             {
                 "etiqueta": "17,18",
                 "clases": [17, 18],
                 "etapa": "via",
+                "resumen": "Terreno plano y adelantamiento",
                 "tema": "Conducción en terreno plano con maniobras de adelantamiento.",
             },
             {
                 "etiqueta": "19,20",
                 "clases": [19, 20],
                 "etapa": "via",
+                "resumen": "Parqueo y estacionamiento con/sin espejo",
                 "tema": "Parqueo y estacionamiento con y sin uso de espejo. Refuerzo.",
             },
             {
                 "etiqueta": "21,22",
                 "clases": [21, 22],
                 "etapa": "via",
+                "resumen": "Señales lumínicas y cambio de carril",
                 "tema": "Conducción en vías urbanas usando las señales lumínicas, corporales y acústicas. Cambio de calzada. Cambio de carril.",
             },
             {
                 "etiqueta": "23,24",
                 "clases": [23, 24],
                 "etapa": "via",
+                "resumen": "Glorietas, puentes y zonas escolares",
                 "tema": "Conducción en vías urbanas, glorietas, intersecciones, deprimidos, puentes elevados, zonas escolares.",
             },
             {
                 "etiqueta": "25,26",
                 "clases": [25, 26],
                 "etapa": "via",
+                "resumen": "Tráfico masivo (buses y taxis)",
                 "tema": "Conducción en vías urbanas (Buses, taxis, trasporte Masivo)",
             },
             {
                 "etiqueta": "27,28",
                 "clases": [27, 28],
                 "etapa": "via",
+                "resumen": "Vías principales urbanas de la ciudad",
                 "tema": "Conducción en vías principales urbanas de la ciudad.",
             },
             {
                 "etiqueta": "29,30",
                 "clases": [29, 30],
                 "etapa": "via",
+                "resumen": "Vías nacionales (Piedecuesta-Girón-Aeropuerto)",
                 "tema": "Conducción en vías nacionales. Piedecuesta - Bucaramanga - Girón - peaje vía aeropuerto.",
             },
         ],
     },
     "RECAT_C1": {
+        "nombre_corto": "🔄 Recategorización C1 (Clases 21-30)",
         "codigo_formato": "A.O.C.E.A - F - 62",
         "version": "02",
         "fecha_formato": "abril 05 de 2025",
@@ -536,30 +610,35 @@ FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
                 "etiqueta": "21,22",
                 "clases": [21, 22],
                 "etapa": "pista",
+                "resumen": "Señales lumínicas y cambio de carril",
                 "tema": "Conducción en vías urbanas usando las señales lumínicas, corporales y acústicas. Cambio de calzada. Cambio de carril.",
             },
             {
                 "etiqueta": "23,24",
                 "clases": [23, 24],
                 "etapa": "via",
+                "resumen": "Glorietas, puentes y zonas escolares",
                 "tema": "Conducción en vías urbanas, glorietas, intersecciones, deprimidos, puentes elevados, zonas escolares.",
             },
             {
                 "etiqueta": "25,26",
                 "clases": [25, 26],
                 "etapa": "via",
+                "resumen": "Tráfico masivo (buses y taxis)",
                 "tema": "Conducción en vías urbanas (Buses, taxis, trasporte Masivo)",
             },
             {
                 "etiqueta": "27,28",
                 "clases": [27, 28],
                 "etapa": "via",
+                "resumen": "Vías principales urbanas de la ciudad",
                 "tema": "Conducción en vías principales urbanas de la ciudad.",
             },
             {
                 "etiqueta": "29,30",
                 "clases": [29, 30],
                 "etapa": "via",
+                "resumen": "Vías nacionales (Piedecuesta-Girón-Aeropuerto)",
                 "tema": "Conducción en vías nacionales. Piedecuesta - Bucaramanga - Girón - peaje vía aeropuerto.",
             },
         ],
@@ -571,7 +650,7 @@ def normalizar_categoria(cat: str) -> str:
     if not cat:
         return "B1"
     limpio = cat.strip().upper().replace("-", "_").replace(" ", "_")
-    if "RECAT" in limpio:
+    if "RECAT" in limpio or limpio == "RC1":
         return "RECAT_C1"
     if "A1" in limpio:
         return "A1"
@@ -636,8 +715,12 @@ def parsear_reporte_regex(texto: str) -> ReporteExtraido:
     if not texto or not texto.strip():
         return resultado
 
-    # Limpiar posible hora pegada al final tipo "04:27 PM" al copiar de Telegram
-    texto_limpio = re.sub(r"\d{1,2}:\d{2}\s*(?:AM|PM|a\.?\s*m\.?|p\.?\s*m\.?)\s*$", "", texto.strip(), flags=re.IGNORECASE)
+    texto_limpio = re.sub(
+        r"\d{1,2}:\d{2}\s*(?:AM|PM|a\.?\s*m\.?|p\.?\s*m\.?)\s*$",
+        "",
+        texto.strip(),
+        flags=re.IGNORECASE,
+    )
 
     m_doc = re.search(
         r"\b(?:cc|ti|ce|doc(?:umento)?|c[eé]dula)\s*[:#.\-]?\s*(\d{5,12})\b",
@@ -647,7 +730,9 @@ def parsear_reporte_regex(texto: str) -> ReporteExtraido:
     if m_doc:
         resultado.documento_detectado = m_doc.group(1)
 
-    m_cat = re.search(r"\b(recat[_\s\-]*c1|a1|a2|b1|c1)\b", texto_limpio, re.IGNORECASE)
+    m_cat = re.search(
+        r"\b(recat[_\s\-]*c1|rc1|a1|a2|b1|c1)\b", texto_limpio, re.IGNORECASE
+    )
     if m_cat:
         resultado.categoria_detectada = normalizar_categoria(m_cat.group(1))
 
@@ -715,8 +800,11 @@ def parsear_reporte_regex(texto: str) -> ReporteExtraido:
                     posibles_temas.append(antes_limpio)
 
             if despues:
-                # Si dice "registrada para Camilo Torres"
-                m_para = re.search(r"(?:registrad[oa]\s+para|alumn[oa]:?)\s+([A-Za-zÁÉÍÓÚáéíóúÑñ\s]+)", despues, re.IGNORECASE)
+                m_para = re.search(
+                    r"(?:registrad[oa]\s+para|alumn[oa]:?)\s+([A-Za-zÁÉÍÓÚáéíóúÑñ\s]+)",
+                    despues,
+                    re.IGNORECASE,
+                )
                 if m_para and resultado.alumno == "Desconocido":
                     resultado.alumno = m_para.group(1).strip(" .-")
                 else:
@@ -751,10 +839,6 @@ def parsear_reporte_regex(texto: str) -> ReporteExtraido:
         resultado.tema = " - ".join(posibles_temas)
 
     return resultado
-
-
-def parsear_reporte(texto: str, imagen_bytes: Optional[bytes] = None) -> ReporteExtraido:
-    return parsear_reporte_regex(texto)
 
 
 # =============================================================================
@@ -817,6 +901,29 @@ class SheetsService:
         self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
         self.obtener_o_crear_hoja(SHEET_INSTRUCTORES, HEADERS_INSTRUCTORES)
         self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
+
+    def listar_alumnos_activos(self, categoria: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Devuelve la lista de alumnos de la hoja 'Alumnos' (filtrada opcionalmente por categoría)."""
+        try:
+            ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
+            registros = ws.get_all_records()
+            activos = []
+            for f in registros:
+                nombre = str(f.get("Nombre_Completo", "")).strip()
+                if not nombre:
+                    continue
+                estado = str(f.get("Estado", "En curso")).strip().lower()
+                if "finalizado" in estado:
+                    continue
+                if categoria:
+                    cat_alumno = normalizar_categoria(str(f.get("Categoria", "")))
+                    if cat_alumno != normalizar_categoria(categoria):
+                        continue
+                activos.append(f)
+            return activos if activos else [f for f in registros if str(f.get("Nombre_Completo", "")).strip()]
+        except Exception as exc:
+            logger.warning("No se pudo listar alumnos activos: %s", exc)
+            return []
 
     def buscar_instructor(self, telegram_user_id: int, nombre_fallback: str) -> str:
         try:
@@ -957,7 +1064,9 @@ def subir_foto_evidencia(
     fallback_url: str = "",
 ) -> str:
     if not GOOGLE_DRIVE_ROOT_FOLDER_ID or not imagen_bytes:
-        return fallback_url or (f"telegram_file_id:{fallback_file_id}" if fallback_file_id else "Sin foto adjunta")
+        return fallback_url or (
+            f"telegram_file_id:{fallback_file_id}" if fallback_file_id else "Sin foto adjunta"
+        )
     try:
         creds = obtener_credenciales_google(["https://www.googleapis.com/auth/drive"])
         service = build("drive", "v3", credentials=creds, cache_discovery=False)
@@ -1239,110 +1348,155 @@ def generar_pdf_seguimiento(
 
 
 # =============================================================================
-# 6. MANEJADORES DE TELEGRAM (FOTOS, ARCHIVOS DE IMAGEN Y TEXTO SEPARADO)
+# 6. CONSTRUCCIÓN DE MENÚS INTERACTIVOS (CATEGORÍAS -> CLASES -> ALUMNO)
 # =============================================================================
-async def _registrar_reporte_completo(
-    msg,
-    texto_reporte: str,
-    foto_bytes: Optional[bytes],
-    file_id: str,
-    file_url: str,
-    user,
-) -> None:
-    nombre_telegram = user.full_name if user else "Instructor"
-    telegram_user_id = user.id if user else 0
+def teclado_categorias() -> InlineKeyboardMarkup:
+    botones = [
+        [
+            InlineKeyboardButton("🏍️ A1 (F-59)", callback_data="cat|A1"),
+            InlineKeyboardButton("🏍️ A2 Moto (F-60)", callback_data="cat|A2"),
+        ],
+        [
+            InlineKeyboardButton("🚗 B1 Particular (F-61)", callback_data="cat|B1"),
+            InlineKeyboardButton("🚕 C1 Público (F-62)", callback_data="cat|C1"),
+        ],
+        [
+            InlineKeyboardButton("🔄 Recategorización C1 (21-30)", callback_data="cat|RECAT_C1"),
+        ],
+        [
+            InlineKeyboardButton("❌ Cancelar", callback_data="cancelar"),
+        ],
+    ]
+    return InlineKeyboardMarkup(botones)
 
-    dt_col = msg.date.astimezone(TZ_COLOMBIA)
-    timestamp_str = dt_col.strftime("%Y-%m-%d %H:%M:%S")
-    fecha_reporte = dt_col.strftime("%Y-%m-%d")
-    hora_reporte = dt_col.strftime("%H:%M")
+
+def teclado_clases_por_categoria(categoria: str) -> InlineKeyboardMarkup:
+    cat_key = normalizar_categoria(categoria)
+    cfg = FORMATOS_OFICIALES.get(cat_key, FORMATOS_OFICIALES["B1"])
+    botones = []
+
+    for idx, fila in enumerate(cfg["filas"]):
+        etiqueta = fila["etiqueta"].replace(".0", "")
+        resumen = fila.get("resumen") or fila["tema"][:32]
+        texto_boton = f"Clase {etiqueta}: {resumen}"
+        botones.append(
+            [InlineKeyboardButton(texto_boton, callback_data=f"cls|{cat_key}|{idx}")]
+        )
+
+    botones.append(
+        [
+            InlineKeyboardButton("⬅️ Volver a Categorías", callback_data="volver_cat"),
+            InlineKeyboardButton("❌ Cancelar", callback_data="cancelar"),
+        ]
+    )
+    return InlineKeyboardMarkup(botones)
+
+
+def teclado_seleccion_alumno(categoria: str) -> InlineKeyboardMarkup:
+    """Muestra botones con los alumnos activos en Google Sheets + opción de escribir."""
+    alumnos = sheets_service.listar_alumnos_activos(categoria=categoria)
+    botones = []
+    for f in alumnos[:10]:
+        nombre = str(f.get("Nombre_Completo", "")).strip()
+        doc = str(f.get("Documento", "")).strip()
+        botones.append(
+            [
+                InlineKeyboardButton(
+                    f"👤 {nombre} ({doc})",
+                    callback_data=f"alu|{doc or nombre[:20]}",
+                )
+            ]
+        )
+    botones.append(
+        [InlineKeyboardButton("⬅️ Cambiar Clase", callback_data=f"cat|{categoria}")]
+    )
+    return InlineKeyboardMarkup(botones)
+
+
+async def guardar_en_sheets_y_confirmar(
+    chat_id: int,
+    user_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+    mensaje_respuesta,
+) -> None:
+    """Guarda definitivamente la sesión en Google Sheets y responde con confirmación."""
+    sesion = SESIONES_REPORTE.pop((chat_id, user_id), None)
+    if not sesion:
+        return
 
     try:
-        reporte = parsear_reporte(texto_reporte, imagen_bytes=foto_bytes)
-        if reporte.fecha_timemark:
-            fecha_reporte = reporte.fecha_timemark
-        if reporte.hora_timemark:
-            hora_reporte = reporte.hora_timemark
+        instructor = sheets_service.buscar_instructor(user_id, sesion["instructor_nombre"])
+        criterio_alumno = sesion.get("alumno_criterio", "Desconocido")
+        ficha_alumno = sheets_service.buscar_alumno(criterio_alumno)
 
-        instructor = sheets_service.buscar_instructor(telegram_user_id, nombre_telegram)
-        if reporte.instructor_detectado and instructor == nombre_telegram:
-            instructor = reporte.instructor_detectado
-
-        ficha_alumno = sheets_service.buscar_alumno(
-            reporte.documento_detectado or reporte.alumno
-        )
         if ficha_alumno:
             id_alumno = str(
                 ficha_alumno.get("Documento")
                 or ficha_alumno.get("ID_Matricula")
-                or reporte.documento_detectado
+                or sesion.get("documento_detectado")
                 or "S/N"
             ).strip()
             nombre_alumno_oficial = str(
-                ficha_alumno.get("Nombre_Completo") or reporte.alumno
+                ficha_alumno.get("Nombre_Completo") or criterio_alumno
             ).strip()
-            categoria = normalizar_categoria(
-                str(ficha_alumno.get("Categoria") or reporte.categoria_detectada or "B1")
-            )
         else:
-            id_alumno = reporte.documento_detectado or "Pendiente"
-            nombre_alumno_oficial = reporte.alumno
-            if reporte.categoria_detectada:
-                categoria = reporte.categoria_detectada
-            elif any(c > 20 for c in reporte.clases_lista):
-                categoria = "C1"
-            else:
-                categoria = "B1"
+            id_alumno = sesion.get("documento_detectado") or "Pendiente"
+            nombre_alumno_oficial = criterio_alumno
 
-        tema_final = reporte.tema
-        if tema_final == "Sin especificar" and reporte.clases_lista:
-            tema_final = obtener_tema_oficial(categoria, reporte.clases_lista)
+        categoria = sesion["categoria"]
+        clases_texto = sesion["clases_texto"]
+        tema_oficial = sesion["tema_oficial"]
 
         url_foto_drive = subir_foto_evidencia(
-            imagen_bytes=foto_bytes,
+            imagen_bytes=sesion.get("foto_bytes"),
             documento_alumno=id_alumno,
             nombre_alumno=nombre_alumno_oficial,
-            clases_texto=reporte.clases_texto,
-            fecha_reporte=fecha_reporte,
-            fallback_file_id=file_id,
-            fallback_url=file_url,
+            clases_texto=clases_texto,
+            fecha_reporte=sesion["fecha_reporte"],
+            fallback_file_id=sesion.get("file_id", ""),
+            fallback_url=sesion.get("file_url", ""),
         )
 
         sheets_service.registrar_clase(
-            timestamp=timestamp_str,
-            fecha_reporte=fecha_reporte,
-            hora_reporte=hora_reporte,
+            timestamp=sesion["timestamp"],
+            fecha_reporte=sesion["fecha_reporte"],
+            hora_reporte=sesion["hora_reporte"],
             instructor=instructor,
             id_alumno=id_alumno,
             nombre_alumno=nombre_alumno_oficial,
             categoria=categoria,
-            clases_reportadas=reporte.clases_texto,
-            tema_registrado=tema_final,
+            clases_reportadas=clases_texto,
+            tema_registrado=tema_oficial,
             url_foto_drive=url_foto_drive,
         )
 
-        try:
-            await msg.set_reaction(reaction=[ReactionTypeEmoji("✅")])
-        except Exception:
-            pass
-
-        await msg.reply_text(
-            f"✅ Clase {reporte.clases_texto} registrada para {nombre_alumno_oficial} "
-            f"(Categoría {categoria} | Instructor: {instructor})"
+        texto_exito = (
+            f"✅ *Clase registrada exitosamente*\n\n"
+            f"👤 *Alumno:* {nombre_alumno_oficial} (`{id_alumno}`)\n"
+            f"🏷 *Categoría:* {categoria}\n"
+            f"📚 *Clase:* {clases_texto}\n"
+            f"📝 *Tema Oficial:* {tema_oficial}\n"
+            f"👨‍🏫 *Instructor:* {instructor}\n"
+            f"🕒 *Fecha/Hora:* {sesion['fecha_reporte']} {sesion['hora_reporte']}"
         )
+        await mensaje_respuesta.edit_text(texto_exito, parse_mode="Markdown")
     except Exception as exc:
-        logger.exception("Error procesando el reporte: %s", exc)
-        await msg.reply_text(f"⚠️ Error al registrar en Google Sheets: {exc}")
+        logger.exception("Error guardando sesión en Google Sheets: %s", exc)
+        await mensaje_respuesta.edit_text(f"⚠️ Error al guardar en Google Sheets: {exc}")
 
 
+# =============================================================================
+# 7. MANEJADORES DE MENSAJES Y CALLBACKS DE BOTONES
+# =============================================================================
 async def procesar_mensaje_imagen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Maneja fotos comprimidas (msg.photo) o imágenes enviadas como archivo (msg.document).
-    - Si trae caption con 'clase', lo registra de inmediato.
-    - Si viene sin caption, guarda la foto temporalmente por si el instructor envía el texto en el mensaje siguiente.
+    Cuando el instructor envía una foto:
+    - Si ya puso Alumno + Clase + Categoría completos y claros, o si solo envió la foto / nombre del alumno,
+      abre el MENÚ INTERACTIVO de Categorías -> Clases para que solo tenga que marcarla con un toque.
     """
     msg = update.effective_message
-    if not msg:
+    user = update.effective_user
+    if not msg or not user:
         return
 
     foto_obj = None
@@ -1357,61 +1511,236 @@ async def procesar_mensaje_imagen(update: Update, context: ContextTypes.DEFAULT_
     foto_bytes = bytes(await foto_obj.download_as_bytearray())
     caption = (msg.caption or "").strip()
 
-    if caption and re.search(r"(?i)\b(clases?|cl\.?)\b", caption):
-        await _registrar_reporte_completo(
-            msg=msg,
-            texto_reporte=caption,
-            foto_bytes=foto_bytes,
-            file_id=foto_obj.file_id,
-            file_url=foto_obj.file_path or "",
-            user=update.effective_user,
-        )
-    else:
-        # Guardar la foto por si el instructor manda el texto justo en el siguiente mensaje
-        ULTIMA_FOTO_POR_CHAT[msg.chat_id] = {
-            "bytes": foto_bytes,
-            "file_id": foto_obj.file_id,
-            "file_url": foto_obj.file_path or "",
-            "timestamp": time.time(),
+    dt_col = msg.date.astimezone(TZ_COLOMBIA)
+    datos_caption = parsear_reporte_regex(caption) if caption else ReporteExtraido()
+
+    alumno_inicial = (
+        datos_caption.alumno
+        if datos_caption.alumno != "Desconocido"
+        else (caption if caption and len(caption.split()) <= 5 and not any(c.isdigit() for c in caption) else None)
+    )
+
+    SESIONES_REPORTE[(msg.chat_id, user.id)] = {
+        "foto_bytes": foto_bytes,
+        "file_id": foto_obj.file_id,
+        "file_url": foto_obj.file_path or "",
+        "timestamp": dt_col.strftime("%Y-%m-%d %H:%M:%S"),
+        "fecha_reporte": dt_col.strftime("%Y-%m-%d"),
+        "hora_reporte": dt_col.strftime("%H:%M"),
+        "instructor_nombre": user.full_name or "Instructor",
+        "alumno_criterio": alumno_inicial,
+        "documento_detectado": datos_caption.documento_detectado,
+        "categoria": datos_caption.categoria_detectada,
+        "clases_texto": None,
+        "tema_oficial": None,
+        "esperando_nombre_texto": False,
+    }
+
+    info_alumno_txt = f"👤 *Alumno detectado:* {alumno_inicial}\n" if alumno_inicial else ""
+    await msg.reply_text(
+        f"📸 *Foto recibida para registro de clase*\n"
+        f"{info_alumno_txt}"
+        f"👇 *Paso 1:* Selecciona la **Categoría** del curso:",
+        reply_markup=teclado_categorias(),
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_menu_clase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Permite abrir el menú de categorías y clases también con el comando /clase o /menu."""
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user:
+        return
+
+    ahora = datetime.now(TZ_COLOMBIA)
+    alumno_arg = " ".join(context.args).strip() if context.args else None
+
+    SESIONES_REPORTE[(msg.chat_id, user.id)] = {
+        "foto_bytes": None,
+        "file_id": "",
+        "file_url": "Registro por menú sin foto",
+        "timestamp": ahora.strftime("%Y-%m-%d %H:%M:%S"),
+        "fecha_reporte": ahora.strftime("%Y-%m-%d"),
+        "hora_reporte": ahora.strftime("%H:%M"),
+        "instructor_nombre": user.full_name or "Instructor",
+        "alumno_criterio": alumno_arg,
+        "documento_detectado": None,
+        "categoria": None,
+        "clases_texto": None,
+        "tema_oficial": None,
+        "esperando_nombre_texto": False,
+    }
+
+    await msg.reply_text(
+        "📋 *Menú de Registro de Clases — CEA Auto Oriente*\n"
+        "👇 *Paso 1:* Selecciona la **Categoría** del curso:",
+        reply_markup=teclado_categorias(),
+        parse_mode="Markdown",
+    )
+
+
+async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Maneja los toques del instructor en el menú de Categorías -> Submenú de Clases -> Alumno."""
+    query = update.callback_query
+    if not query or not query.message or not query.from_user:
+        return
+
+    await query.answer()
+    chat_id = query.message.chat_id
+    user_id = query.from_user.id
+    data = query.data or ""
+
+    sesion = SESIONES_REPORTE.get((chat_id, user_id))
+    if not sesion:
+        # Si otro usuario o después de reinicio toca el botón, crear sesión rápida
+        ahora = datetime.now(TZ_COLOMBIA)
+        sesion = {
+            "foto_bytes": None,
+            "file_id": "",
+            "file_url": "Registro por botón",
+            "timestamp": ahora.strftime("%Y-%m-%d %H:%M:%S"),
+            "fecha_reporte": ahora.strftime("%Y-%m-%d"),
+            "hora_reporte": ahora.strftime("%H:%M"),
+            "instructor_nombre": query.from_user.full_name or "Instructor",
+            "alumno_criterio": None,
+            "documento_detectado": None,
+            "categoria": None,
+            "clases_texto": None,
+            "tema_oficial": None,
+            "esperando_nombre_texto": False,
         }
+        SESIONES_REPORTE[(chat_id, user_id)] = sesion
+
+    if data == "cancelar":
+        SESIONES_REPORTE.pop((chat_id, user_id), None)
+        await query.message.edit_text("❌ Registro cancelado.")
+        return
+
+    if data == "volver_cat":
+        await query.message.edit_text(
+            "👇 *Paso 1:* Selecciona la **Categoría** del curso:",
+            reply_markup=teclado_categorias(),
+            parse_mode="Markdown",
+        )
+        return
+
+    # 1. El instructor seleccionó una CATEGORÍA -> Mostrar SUBMENÚ DE CLASES
+    if data.startswith("cat|"):
+        cat_key = data.split("|", 1)[1]
+        sesion["categoria"] = cat_key
+        cfg = FORMATOS_OFICIALES.get(cat_key, FORMATOS_OFICIALES["B1"])
+        await query.message.edit_text(
+            f"🏷 *Categoría seleccionada:* {cfg['nombre_corto']} (`{cfg['codigo_formato']}`)\n\n"
+            f"👇 *Paso 2:* Marca la **Clase** realizada en el listado:",
+            reply_markup=teclado_clases_por_categoria(cat_key),
+            parse_mode="Markdown",
+        )
+        return
+
+    # 2. El instructor seleccionó una CLASE del submenú
+    if data.startswith("cls|"):
+        _, cat_key, idx_str = data.split("|")
+        cfg = FORMATOS_OFICIALES.get(cat_key, FORMATOS_OFICIALES["B1"])
+        fila = cfg["filas"][int(idx_str)]
+
+        sesion["categoria"] = cat_key
+        sesion["clases_texto"] = formatear_clases(fila["clases"])
+        sesion["tema_oficial"] = fila["tema"].replace("\n", " ")
+
+        # Si ya teníamos el nombre del alumno desde el texto de la foto, guardar de inmediato
+        if sesion.get("alumno_criterio"):
+            await guardar_en_sheets_y_confirmar(chat_id, user_id, context, query.message)
+        else:
+            sesion["esperando_nombre_texto"] = True
+            sesion["mensaje_menu_id"] = query.message.message_id
+            await query.message.edit_text(
+                f"✅ *Categoría:* {cat_key} | *Clase:* {sesion['clases_texto']}\n"
+                f"📝 *Tema:* {sesion['tema_oficial']}\n\n"
+                f"👇 *Paso 3:* Toca el nombre del **Alumno** en la lista o escribe su nombre/cédula en el chat:",
+                reply_markup=teclado_seleccion_alumno(cat_key),
+                parse_mode="Markdown",
+            )
+        return
+
+    # 3. El instructor tocó el nombre del ALUMNO en la lista de botones
+    if data.startswith("alu|"):
+        criterio_alu = data.split("|", 1)[1]
+        sesion["alumno_criterio"] = criterio_alu
+        sesion["esperando_nombre_texto"] = False
+        await guardar_en_sheets_y_confirmar(chat_id, user_id, context, query.message)
+        return
 
 
-async def procesar_texto_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Si el instructor envió primero la foto sola y luego el texto 'Alumno ... Clase ...' separado,
-    toma la foto recién enviada y registra la clase.
+    Si el instructor está en el Paso 3 (escribiendo el nombre del alumno después de marcar la clase),
+    completa el registro inmediatamente.
     """
     msg = update.effective_message
-    if not msg or not msg.text:
+    user = update.effective_user
+    if not msg or not user or not msg.text:
         return
 
     texto = msg.text.strip()
     if texto.startswith("/"):
         return
 
-    foto_guardada = ULTIMA_FOTO_POR_CHAT.pop(msg.chat_id, None)
-    foto_bytes = foto_guardada["bytes"] if foto_guardada else None
-    file_id = foto_guardada["file_id"] if foto_guardada else ""
-    file_url = foto_guardada["file_url"] if foto_guardada else ""
+    sesion = SESIONES_REPORTE.get((msg.chat_id, user.id))
+    if sesion and sesion.get("esperando_nombre_texto"):
+        sesion["alumno_criterio"] = texto
+        sesion["esperando_nombre_texto"] = False
+        aviso = await msg.reply_text("⏳ Guardando registro en Google Sheets...")
+        await guardar_en_sheets_y_confirmar(msg.chat_id, user.id, context, aviso)
+        return
 
-    await _registrar_reporte_completo(
-        msg=msg,
-        texto_reporte=texto,
-        foto_bytes=foto_bytes,
-        file_id=file_id,
-        file_url=file_url,
-        user=update.effective_user,
-    )
+    # Si no había menú abierto pero escribió un reporte completo con la palabra "clase"
+    if re.search(r"(?i)\b(clases?|cl\.?)\b", texto):
+        datos = parsear_reporte_regex(texto)
+        ahora = msg.date.astimezone(TZ_COLOMBIA)
+        SESIONES_REPORTE[(msg.chat_id, user.id)] = {
+            "foto_bytes": None,
+            "file_id": "",
+            "file_url": "Reporte por texto",
+            "timestamp": ahora.strftime("%Y-%m-%d %H:%M:%S"),
+            "fecha_reporte": ahora.strftime("%Y-%m-%d"),
+            "hora_reporte": ahora.strftime("%H:%M"),
+            "instructor_nombre": user.full_name or "Instructor",
+            "alumno_criterio": datos.alumno if datos.alumno != "Desconocido" else None,
+            "documento_detectado": datos.documento_detectado,
+            "categoria": datos.categoria_detectada or "B1",
+            "clases_texto": datos.clases_texto,
+            "tema_oficial": (
+                datos.tema
+                if datos.tema != "Sin especificar"
+                else obtener_tema_oficial(datos.categoria_detectada or "B1", datos.clases_lista)
+            ),
+            "esperando_nombre_texto": False,
+        }
+        if datos.alumno != "Desconocido" and datos.clases_lista:
+            aviso = await msg.reply_text("⏳ Registrando clase en Google Sheets...")
+            await guardar_en_sheets_y_confirmar(msg.chat_id, user.id, context, aviso)
+        else:
+            await msg.reply_text(
+                "👇 Selecciona la **Categoría** y la **Clase** en el menú:",
+                reply_markup=teclado_categorias(),
+                parse_mode="Markdown",
+            )
 
 
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     texto = (
         "🚗 *Bot de Seguimiento de Clases — CEA Auto Oriente*\n\n"
-        "📸 *1. Registro de Clases (Instructores):*\n"
-        "Envía la foto con el nombre del alumno, número de clase y tema.\n\n"
-        "📄 *2. Generar Formato PDF para Carpeta/Matrícula:*\n"
-        "`/reporte [Documento o Nombre del Alumno]`\n\n"
-        "⚙️ *3. Inicializar Hojas en Google Sheets:*\n"
+        "📸 *1. Cómo registrar una clase (Instructores):*\n"
+        "• Envía la **foto de la clase** (puedes escribir el nombre del alumno en el comentario o enviarla sola).\n"
+        "• El bot te mostrará un **Menú con las Categorías** (`A1`, `A2`, `B1`, `C1`, `Recat C1`).\n"
+        "• Al tocar la categoría se abrirá el **Submenú con el listado de clases** para que solo la marques con un toque.\n\n"
+        "📋 *2. Abrir el menú manualmente:*\n"
+        "`/clase` o `/menu`\n\n"
+        "📄 *3. Generar Formato PDF para Carpeta/Matrícula:*\n"
+        "`/reporte [Documento o Nombre del Alumno]`\n"
+        "Ejemplo: `/reporte Camilo Torres`\n\n"
+        "⚙️ *4. Inicializar Hojas en Google Sheets:*\n"
         "`/inicializar`"
     )
     await update.effective_message.reply_text(texto, parse_mode="Markdown")
@@ -1484,7 +1813,7 @@ async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 # =============================================================================
-# 7. SERVIDOR HEALTH CHECK + AUTO-PING (RENDER KEEP-ALIVE) Y ARRANQUE DEL BOT
+# 8. SERVIDOR HEALTH CHECK + AUTO-PING (RENDER KEEP-ALIVE) Y ARRANQUE DEL BOT
 # =============================================================================
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -1498,7 +1827,6 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
 
 def _loop_keep_alive() -> None:
-    """Hace ping cada 10 minutos a la URL pública de Render para evitar que el plan Free se duerma."""
     while True:
         time.sleep(600)
         if RENDER_EXTERNAL_URL:
@@ -1529,17 +1857,20 @@ def main() -> None:
 
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler(["start", "ayuda", "help"], cmd_ayuda))
+    app.add_handler(CommandHandler(["clase", "menu", "registrar"], cmd_menu_clase))
     app.add_handler(CommandHandler("inicializar", cmd_inicializar))
     app.add_handler(CommandHandler("reporte", cmd_reporte))
 
-    # 1. Escuchar fotos comprimidas o imágenes enviadas como archivo
+    # Manejador de botones interactivos (Menú Categorías -> Submenú Clases -> Alumno)
+    app.add_handler(CallbackQueryHandler(manejar_botones_callback))
+
+    # Cuando envían una foto o imagen como archivo -> Abre el Menú de Categorías
     app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, procesar_mensaje_imagen))
 
-    # 2. Escuchar texto separado que mencione "clase" o "cl" (cuando mandan foto primero y texto después)
-    filtro_texto_clase = filters.TEXT & (~filters.COMMAND) & filters.Regex(r"(?i)\b(clases?|cl\.?)\b")
-    app.add_handler(MessageHandler(filtro_texto_clase, procesar_texto_reporte))
+    # Cuando escriben el nombre del alumno en texto libre
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), procesar_texto_chat))
 
-    logger.info("🚗 Bot CEA Auto Oriente iniciado y escuchando mensajes...")
+    logger.info("🚗 Bot CEA Auto Oriente (con Menú Interactivo) iniciado...")
     app.run_polling(drop_pending_updates=True)
 
 
