@@ -1,12 +1,14 @@
 """
-Bot de Seguimiento de Clases — CEA Auto Oriente (Versión con Selección de 1 o 2 Clases + Validación de Nombre y Cédula).
+Bot de Seguimiento de Clases — CEA Auto Oriente (Versión Completa en Línea).
 Incluye:
-- Flujo interactivo con Botones para el Instructor:
-  1) El instructor envía la foto.
-  2) El bot despliega el MENÚ DE CATEGORÍAS (A1, A2, B1, C1, Recat C1).
-  3) En el SUBMENÚ DE CLASES, el instructor puede marcar 1 sola clase (ej. Clase 15) o 2 clases al tiempo (ej. Clase 1 y Clase 2) con casillas ✅ y pulsar "Confirmar Clases".
-  4) El bot solicita con indicaciones claras el NOMBRE COMPLETO (Nombre y Apellido) y NÚMERO DE CÉDULA (CC/TI/CE) para que Google Sheets quede 100% preciso (y registra automáticamente al alumno en la hoja 'Alumnos' si es nuevo).
-- Comando /reporte [Cédula o Nombre] para emitir el PDF oficial con el logo de Auto Oriente.
+1. Menú de Categorías limpio (🏍️ A1 Moto, 🏍️ A2 Moto, 🚗 B1 Carro Particular, 🚕 C1 Servicio Público, 🔄 Recategorización C1).
+2. Selección de 1 clase o 2 clases al tiempo con casillas (⬜ / ✅).
+3. Validación de Horario de Envío:
+   - Para 2 clases: entre el minuto 40 y el minuto 50.
+   - Para 1 clase: entre el minuto 18 y el minuto 28.
+   - Si se envía antes o después, advierte al instructor y notifica al administrador / registra la novedad en Google Sheets.
+4. Auto-llenado de las 3 hojas de Google Sheets: 'Alumnos', 'Instructores' y 'Registro_Clases'.
+5. Generación del PDF Oficial (F-59, F-60, F-61 y F-62) con el comando /reporte.
 """
 
 import difflib
@@ -47,7 +49,6 @@ from reportlab.platypus import (
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    ReactionTypeEmoji,
     Update,
 )
 from telegram.ext import (
@@ -82,6 +83,7 @@ GOOGLE_DRIVE_ROOT_FOLDER_ID = os.getenv("GOOGLE_DRIVE_ROOT_FOLDER_ID", "").strip
 RENDER_EXTERNAL_URL = os.getenv(
     "RENDER_EXTERNAL_URL", "https://bot-clases-autooriente.onrender.com"
 ).strip()
+ADMIN_CHAT_ID_ENV = os.getenv("ADMIN_CHAT_ID", "").strip()
 PORT = int(os.getenv("PORT", "10000"))
 
 SHEET_ALUMNOS = "Alumnos"
@@ -97,6 +99,10 @@ logger = logging.getLogger(__name__)
 
 # Sesiones interactivas por (chat_id, user_id)
 SESIONES_REPORTE: Dict[Tuple[int, int], Dict[str, Any]] = {}
+# Lista de chats de administradores suscritos a alertas con /alertas
+ADMIN_CHATS_ALERTA: set = set()
+if ADMIN_CHAT_ID_ENV.lstrip("-").isdigit():
+    ADMIN_CHATS_ALERTA.add(int(ADMIN_CHAT_ID_ENV))
 
 
 def obtener_ruta_logo() -> Optional[Path]:
@@ -130,11 +136,11 @@ def obtener_credenciales_google(scopes: List[str]) -> Credentials:
 
 
 # =============================================================================
-# 2. CATÁLOGO OFICIAL DE FORMATOS Y TEMARIOS (F-59, F-60, F-61 y F-62)
+# 2. CATÁLOGO OFICIAL DE FORMATOS Y TEMARIOS
 # =============================================================================
 FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
     "A1": {
-        "nombre_corto": "🏍️ A1 (Motocicleta)",
+        "nombre_corto": "🏍️ A1 Moto",
         "codigo_formato": "A.O.C.E.A - F - 59",
         "version": "01",
         "fecha_formato": "Mayo 05 de 2021",
@@ -202,7 +208,7 @@ FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
         ],
     },
     "A2": {
-        "nombre_corto": "🏍️ A2 (Moto 15 clases)",
+        "nombre_corto": "🏍️ A2 Moto",
         "codigo_formato": "A.O.C.E.A - F - 60",
         "version": "04",
         "fecha_formato": "Octubre 29 de 2026",
@@ -319,7 +325,7 @@ FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
         ],
     },
     "B1": {
-        "nombre_corto": "🚗 B1 (Carro Particular 20 clases)",
+        "nombre_corto": "🚗 B1 Carro Particular",
         "codigo_formato": "A.O.C.E.A - F - 61",
         "version": "02",
         "fecha_formato": "abril 05 de 2025",
@@ -471,7 +477,7 @@ FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
         ],
     },
     "C1": {
-        "nombre_corto": "🚕 C1 (Servicio Público 30 clases)",
+        "nombre_corto": "🚕 C1 Servicio Público",
         "codigo_formato": "A.O.C.E.A - F - 62",
         "version": "02",
         "fecha_formato": "abril 05 de 2025",
@@ -595,7 +601,7 @@ FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
         ],
     },
     "RECAT_C1": {
-        "nombre_corto": "🔄 Recategorización C1 (Clases 21-30)",
+        "nombre_corto": "🔄 Recategorización C1",
         "codigo_formato": "A.O.C.E.A - F - 62",
         "version": "02",
         "fecha_formato": "abril 05 de 2025",
@@ -659,36 +665,41 @@ def normalizar_categoria(cat: str) -> str:
     return "B1"
 
 
-def obtener_tema_oficial(categoria: str, clases: List[int]) -> str:
-    cat_key = normalizar_categoria(categoria)
-    formato = FORMATOS_OFICIALES.get(cat_key, FORMATOS_OFICIALES["B1"])
-    if not clases:
-        return "Sin especificar"
-    temas_vistos = []
-    for c in clases:
-        for fila in formato["filas"]:
-            if c in fila["clases"]:
-                t = fila["tema"].replace("\n", " ")
-                if t not in temas_vistos:
-                    temas_vistos.append(t)
-    if temas_vistos:
-        return " / ".join(temas_vistos)
-    return f"Práctica de conducción clase {', '.join(map(str, clases))}"
+def validar_minuto_envio(minuto: int, cantidad_clases: int) -> Tuple[bool, str, str]:
+    """
+    Valida si la hora de envío de la foto cumple los tiempos estipulados:
+    - Si son 2 clases (bloque doble): debe enviarse entre el minuto 40 y el minuto 50.
+    - Si es 1 sola clase: debe enviarse entre el minuto 18 y el minuto 28.
+    Retorna: (es_valido, estado_corto_sheets, mensaje_alerta_instructor)
+    """
+    if cantidad_clases >= 2:
+        min_ini, min_fin = 40, 50
+        tipo_txt = "bloque de 2 clases (mitad de clase: minuto 40 al 50)"
+    else:
+        min_ini, min_fin = 18, 28
+        tipo_txt = "1 sola clase (mitad de clase: minuto 18 al 28)"
+
+    if min_ini <= minuto <= min_fin:
+        return (
+            True,
+            f"EN TIEMPO (minuto :{minuto:02d})",
+            "✅ *Validación de horario:* Enviada dentro del tiempo estipulado.",
+        )
+
+    momento = "ANTES" if minuto < min_ini else "DESPUÉS"
+    estado_sheets = f"FUERA DE TIEMPO - {momento} (minuto :{minuto:02d})"
+    alerta = (
+        f"\n\n⚠️ *NOVEDAD EN HORA DE ENVÍO ({momento} DE TIEMPO):*\n"
+        f"La evidencia fue enviada en el **minuto :{minuto:02d}**, y para {tipo_txt} "
+        f"debe enviarse entre el **minuto {min_ini} y el minuto {min_fin}**.\n"
+        f"🚨 *La hora de envío no está dentro de los tiempos estipulados y se informa al administrador.*"
+    )
+    return False, estado_sheets, alerta
 
 
 # =============================================================================
 # 3. EXTRACTOR DE REPORTES Y VALIDACIÓN DE NOMBRE + CÉDULA
 # =============================================================================
-@dataclass
-class ReporteExtraido:
-    alumno: str = "Desconocido"
-    documento_detectado: Optional[str] = None
-    categoria_detectada: Optional[str] = None
-    clases_lista: List[int] = field(default_factory=list)
-    clases_texto: str = "No identificada"
-    tema: str = "Sin especificar"
-
-
 def extraer_numeros_clase(texto_clase: str) -> List[int]:
     numeros = [int(n) for n in re.findall(r"\d+", texto_clase) if 1 <= int(n) <= 35]
     if not numeros:
@@ -712,21 +723,13 @@ def formatear_clases(clases: List[int]) -> str:
 
 
 def extraer_nombre_y_cedula(texto: str) -> Tuple[Optional[str], Optional[str]]:
-    """
-    Extrae el Nombre Completo y el Número de Documento (CC/TI/CE) de un texto como:
-      - 'Sergio Andrés Pérez 1098765432'
-      - 'CC 1098765432 - Sergio Andrés Pérez'
-      - 'Alumno: Camilo Torres CC: 13959739'
-    """
     if not texto or not texto.strip():
         return None, None
 
     limpio = texto.strip()
-    # Buscar número de documento de 6 a 12 dígitos
     m_doc = re.search(r"\b(\d{6,12})\b", limpio)
     documento = m_doc.group(1) if m_doc else None
 
-    # Limpiar palabras como CC, TI, CE, Alumno, Cédula y el número para dejar solo el nombre
     sin_doc = re.sub(r"\b\d{5,12}\b", "", limpio)
     sin_prefijos = re.sub(
         r"\b(?:alumn[oa]s?|nombre|cc|ti|ce|c[eé]dula|documento|doc|id)\b\s*[:#.\-]?",
@@ -734,52 +737,11 @@ def extraer_nombre_y_cedula(texto: str) -> Tuple[Optional[str], Optional[str]]:
         sin_doc,
         flags=re.IGNORECASE,
     )
-    # Quitar caracteres especiales sobrantes
     nombre_limpio = re.sub(r"[^A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]", " ", sin_prefijos)
     palabras = [p for p in nombre_limpio.split() if len(p) >= 2]
 
     nombre_formateado = " ".join(palabras).title() if palabras else None
     return nombre_formateado, documento
-
-
-def parsear_reporte_regex(texto: str) -> ReporteExtraido:
-    resultado = ReporteExtraido()
-    if not texto or not texto.strip():
-        return resultado
-
-    texto_limpio = re.sub(
-        r"\d{1,2}:\d{2}\s*(?:AM|PM|a\.?\s*m\.?|p\.?\s*m\.?)\s*$",
-        "",
-        texto.strip(),
-        flags=re.IGNORECASE,
-    )
-
-    m_cat = re.search(
-        r"\b(recat[_\s\-]*c1|rc1|a1|a2|b1|c1)\b", texto_limpio, re.IGNORECASE
-    )
-    if m_cat:
-        resultado.categoria_detectada = normalizar_categoria(m_cat.group(1))
-
-    patron_clase = re.compile(
-        r"(?:clases?|cl\.?)\s*[:#.]?\s*(\d{1,2}(?:\s*(?:[-/,yY&aA]|\s+y\s+)\s*\d{1,2})*)",
-        re.IGNORECASE,
-    )
-    m_clase = patron_clase.search(texto_limpio)
-    if m_clase:
-        nums = extraer_numeros_clase(m_clase.group(1))
-        if nums:
-            resultado.clases_lista = nums
-            resultado.clases_texto = formatear_clases(nums)
-
-    # Extraer posible nombre y cédula quitando la parte de clase
-    texto_sin_clase = patron_clase.sub("", texto_limpio)
-    nombre, doc = extraer_nombre_y_cedula(texto_sin_clase)
-    if nombre:
-        resultado.alumno = nombre
-    if doc:
-        resultado.documento_detectado = doc
-
-    return resultado
 
 
 # =============================================================================
@@ -803,6 +765,7 @@ HEADERS_REGISTRO = [
     "Clases_Reportadas",
     "Tema_Registrado",
     "URL_Foto_Drive",
+    "Validacion_Horario",
 ]
 
 
@@ -830,8 +793,14 @@ class SheetsService:
         book = self.conectar()
         try:
             ws = book.worksheet(nombre_hoja)
-            if not ws.row_values(1):
+            primera_fila = ws.row_values(1)
+            if not primera_fila:
                 ws.append_row(encabezados)
+            elif len(primera_fila) < len(encabezados):
+                # Si se agregó la columna 'Validacion_Horario', asegurar que el encabezado exista
+                for col_idx, titulo in enumerate(encabezados, start=1):
+                    if col_idx > len(primera_fila):
+                        ws.update_cell(1, col_idx, titulo)
             return ws
         except gspread.WorksheetNotFound:
             ws = book.add_worksheet(title=nombre_hoja, rows=1000, cols=len(encabezados) + 2)
@@ -865,14 +834,44 @@ class SheetsService:
             logger.warning("No se pudo listar alumnos activos: %s", exc)
             return []
 
+    def registrar_o_actualizar_instructor(
+        self, telegram_user_id: int, nombre_telegram: str, categoria_dictada: str
+    ) -> str:
+        """
+        Busca al instructor en la pestaña 'Instructores'.
+        - Si ya existe, devuelve su Nombre_Instructor oficial y actualiza sus categorías habilitadas.
+        - Si no existe aún, lo agrega automáticamente en la pestaña 'Instructores' para que no quede vacía.
+        """
+        cat_norm = normalizar_categoria(categoria_dictada)
+        try:
+            ws = self.obtener_o_crear_hoja(SHEET_INSTRUCTORES, HEADERS_INSTRUCTORES)
+            registros = ws.get_all_records()
+            for idx_fila, fila in enumerate(registros, start=2):
+                if str(fila.get("Telegram_User_ID", "")).strip() == str(telegram_user_id):
+                    nombre_oficial = str(fila.get("Nombre_Instructor", "")).strip() or nombre_telegram
+                    cats_actuales = [
+                        c.strip()
+                        for c in str(fila.get("Categoria_Habilitada", "")).split(",")
+                        if c.strip()
+                    ]
+                    if cat_norm not in cats_actuales:
+                        cats_actuales.append(cat_norm)
+                        ws.update_cell(idx_fila, 3, ", ".join(cats_actuales))
+                    return nombre_oficial
+
+            # Si no estaba registrado en la hoja 'Instructores', agregarlo automáticamente
+            ws.append_row(
+                [str(telegram_user_id), nombre_telegram, cat_norm],
+                value_input_option="USER_ENTERED",
+            )
+            return nombre_telegram
+        except Exception as exc:
+            logger.warning("No se pudo actualizar hoja Instructores: %s", exc)
+            return nombre_telegram
+
     def registrar_o_actualizar_alumno(
         self, documento: str, nombre_completo: str, categoria: str
     ) -> Dict[str, Any]:
-        """
-        Verifica si el alumno ya existe en la pestaña 'Alumnos'.
-        Si no existe, lo agrega automáticamente con su Documento, Nombre_Completo y Categoría
-        para mantener la base maestra siempre actualizada y precisa.
-        """
         existente = self.buscar_alumno(documento) or self.buscar_alumno(nombre_completo)
         if existente:
             return existente
@@ -900,18 +899,6 @@ class SheetsService:
                 "Categoria": normalizar_categoria(categoria),
                 "Estado": "En curso",
             }
-
-    def buscar_instructor(self, telegram_user_id: int, nombre_fallback: str) -> str:
-        try:
-            ws = self.obtener_o_crear_hoja(SHEET_INSTRUCTORES, HEADERS_INSTRUCTORES)
-            for fila in ws.get_all_records():
-                if str(fila.get("Telegram_User_ID", "")).strip() == str(telegram_user_id):
-                    nombre = str(fila.get("Nombre_Instructor", "")).strip()
-                    if nombre:
-                        return nombre
-        except Exception as exc:
-            logger.warning("No se pudo consultar hoja Instructores: %s", exc)
-        return nombre_fallback
 
     def buscar_alumno(self, criterio: str) -> Optional[Dict[str, Any]]:
         if not criterio or criterio == "Desconocido":
@@ -962,6 +949,7 @@ class SheetsService:
         clases_reportadas: str,
         tema_registrado: str,
         url_foto_drive: str,
+        validacion_horario: str = "EN TIEMPO",
     ) -> None:
         ws = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
         ws.append_row(
@@ -976,6 +964,7 @@ class SheetsService:
                 clases_reportadas,
                 tema_registrado,
                 url_foto_drive,
+                validacion_horario,
             ],
             value_input_option="USER_ENTERED",
         )
@@ -1326,20 +1315,21 @@ def generar_pdf_seguimiento(
 
 
 # =============================================================================
-# 6. CONSTRUCCIÓN DE MENÚS INTERACTIVOS (CATEGORÍAS -> MULTI-CLASE -> ALUMNO)
+# 6. CONSTRUCCIÓN DE MENÚS INTERACTIVOS (CATEGORÍAS LIMPIAS -> MULTI-CLASE)
 # =============================================================================
 def teclado_categorias() -> InlineKeyboardMarkup:
+    """Menú limpio sin códigos F-59/F-60/F-61/F-62."""
     botones = [
         [
-            InlineKeyboardButton("🏍️ A1 (F-59)", callback_data="cat|A1"),
-            InlineKeyboardButton("🏍️ A2 Moto (F-60)", callback_data="cat|A2"),
+            InlineKeyboardButton("🏍️ A1 Moto", callback_data="cat|A1"),
+            InlineKeyboardButton("🏍️ A2 Moto", callback_data="cat|A2"),
         ],
         [
-            InlineKeyboardButton("🚗 B1 Particular (F-61)", callback_data="cat|B1"),
-            InlineKeyboardButton("🚕 C1 Público (F-62)", callback_data="cat|C1"),
+            InlineKeyboardButton("🚗 B1 Carro Particular", callback_data="cat|B1"),
+            InlineKeyboardButton("🚕 C1 Servicio Público", callback_data="cat|C1"),
         ],
         [
-            InlineKeyboardButton("🔄 Recategorización C1 (21-30)", callback_data="cat|RECAT_C1"),
+            InlineKeyboardButton("🔄 Recategorización C1", callback_data="cat|RECAT_C1"),
         ],
         [
             InlineKeyboardButton("❌ Cancelar", callback_data="cancelar"),
@@ -1348,8 +1338,10 @@ def teclado_categorias() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(botones)
 
 
-def obtener_clases_y_temas_de_indices(categoria: str, indices_seleccionados: List[int]) -> Tuple[str, str]:
-    """Calcula el texto de clases (ej. '1-2' o '15') y el tema combinado de las filas marcadas."""
+def obtener_clases_y_temas_de_indices(
+    categoria: str, indices_seleccionados: List[int]
+) -> Tuple[str, str, int]:
+    """Devuelve (clases_texto, tema_combinado, cantidad_total_clases)."""
     cat_key = normalizar_categoria(categoria)
     cfg = FORMATOS_OFICIALES.get(cat_key, FORMATOS_OFICIALES["B1"])
     clases_nums: List[int] = []
@@ -1365,25 +1357,19 @@ def obtener_clases_y_temas_de_indices(categoria: str, indices_seleccionados: Lis
             if tema_limpio not in temas:
                 temas.append(tema_limpio)
 
-    return formatear_clases(clases_nums), " / ".join(temas)
+    return formatear_clases(clases_nums), " / ".join(temas), len(clases_nums)
 
 
 def teclado_clases_por_categoria(
     categoria: str, indices_seleccionados: Optional[List[int]] = None
 ) -> InlineKeyboardMarkup:
-    """
-    Submenú de clases con casillas de verificación (⬜ / ✅):
-    Permite al instructor marcar 1 sola clase (ej. Clase 15) o 2 clases al tiempo (ej. Clase 1 y Clase 2)
-    y luego tocar el botón 'Confirmar Clases'.
-    """
     cat_key = normalizar_categoria(categoria)
     cfg = FORMATOS_OFICIALES.get(cat_key, FORMATOS_OFICIALES["B1"])
     seleccionados = set(indices_seleccionados or [])
     botones = []
 
-    # Si ya marcó al menos 1 clase, mostrar botón superior de Confirmar
     if seleccionados:
-        clases_txt, _ = obtener_clases_y_temas_de_indices(cat_key, list(seleccionados))
+        clases_txt, _, _ = obtener_clases_y_temas_de_indices(cat_key, list(seleccionados))
         botones.append(
             [
                 InlineKeyboardButton(
@@ -1402,9 +1388,8 @@ def teclado_clases_por_categoria(
             [InlineKeyboardButton(texto_boton, callback_data=f"tog|{cat_key}|{idx}")]
         )
 
-    # Botón inferior de Confirmar también al final de la lista para mayor comodidad
     if seleccionados:
-        clases_txt, _ = obtener_clases_y_temas_de_indices(cat_key, list(seleccionados))
+        clases_txt, _, _ = obtener_clases_y_temas_de_indices(cat_key, list(seleccionados))
         botones.append(
             [
                 InlineKeyboardButton(
@@ -1425,7 +1410,6 @@ def teclado_clases_por_categoria(
 
 
 def teclado_seleccion_alumno(categoria: str) -> InlineKeyboardMarkup:
-    """Muestra botones con los alumnos activos en Google Sheets + botón de volver."""
     alumnos = sheets_service.listar_alumnos_activos(categoria=categoria)
     botones = []
     for f in alumnos[:8]:
@@ -1450,9 +1434,9 @@ def teclado_seleccion_alumno(categoria: str) -> InlineKeyboardMarkup:
 
 
 def mensaje_indicaciones_alumno(categoria: str, clases_texto: str, tema_oficial: str) -> str:
-    """Mensaje claro pidiendo Nombre Completo y Cédula al instructor."""
+    cfg = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])
     return (
-        f"✅ *Categoría:* `{categoria}` | *Clase(s) marcada(s):* `{clases_texto}`\n"
+        f"✅ *Categoría:* {cfg['nombre_corto']} | *Clase(s) marcada(s):* `{clases_texto}`\n"
         f"📝 *Tema:* {tema_oficial}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"👨‍🏫 *INDICACIÓN PARA EL INSTRUCTOR (Paso Final):*\n"
@@ -1467,22 +1451,36 @@ def mensaje_indicaciones_alumno(categoria: str, clases_texto: str, tema_oficial:
 async def guardar_en_sheets_y_confirmar(
     chat_id: int,
     user_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
     mensaje_respuesta,
 ) -> None:
-    """Guarda el alumno en 'Alumnos' (si es nuevo) y registra la clase en 'Registro_Clases'."""
+    """
+    1. Registra/actualiza al Instructor en la pestaña 'Instructores'.
+    2. Registra/actualiza al Alumno en la pestaña 'Alumnos'.
+    3. Valida el minuto de envío (40-50 para 2 clases / 18-28 para 1 clase).
+    4. Registra la fila en 'Registro_Clases' y notifica al administrador si está fuera de tiempo.
+    """
     sesion = SESIONES_REPORTE.pop((chat_id, user_id), None)
     if not sesion:
         return
 
     try:
-        instructor = sheets_service.buscar_instructor(user_id, sesion["instructor_nombre"])
+        categoria = sesion["categoria"]
         nombre_alumno = sesion.get("nombre_alumno_limpio") or "Desconocido"
         documento_alumno = sesion.get("documento_detectado") or "Pendiente"
-        categoria = sesion["categoria"]
         clases_texto = sesion["clases_texto"]
+        cantidad_clases = sesion.get("cantidad_clases", 2)
         tema_oficial = sesion["tema_oficial"]
+        minuto_envio = sesion.get("minuto_envio", 45)
 
-        # Asegurar que el alumno quede creado/actualizado en la pestaña 'Alumnos'
+        # 1. Auto-registrar o actualizar al Instructor en la hoja 'Instructores'
+        instructor = sheets_service.registrar_o_actualizar_instructor(
+            telegram_user_id=user_id,
+            nombre_telegram=sesion["instructor_nombre"],
+            categoria_dictada=categoria,
+        )
+
+        # 2. Auto-registrar o actualizar al Alumno en la hoja 'Alumnos'
         ficha = sheets_service.registrar_o_actualizar_alumno(
             documento=documento_alumno,
             nombre_completo=nombre_alumno,
@@ -1491,6 +1489,12 @@ async def guardar_en_sheets_y_confirmar(
         id_alumno_final = str(ficha.get("Documento") or documento_alumno).strip()
         nombre_final = str(ficha.get("Nombre_Completo") or nombre_alumno).strip()
 
+        # 3. Validar el minuto de envío según cantidad de clases (2 clases: 40-50 | 1 clase: 18-28)
+        en_tiempo, estado_horario_sheets, alerta_horario_txt = validar_minuto_envio(
+            minuto=minuto_envio, cantidad_clases=cantidad_clases
+        )
+
+        # 4. Subir evidencia o enlace directo
         url_foto_drive = subir_foto_evidencia(
             imagen_bytes=sesion.get("foto_bytes"),
             documento_alumno=id_alumno_final,
@@ -1501,6 +1505,7 @@ async def guardar_en_sheets_y_confirmar(
             fallback_url=sesion.get("file_url", ""),
         )
 
+        # 5. Guardar en 'Registro_Clases'
         sheets_service.registrar_clase(
             timestamp=sesion["timestamp"],
             fecha_reporte=sesion["fecha_reporte"],
@@ -1512,20 +1517,44 @@ async def guardar_en_sheets_y_confirmar(
             clases_reportadas=clases_texto,
             tema_registrado=tema_oficial,
             url_foto_drive=url_foto_drive,
+            validacion_horario=estado_horario_sheets,
         )
 
+        cfg = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])
         texto_exito = (
             f"✅ *CLASE REGISTRADA EXITOSAMENTE*\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 *Alumno:* {nombre_final}\n"
             f"🪪 *Documento (CC/TI):* `{id_alumno_final}`\n"
-            f"🏷 *Categoría:* `{categoria}`\n"
+            f"🏷 *Categoría:* {cfg['nombre_corto']}\n"
             f"📚 *Clase(s) registrada(s):* `{clases_texto}`\n"
             f"📝 *Tema Oficial:* {tema_oficial}\n"
             f"👨‍🏫 *Instructor:* {instructor}\n"
-            f"🕒 *Fecha y Hora:* {sesion['fecha_reporte']} {sesion['hora_reporte']}"
+            f"🕒 *Fecha y Hora de envío:* {sesion['fecha_reporte']} {sesion['hora_reporte']}\n"
+            f"{alerta_horario_txt}"
         )
         await mensaje_respuesta.edit_text(texto_exito, parse_mode="Markdown")
+
+        # 6. Si el envío fue fuera de los minutos estipulados, notificar a los administradores suscritos
+        if not en_tiempo and ADMIN_CHATS_ALERTA:
+            msg_admin = (
+                f"🚨 *REPORTE ENVIADO FUERA DEL TIEMPO ESTIPULADO*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👨‍🏫 *Instructor:* {instructor}\n"
+                f"👤 *Alumno:* {nombre_final} (CC: `{id_alumno_final}`)\n"
+                f"🏷 *Categoría:* {cfg['nombre_corto']} | *Clase(s):* `{clases_texto}`\n"
+                f"🕒 *Hora de envío:* `{sesion['hora_reporte']}` ({estado_horario_sheets})\n"
+                f"📌 *Regla:* {'Minuto 40 al 50 (2 clases)' if cantidad_clases >= 2 else 'Minuto 18 al 28 (1 clase)'}"
+            )
+            for admin_chat in list(ADMIN_CHATS_ALERTA):
+                if admin_chat != chat_id:
+                    try:
+                        await context.bot.send_message(
+                            chat_id=admin_chat, text=msg_admin, parse_mode="Markdown"
+                        )
+                    except Exception:
+                        pass
+
     except Exception as exc:
         logger.exception("Error guardando sesión en Google Sheets: %s", exc)
         await mensaje_respuesta.edit_text(f"⚠️ Error al guardar en Google Sheets: {exc}")
@@ -1535,11 +1564,6 @@ async def guardar_en_sheets_y_confirmar(
 # 7. MANEJADORES DE MENSAJES Y CALLBACKS DE BOTONES
 # =============================================================================
 async def procesar_mensaje_imagen(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Cuando el instructor envía la foto de la clase:
-    1) Revisa si en el comentario ya puso Nombre Completo + Cédula.
-    2) Despliega el Menú de Categorías para iniciar la selección de clase(s).
-    """
     msg = update.effective_message
     user = update.effective_user
     if not msg or not user:
@@ -1559,7 +1583,6 @@ async def procesar_mensaje_imagen(update: Update, context: ContextTypes.DEFAULT_
     dt_col = msg.date.astimezone(TZ_COLOMBIA)
 
     nombre_cap, doc_cap = extraer_nombre_y_cedula(caption)
-    # Solo considerar completo el nombre si tiene al menos 2 palabras (Nombre y Apellido) y Cédula
     tiene_datos_completos = bool(
         nombre_cap and len(nombre_cap.split()) >= 2 and doc_cap
     )
@@ -1571,13 +1594,14 @@ async def procesar_mensaje_imagen(update: Update, context: ContextTypes.DEFAULT_
         "timestamp": dt_col.strftime("%Y-%m-%d %H:%M:%S"),
         "fecha_reporte": dt_col.strftime("%Y-%m-%d"),
         "hora_reporte": dt_col.strftime("%H:%M"),
+        "minuto_envio": dt_col.minute,
         "instructor_nombre": user.full_name or "Instructor",
         "nombre_alumno_limpio": nombre_cap if tiene_datos_completos else None,
         "documento_detectado": doc_cap if tiene_datos_completos else None,
-        "texto_parcial_alumno": caption,
         "categoria": None,
         "indices_clases": [],
         "clases_texto": None,
+        "cantidad_clases": 2,
         "tema_oficial": None,
         "esperando_nombre_texto": False,
     }
@@ -1590,7 +1614,7 @@ async def procesar_mensaje_imagen(update: Update, context: ContextTypes.DEFAULT_
         )
 
     await msg.reply_text(
-        f"📸 *Foto de evidencia recibida*\n"
+        f"📸 *Foto de evidencia recibida ({dt_col.strftime('%H:%M')})*\n"
         f"{resumen_alu}"
         f"👇 *Paso 1:* Selecciona la **Categoría** del curso:",
         reply_markup=teclado_categorias(),
@@ -1612,13 +1636,14 @@ async def cmd_menu_clase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "timestamp": ahora.strftime("%Y-%m-%d %H:%M:%S"),
         "fecha_reporte": ahora.strftime("%Y-%m-%d"),
         "hora_reporte": ahora.strftime("%H:%M"),
+        "minuto_envio": ahora.minute,
         "instructor_nombre": user.full_name or "Instructor",
         "nombre_alumno_limpio": None,
         "documento_detectado": None,
-        "texto_parcial_alumno": "",
         "categoria": None,
         "indices_clases": [],
         "clases_texto": None,
+        "cantidad_clases": 2,
         "tema_oficial": None,
         "esperando_nombre_texto": False,
     }
@@ -1634,7 +1659,7 @@ async def cmd_menu_clase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 def _instrucciones_submenu_clases(cat_key: str, indices_seleccionados: List[int]) -> str:
     cfg = FORMATOS_OFICIALES.get(cat_key, FORMATOS_OFICIALES["B1"])
     if indices_seleccionados:
-        clases_txt, tema_txt = obtener_clases_y_temas_de_indices(cat_key, indices_seleccionados)
+        clases_txt, tema_txt, _ = obtener_clases_y_temas_de_indices(cat_key, indices_seleccionados)
         estado_sel = (
             f"✅ *Clase(s) marcada(s):* `{clases_txt}`\n"
             f"📝 *Tema:* {tema_txt}\n\n"
@@ -1647,14 +1672,10 @@ def _instrucciones_submenu_clases(cat_key: str, indices_seleccionados: List[int]
             "(si fue bloque doble, ej. Clase 1 y Clase 2) y luego pulsa **`💾 CONFIRMAR CLASE(S)`**:"
         )
 
-    return (
-        f"🏷 *Categoría:* {cfg['nombre_corto']} (`{cfg['codigo_formato']}`)\n\n"
-        f"{estado_sel}"
-    )
+    return f"🏷 *Categoría seleccionada:* {cfg['nombre_corto']}\n\n{estado_sel}"
 
 
 async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Maneja los toques del instructor en Categorías -> Checkboxes de 1 o 2 Clases -> Confirmar -> Alumno."""
     query = update.callback_query
     if not query or not query.message or not query.from_user:
         return
@@ -1674,13 +1695,14 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
             "timestamp": ahora.strftime("%Y-%m-%d %H:%M:%S"),
             "fecha_reporte": ahora.strftime("%Y-%m-%d"),
             "hora_reporte": ahora.strftime("%H:%M"),
+            "minuto_envio": ahora.minute,
             "instructor_nombre": query.from_user.full_name or "Instructor",
             "nombre_alumno_limpio": None,
             "documento_detectado": None,
-            "texto_parcial_alumno": "",
             "categoria": None,
             "indices_clases": [],
             "clases_texto": None,
+            "cantidad_clases": 2,
             "tema_oficial": None,
             "esperando_nombre_texto": False,
         }
@@ -1701,7 +1723,6 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    # 1. Seleccionar CATEGORÍA -> Mostrar Submenú de Clases con casillas ⬜
     if data.startswith("cat|"):
         cat_key = data.split("|", 1)[1]
         sesion["categoria"] = cat_key
@@ -1714,7 +1735,6 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    # 2. Limpiar selección de clases
     if data.startswith("limpiar|"):
         cat_key = data.split("|", 1)[1]
         sesion["indices_clases"] = []
@@ -1725,7 +1745,6 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    # 3. Marcar o desmarcar 1 o 2 clases en el submenú (Checkboxes ✅ / ⬜)
     if data.startswith("tog|"):
         _, cat_key, idx_str = data.split("|")
         idx = int(idx_str)
@@ -1735,7 +1754,6 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         if idx in actuales:
             actuales.remove(idx)
         else:
-            # Permitir marcar hasta 2 bloques/clases a la vez; si marca una 3ra, reemplaza la más antigua
             if len(actuales) >= 2:
                 actuales.pop(0)
             actuales.append(idx)
@@ -1748,20 +1766,19 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    # 4. El instructor pulsó "💾 CONFIRMAR CLASE(S)"
     if data == "confirmar_clases":
         cat_key = sesion.get("categoria") or "B1"
         indices = sesion.get("indices_clases", [])
         if not indices:
             return
 
-        clases_txt, tema_txt = obtener_clases_y_temas_de_indices(cat_key, indices)
+        clases_txt, tema_txt, cant_clases = obtener_clases_y_temas_de_indices(cat_key, indices)
         sesion["clases_texto"] = clases_txt
         sesion["tema_oficial"] = tema_txt
+        sesion["cantidad_clases"] = cant_clases
 
-        # Si ya teníamos Nombre Completo + Cédula desde el comentario de la foto, guardar directo
         if sesion.get("nombre_alumno_limpio") and sesion.get("documento_detectado"):
-            await guardar_en_sheets_y_confirmar(chat_id, user_id, query.message)
+            await guardar_en_sheets_y_confirmar(chat_id, user_id, context, query.message)
         else:
             sesion["esperando_nombre_texto"] = True
             await query.message.edit_text(
@@ -1771,7 +1788,6 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
             )
         return
 
-    # 5. El instructor seleccionó un alumno existente de la lista de botones
     if data.startswith("alu|"):
         doc_alu = data.split("|", 1)[1]
         ficha = sheets_service.buscar_alumno(doc_alu)
@@ -1783,15 +1799,11 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
             sesion["documento_detectado"] = doc_alu
 
         sesion["esperando_nombre_texto"] = False
-        await guardar_en_sheets_y_confirmar(chat_id, user_id, query.message)
+        await guardar_en_sheets_y_confirmar(chat_id, user_id, context, query.message)
         return
 
 
 async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Valida que el instructor envíe el Nombre Completo (Nombre y Apellido) y la Cédula
-    cuando está en el Paso Final del registro.
-    """
     msg = update.effective_message
     user = update.effective_user
     if not msg or not user or not msg.text:
@@ -1805,7 +1817,6 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
     if sesion and sesion.get("esperando_nombre_texto"):
         nombre, documento = extraer_nombre_y_cedula(texto)
 
-        # Verificar si escribió la cédula o nombre de un alumno que ya existe en la hoja 'Alumnos'
         ficha_existente = sheets_service.buscar_alumno(documento or nombre or texto)
         if ficha_existente:
             nombre_oficial = str(ficha_existente.get("Nombre_Completo", "")).strip()
@@ -1815,10 +1826,9 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
                 sesion["documento_detectado"] = doc_oficial
                 sesion["esperando_nombre_texto"] = False
                 aviso = await msg.reply_text("⏳ Guardando registro en Google Sheets...")
-                await guardar_en_sheets_y_confirmar(msg.chat_id, user.id, aviso)
+                await guardar_en_sheets_y_confirmar(msg.chat_id, user.id, context, aviso)
                 return
 
-        # Validar que haya escrito Nombre + Apellido (mínimo 2 palabras) Y Número de Documento
         if not nombre or len(nombre.split()) < 2 or not documento:
             faltantes = []
             if not nombre or len(nombre.split()) < 2:
@@ -1839,9 +1849,23 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
         sesion["nombre_alumno_limpio"] = nombre
         sesion["documento_detectado"] = documento
         sesion["esperando_nombre_texto"] = False
-        aviso = await msg.reply_text("⏳ Guardando alumno y clase en Google Sheets...")
-        await guardar_en_sheets_y_confirmar(msg.chat_id, user.id, aviso)
+        aviso = await msg.reply_text("⏳ Guardando alumno, instructor y clase en Google Sheets...")
+        await guardar_en_sheets_y_confirmar(msg.chat_id, user.id, context, aviso)
         return
+
+
+async def cmd_alertas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Activa las notificaciones al administrador en el chat actual cuando una foto llegue fuera de horario."""
+    msg = update.effective_message
+    if not msg:
+        return
+    ADMIN_CHATS_ALERTA.add(msg.chat_id)
+    await msg.reply_text(
+        "🔔 *Alertas de Administrador activadas en este chat.*\n"
+        "Recibirás un aviso automático cada vez que un instructor envíe una foto fuera de los minutos estipulados "
+        "(minuto 40 al 50 para 2 clases / minuto 18 al 28 para 1 clase).",
+        parse_mode="Markdown",
+    )
 
 
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1849,12 +1873,15 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "🚗 *Bot de Seguimiento de Clases — CEA Auto Oriente*\n\n"
         "📸 *Pasos para el Instructor:*\n"
         "1️⃣ Envía la **foto de la clase** al chat.\n"
-        "2️⃣ Toca la **Categoría** (`A1`, `A2`, `B1`, `C1`, `Recat C1`).\n"
-        "3️⃣ En el listado de clases puedes marcar **1 sola clase** (ej. `Clase 15`) o **2 clases al tiempo** (ej. `Clase 1` y `Clase 2`) y pulsar **`💾 CONFIRMAR CLASE(S)`**.\n"
+        "   • *Si son 2 clases:* enviar entre el **minuto 40 y el minuto 50**.\n"
+        "   • *Si es 1 sola clase:* enviar entre el **minuto 18 y el minuto 28**.\n"
+        "2️⃣ Toca la **Categoría** (`🏍️ A1 Moto`, `🏍️ A2 Moto`, `🚗 B1 Carro Particular`, `🚕 C1 Servicio Público`, `🔄 Recategorización C1`).\n"
+        "3️⃣ Marca **1 clase** o **2 clases** (`✅`) y pulsa **`💾 CONFIRMAR CLASE(S)`**.\n"
         "4️⃣ Escribe el **Nombre Completo y Cédula** del alumno (ej. `Sergio Andrés Pérez 1098765432`).\n\n"
         "📄 *Generar PDF Oficial para Carpeta/Matrícula:*\n"
-        "`/reporte [Cédula o Nombre del Alumno]`\n"
-        "Ejemplo: `/reporte 1098765432` o `/reporte Camilo Torres`\n\n"
+        "`/reporte [Cédula o Nombre del Alumno]`\n\n"
+        "🔔 *Recibir alertas de horario (Administrador):*\n"
+        "`/alertas`\n\n"
         "⚙️ *Inicializar Hojas en Google Sheets:*\n"
         "`/inicializar`"
     )
@@ -1973,6 +2000,7 @@ def main() -> None:
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler(["start", "ayuda", "help"], cmd_ayuda))
     app.add_handler(CommandHandler(["clase", "menu", "registrar"], cmd_menu_clase))
+    app.add_handler(CommandHandler("alertas", cmd_alertas_admin))
     app.add_handler(CommandHandler("inicializar", cmd_inicializar))
     app.add_handler(CommandHandler("reporte", cmd_reporte))
 
