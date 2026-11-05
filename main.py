@@ -1350,6 +1350,199 @@ class SheetsService:
 
         return {"alumno": info_alumno, "registros": clases_filtradas}
 
+    def listar_instructores_registrados(self) -> List[Dict[str, str]]:
+        """
+        Devuelve la lista consolidada de instructores (de la hoja 'Instructores' y de 'Registro_Clases').
+        """
+        instructores: List[Dict[str, str]] = []
+        vistos_norm: set = set()
+        try:
+            ws_inst = self.obtener_o_crear_hoja(SHEET_INSTRUCTORES, HEADERS_INSTRUCTORES)
+            filas_inst = self._leer_filas_diccionario(ws_inst, HEADERS_INSTRUCTORES)
+            for f in filas_inst:
+                nom = str(f.get("Nombre_Instructor", "")).strip()
+                doc = str(f.get("Documento_Instructor", "")).strip()
+                tg_id = str(f.get("Telegram_User_ID", "")).strip()
+                if not nom:
+                    continue
+                norm = _normalizar_texto(nom)
+                if norm not in vistos_norm:
+                    vistos_norm.add(norm)
+                    instructores.append(
+                        {"nombre": nom, "documento": doc, "telegram_id": tg_id}
+                    )
+
+            ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
+            filas_reg = self._leer_filas_diccionario(ws_reg, HEADERS_REGISTRO)
+            for f in filas_reg:
+                nom = str(f.get("Instructor", "")).strip()
+                if not nom:
+                    continue
+                norm = _normalizar_texto(nom)
+                if norm not in vistos_norm:
+                    vistos_norm.add(norm)
+                    instructores.append(
+                        {"nombre": nom, "documento": "", "telegram_id": ""}
+                    )
+        except Exception as exc:
+            logger.warning("Error listando instructores: %s", exc)
+        return instructores
+
+    @staticmethod
+    def obtener_rango_fechas_periodo(
+        periodo: str, ahora: Optional[datetime] = None
+    ) -> Tuple[str, str, str]:
+        """
+        Retorna (fecha_inicio_yyyy_mm_dd, fecha_fin_yyyy_mm_dd, etiqueta_legible).
+        Períodos soportados: 'dia' (hoy), 'ayer', 'semana' (lun-dom actual),
+        'semana_ant' (lun-dom semana anterior), 'mes' (mes actual).
+        """
+        dt = ahora or datetime.now(TZ_COLOMBIA)
+        hoy_date = dt.date()
+        per = (periodo or "semana").strip().lower()
+
+        if per in ("dia", "día", "hoy"):
+            f_str = hoy_date.strftime("%Y-%m-%d")
+            return f_str, f_str, f"Día de Hoy ({f_str})"
+
+        if per == "ayer":
+            ayer_date = hoy_date - timedelta(days=1)
+            f_str = ayer_date.strftime("%Y-%m-%d")
+            return f_str, f_str, f"Día de Ayer ({f_str})"
+
+        if per in ("semana_ant", "semana_anterior", "pasada"):
+            inicio_actual = hoy_date - timedelta(days=hoy_date.weekday())
+            ini_ant = inicio_actual - timedelta(days=7)
+            fin_ant = inicio_actual - timedelta(days=1)
+            return (
+                ini_ant.strftime("%Y-%m-%d"),
+                fin_ant.strftime("%Y-%m-%d"),
+                f"Semana Anterior ({ini_ant.strftime('%Y-%m-%d')} al {fin_ant.strftime('%Y-%m-%d')})",
+            )
+
+        if per == "mes":
+            ini_mes = hoy_date.replace(day=1)
+            if hoy_date.month == 12:
+                sig_mes = hoy_date.replace(year=hoy_date.year + 1, month=1, day=1)
+            else:
+                sig_mes = hoy_date.replace(month=hoy_date.month + 1, day=1)
+            fin_mes = sig_mes - timedelta(days=1)
+            return (
+                ini_mes.strftime("%Y-%m-%d"),
+                fin_mes.strftime("%Y-%m-%d"),
+                f"Mes Actual ({ini_mes.strftime('%Y-%m-%d')} al {fin_mes.strftime('%Y-%m-%d')})",
+            )
+
+        # Por defecto: 'semana' (Lunes a Domingo de la semana actual)
+        ini_sem = hoy_date - timedelta(days=hoy_date.weekday())
+        fin_sem = ini_sem + timedelta(days=6)
+        return (
+            ini_sem.strftime("%Y-%m-%d"),
+            fin_sem.strftime("%Y-%m-%d"),
+            f"Semana Actual ({ini_sem.strftime('%Y-%m-%d')} al {fin_sem.strftime('%Y-%m-%d')})",
+        )
+
+    def consultar_clases_por_instructor(
+        self, criterio_instructor: str, periodo: str = "semana"
+    ) -> Dict[str, Any]:
+        """
+        Filtra los registros de 'Registro_Clases' por instructor (o 'TODOS') y por período
+        ('dia', 'ayer', 'semana', 'semana_ant', 'mes'), calculando el total exacto de clases dictadas
+        (contando bloques dobles como 2 clases y bloques individuales como 1 clase).
+        """
+        fecha_ini, fecha_fin, etiqueta_periodo = self.obtener_rango_fechas_periodo(periodo)
+        instructores_lista = self.listar_instructores_registrados()
+
+        es_todos = criterio_instructor.strip().upper() == "TODOS"
+        criterio_norm = _normalizar_texto(criterio_instructor)
+
+        nombre_oficial = criterio_instructor.strip()
+        doc_oficial = ""
+        if not es_todos:
+            for inst in instructores_lista:
+                nom_i = inst["nombre"]
+                doc_i = inst["documento"]
+                tg_i = inst["telegram_id"]
+                if (
+                    criterio_norm == _normalizar_texto(nom_i)
+                    or (doc_i and criterio_norm == _normalizar_texto(doc_i))
+                    or (tg_i and criterio_norm == _normalizar_texto(tg_i))
+                    or (criterio_norm and criterio_norm in _normalizar_texto(nom_i))
+                ):
+                    nombre_oficial = nom_i
+                    doc_oficial = doc_i
+                    break
+
+        nombre_oficial_norm = _normalizar_texto(nombre_oficial)
+        ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
+        todas_filas = self._leer_filas_diccionario(ws_reg, HEADERS_REGISTRO)
+
+        registros_periodo: List[Dict[str, Any]] = []
+        total_clases = 0
+        clases_por_cat: Dict[str, int] = {}
+        clases_por_instructor: Dict[str, int] = {}
+        en_tiempo_count = 0
+        fuera_tiempo_count = 0
+
+        for fila in todas_filas:
+            fecha_fila = str(fila.get("Fecha_Reporte", "")).strip()
+            if not fecha_fila and fila.get("Timestamp"):
+                fecha_fila = str(fila.get("Timestamp", "")).strip()[:10]
+            if not (fecha_ini <= fecha_fila <= fecha_fin):
+                continue
+
+            inst_fila = str(fila.get("Instructor", "")).strip() or "Sin nombre"
+            inst_fila_norm = _normalizar_texto(inst_fila)
+
+            if not es_todos:
+                coincide = (
+                    inst_fila_norm == nombre_oficial_norm
+                    or (criterio_norm and criterio_norm in inst_fila_norm)
+                    or (nombre_oficial_norm and nombre_oficial_norm in inst_fila_norm)
+                )
+                if not coincide:
+                    continue
+
+            raw_clases = str(fila.get("Clases_Reportadas", "")).strip()
+            nums = extraer_numeros_clase(raw_clases)
+            cant = len(nums) if nums else 1
+            cat = normalizar_categoria(str(fila.get("Categoria", "B1")))
+            val_hor = str(fila.get("Validacion_Horario", "EN TIEMPO")).strip()
+
+            if "FUERA" in val_hor.upper():
+                fuera_tiempo_count += 1
+            else:
+                en_tiempo_count += 1
+
+            total_clases += cant
+            clases_por_cat[cat] = clases_por_cat.get(cat, 0) + cant
+            clases_por_instructor[inst_fila] = clases_por_instructor.get(inst_fila, 0) + cant
+
+            item_enriquecido = dict(fila)
+            item_enriquecido["Cantidad_Clases_Calc"] = cant
+            item_enriquecido["Nombre_Alumno"] = (
+                limpiar_solo_nombre_persona(str(fila.get("Nombre_Alumno", "")))
+                or str(fila.get("Nombre_Alumno", ""))
+            )
+            registros_periodo.append(item_enriquecido)
+
+        return {
+            "es_todos": es_todos,
+            "instructor_nombre": "TODOS LOS INSTRUCTORES" if es_todos else nombre_oficial,
+            "instructor_documento": doc_oficial,
+            "periodo_codigo": periodo,
+            "periodo_etiqueta": etiqueta_periodo,
+            "fecha_inicio": fecha_ini,
+            "fecha_fin": fecha_fin,
+            "total_clases": total_clases,
+            "total_reportes": len(registros_periodo),
+            "clases_por_categoria": clases_por_cat,
+            "clases_por_instructor": clases_por_instructor,
+            "en_tiempo": en_tiempo_count,
+            "fuera_tiempo": fuera_tiempo_count,
+            "registros": registros_periodo,
+        }
+
 
 sheets_service = SheetsService()
 
@@ -1647,6 +1840,285 @@ def generar_pdf_seguimiento(
     return buffer
 
 
+def generar_pdf_liquidacion_instructor(datos_consulta: Dict[str, Any]) -> io.BytesIO:
+    """
+    Genera el PDF Oficial de Relación / Liquidación de Clases Dictadas por Instructor
+    (por Día, Semana o Mes) para control de pago semanal en CEA Auto Oriente.
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=1.0 * cm,
+        rightMargin=1.0 * cm,
+        topMargin=0.9 * cm,
+        bottomMargin=0.9 * cm,
+        title="Relacion de Clases Dictadas por Instructor - CEA Auto Oriente",
+    )
+
+    styles = getSampleStyleSheet()
+    estilo_titulo = ParagraphStyle(
+        "TituloLiq",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=9.5,
+        leading=12.0,
+        alignment=TA_CENTER,
+    )
+    estilo_meta = ParagraphStyle(
+        "MetaLiq",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=7.8,
+        leading=10.0,
+        alignment=TA_LEFT,
+    )
+    estilo_cab = ParagraphStyle(
+        "CabLiq",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=7.2,
+        leading=9.0,
+        alignment=TA_CENTER,
+    )
+    estilo_celda = ParagraphStyle(
+        "CeldaLiq",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=7.0,
+        leading=8.8,
+        alignment=TA_LEFT,
+    )
+    estilo_celda_c = ParagraphStyle(
+        "CeldaLiqC",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=7.0,
+        leading=8.8,
+        alignment=TA_CENTER,
+    )
+
+    elementos = []
+    logo_path = obtener_ruta_logo()
+    if logo_path:
+        celda_logo = Image(
+            str(logo_path), width=4.6 * cm, height=1.25 * cm, kind="proportional"
+        )
+    else:
+        celda_logo = Paragraph("<b>CEA AUTO ORIENTE</b>", estilo_titulo)
+
+    ahora_col = datetime.now(TZ_COLOMBIA).strftime("%Y-%m-%d %H:%M")
+    filas_enc = [
+        [
+            celda_logo,
+            Paragraph(
+                "<b>CEA AUTO ORIENTE<br/>RELACIÓN Y LIQUIDACIÓN DE CLASES PRÁCTICAS DICTADAS</b>",
+                estilo_titulo,
+            ),
+        ]
+    ]
+    t_enc = Table(filas_enc, colWidths=[5.5 * cm, 14.0 * cm])
+    t_enc.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.7, colors.black),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ]
+        )
+    )
+    elementos.append(t_enc)
+    elementos.append(Spacer(1, 0.2 * cm))
+
+    nom_inst = datos_consulta["instructor_nombre"]
+    doc_inst = datos_consulta.get("instructor_documento") or "Registrado en sistema"
+    desglose_cat = (
+        ", ".join(
+            f"{k}: {v} clase(s)"
+            for k, v in sorted(datos_consulta["clases_por_categoria"].items())
+        )
+        or "Sin clases en este período"
+    )
+
+    filas_resumen = [
+        [
+            Paragraph(f"<b>Instructor:</b> {nom_inst}", estilo_meta),
+            Paragraph(f"<b>Documento:</b> {doc_inst}", estilo_meta),
+        ],
+        [
+            Paragraph(f"<b>Período Consultado:</b> {datos_consulta['periodo_etiqueta']}", estilo_meta),
+            Paragraph(f"<b>Fecha Generación:</b> {ahora_col}", estilo_meta),
+        ],
+        [
+            Paragraph(
+                f"<b>TOTAL CLASES DICTADAS (PARA PAGO):</b> <font size=9><b>{datos_consulta['total_clases']}</b></font> clase(s)",
+                estilo_meta,
+            ),
+            Paragraph(f"<b>Desglose por Categoría:</b> {desglose_cat}", estilo_meta),
+        ],
+        [
+            Paragraph(
+                f"<b>Evidencias En Tiempo:</b> {datos_consulta['en_tiempo']}", estilo_meta
+            ),
+            Paragraph(
+                f"<b>Evidencias Fuera de Tiempo:</b> {datos_consulta['fuera_tiempo']}",
+                estilo_meta,
+            ),
+        ],
+    ]
+    t_res = Table(filas_resumen, colWidths=[9.75 * cm, 9.75 * cm])
+    t_res.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.grey),
+                ("BACKGROUND", (0, 2), (-1, 2), colors.HexColor("#E8F5E9")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+        )
+    )
+    elementos.append(t_res)
+    elementos.append(Spacer(1, 0.25 * cm))
+
+    # Si es consolidado de TODOS LOS INSTRUCTORES, agregar tabla resumen por instructor
+    if datos_consulta.get("es_todos") and datos_consulta.get("clases_por_instructor"):
+        filas_cons = [
+            [
+                Paragraph("<b>INSTRUCTOR</b>", estilo_cab),
+                Paragraph("<b>TOTAL CLASES DICTADAS EN EL PERÍODO</b>", estilo_cab),
+            ]
+        ]
+        for inst_k, cant_v in sorted(
+            datos_consulta["clases_por_instructor"].items(),
+            key=lambda x: x[1],
+            reverse=True,
+        ):
+            filas_cons.append(
+                [
+                    Paragraph(f"<b>{inst_k}</b>", estilo_celda),
+                    Paragraph(f"<b>{cant_v} clase(s)</b>", estilo_celda_c),
+                ]
+            )
+        t_cons = Table(filas_cons, colWidths=[13.0 * cm, 6.5 * cm])
+        t_cons.setStyle(
+            TableStyle(
+                [
+                    ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAEAEA")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+        elementos.append(t_cons)
+        elementos.append(Spacer(1, 0.25 * cm))
+
+    # Tabla detallada de clases dictadas
+    filas_det = [
+        [
+            Paragraph("<b>#</b>", estilo_cab),
+            Paragraph("<b>Fecha / Hora</b>", estilo_cab),
+            Paragraph("<b>Instructor</b>", estilo_cab),
+            Paragraph("<b>Alumno</b>", estilo_cab),
+            Paragraph("<b>Cédula Alumno</b>", estilo_cab),
+            Paragraph("<b>Cat.</b>", estilo_cab),
+            Paragraph("<b>Clase(s)</b>", estilo_cab),
+            Paragraph("<b>Cant.</b>", estilo_cab),
+            Paragraph("<b>Horario</b>", estilo_cab),
+        ]
+    ]
+
+    for i, reg in enumerate(datos_consulta["registros"], start=1):
+        fecha_h = f"{reg.get('Fecha_Reporte', '')} {reg.get('Hora_Reporte', '')}".strip()
+        inst_r = str(reg.get("Instructor", "")).strip()
+        alu_r = str(reg.get("Nombre_Alumno", "")).strip()
+        doc_r = str(reg.get("ID_Alumno", "")).strip()
+        cat_r = normalizar_categoria(str(reg.get("Categoria", "B1")))
+        clases_r = str(reg.get("Clases_Reportadas", "")).strip()
+        cant_r = reg.get("Cantidad_Clases_Calc", 1)
+        hor_r = str(reg.get("Validacion_Horario", "EN TIEMPO")).strip()
+        hor_corto = "Fuera de tiempo" if "FUERA" in hor_r.upper() else "En tiempo"
+
+        filas_det.append(
+            [
+                Paragraph(str(i), estilo_celda_c),
+                Paragraph(fecha_h, estilo_celda_c),
+                Paragraph(inst_r, estilo_celda),
+                Paragraph(alu_r, estilo_celda),
+                Paragraph(doc_r, estilo_celda_c),
+                Paragraph(cat_r, estilo_celda_c),
+                Paragraph(clases_r, estilo_celda_c),
+                Paragraph(f"<b>{cant_r}</b>", estilo_celda_c),
+                Paragraph(hor_corto, estilo_celda_c),
+            ]
+        )
+
+    if len(filas_det) == 1:
+        filas_det.append(
+            [
+                Paragraph("-", estilo_celda_c),
+                Paragraph("Sin registros en este período", estilo_celda_c),
+                "",
+                "",
+                "",
+                "",
+                "",
+                Paragraph("0", estilo_celda_c),
+                "",
+            ]
+        )
+
+    t_det = Table(
+        filas_det,
+        colWidths=[
+            0.8 * cm,
+            2.5 * cm,
+            3.3 * cm,
+            4.2 * cm,
+            2.3 * cm,
+            1.1 * cm,
+            1.5 * cm,
+            1.2 * cm,
+            2.6 * cm,
+        ],
+        repeatRows=1,
+    )
+    t_det.setStyle(
+        TableStyle(
+            [
+                ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EAEAEA")),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+            ]
+        )
+    )
+    elementos.append(t_det)
+    elementos.append(Spacer(1, 0.6 * cm))
+
+    filas_firmas = [
+        [
+            Paragraph(
+                "________________________________________<br/><b>Firma del Instructor</b>",
+                estilo_celda_c,
+            ),
+            Paragraph(
+                "________________________________________<br/><b>Revisado / Liquidación Administración CEA Auto Oriente</b>",
+                estilo_celda_c,
+            ),
+        ]
+    ]
+    t_firmas = Table(filas_firmas, colWidths=[9.75 * cm, 9.75 * cm])
+    elementos.append(t_firmas)
+
+    doc.build(elementos)
+    buffer.seek(0)
+    return buffer
+
+
 # =============================================================================
 # 6. CONSTRUCCIÓN DE MENÚS INTERACTIVOS CON BLOQUEO POR INSTRUCTOR (OWNER_ID)
 # =============================================================================
@@ -1663,6 +2135,12 @@ def teclado_categorias(owner_id: int) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("🔄 Recategorización C1", callback_data=f"cat|RECAT_C1|{owner_id}"),
+        ],
+        [
+            InlineKeyboardButton(
+                "📊 Consultar mis clases (Día/Semana/Mes)",
+                callback_data=f"ver_mis_clases|semana|{owner_id}",
+            ),
         ],
         [
             InlineKeyboardButton(
@@ -2203,6 +2681,145 @@ def _instrucciones_submenu_clases(
     )
 
 
+def _formatear_texto_liquidacion(datos: Dict[str, Any]) -> str:
+    desglose_cat = (
+        " | ".join(
+            f"*{k}:* `{v}`" for k, v in sorted(datos["clases_por_categoria"].items())
+        )
+        or "Ninguna"
+    )
+    doc_txt = (
+        f" *(CC: `{datos['instructor_documento']}`)*"
+        if datos.get("instructor_documento")
+        else ""
+    )
+    lineas = [
+        "📊 *REPORTE DE CLASES DICTADAS (CONTROL SEMANAL / PAGO)*",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"👨‍🏫 *Instructor:* {datos['instructor_nombre']}{doc_txt}",
+        f"📅 *Período:* {datos['periodo_etiqueta']}",
+        f"✅ *TOTAL CLASES DICTADAS:* `{datos['total_clases']}` clase(s)",
+        f"🏷 *Por Categoría:* {desglose_cat}",
+        f"⏱️ *Horario:* En tiempo `{datos['en_tiempo']}` | Fuera de tiempo `{datos['fuera_tiempo']}`",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    if datos.get("es_todos") and datos.get("clases_por_instructor"):
+        lineas.append("👥 *Consolidado por Instructor:*")
+        for inst_n, cant_c in sorted(
+            datos["clases_por_instructor"].items(), key=lambda x: x[1], reverse=True
+        ):
+            lineas.append(f"• *{inst_n}:* `{cant_c}` clase(s)")
+        lineas.append("━━━━━━━━━━━━━━━━━━━━━━")
+
+    registros = datos.get("registros", [])
+    if not registros:
+        lineas.append("ℹ️ _No hay clases registradas en este período._")
+    else:
+        lineas.append(f"📋 *Detalle de clases ({len(registros)} reporte(s)):*")
+        for idx, r in enumerate(registros[:25], start=1):
+            fecha_corta = str(r.get("Fecha_Reporte", ""))[-5:]
+            hora_c = str(r.get("Hora_Reporte", ""))
+            alu = str(r.get("Nombre_Alumno", ""))
+            cat = normalizar_categoria(str(r.get("Categoria", "B1")))
+            clases_rep = str(r.get("Clases_Reportadas", ""))
+            cant = r.get("Cantidad_Clases_Calc", 1)
+            inst_tag = f" [{r.get('Instructor', '')}]" if datos.get("es_todos") else ""
+            lineas.append(
+                f"`{idx:02d}.` `{fecha_corta} {hora_c}` — *{alu}* ({cat} Cl.{clases_rep} = *{cant} cl.*){inst_tag}"
+            )
+        if len(registros) > 25:
+            lineas.append(
+                f"_...y {len(registros) - 25} registro(s) más (descarga el PDF para ver la tabla completa)._"
+            )
+
+    return "\n".join(lineas)
+
+
+def teclado_periodos_liquidacion(
+    criterio_inst: str,
+    periodo_actual: str,
+    owner_id: int,
+    es_admin: bool = False,
+) -> InlineKeyboardMarkup:
+    """Botones para cambiar entre Día (Hoy/Ayer), Semana, Semana Anterior, Mes y Descargar PDF."""
+    criterio_seguro = criterio_inst[:24].replace("|", "")
+
+    def _marca(p: str, texto: str) -> str:
+        return f"🔘 {texto}" if periodo_actual == p else texto
+
+    botones = [
+        [
+            InlineKeyboardButton(
+                _marca("dia", "📅 Hoy"),
+                callback_data=f"liq|{criterio_seguro}|dia|{owner_id}",
+            ),
+            InlineKeyboardButton(
+                _marca("ayer", "🗓️ Ayer"),
+                callback_data=f"liq|{criterio_seguro}|ayer|{owner_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                _marca("semana", "📆 Esta Semana"),
+                callback_data=f"liq|{criterio_seguro}|semana|{owner_id}",
+            ),
+            InlineKeyboardButton(
+                _marca("semana_ant", "⏪ Semana Pasada"),
+                callback_data=f"liq|{criterio_seguro}|semana_ant|{owner_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                _marca("mes", "🗓️ Este Mes"),
+                callback_data=f"liq|{criterio_seguro}|mes|{owner_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "📄 Descargar Relación en PDF",
+                callback_data=f"liq_pdf|{criterio_seguro}|{periodo_actual}|{owner_id}",
+            ),
+        ],
+    ]
+    if es_admin:
+        botones.append(
+            [
+                InlineKeyboardButton(
+                    "👨‍🏫 Elegir otro Instructor",
+                    callback_data=f"menu_nomina|{owner_id}",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(botones)
+
+
+def teclado_lista_instructores_admin(owner_id: int) -> InlineKeyboardMarkup:
+    instructores = sheets_service.listar_instructores_registrados()
+    botones = [
+        [
+            InlineKeyboardButton(
+                "👥 TODOS LOS INSTRUCTORES (Consolidado Semanal)",
+                callback_data=f"liq|TODOS|semana|{owner_id}",
+            )
+        ]
+    ]
+    for inst in instructores[:18]:
+        nom = inst["nombre"]
+        doc = inst.get("documento", "")
+        criterio_corto = (doc if doc else nom)[:24].replace("|", "")
+        etiqueta_btn = f"👨‍🏫 {nom}" + (f" ({doc})" if doc else "")
+        botones.append(
+            [
+                InlineKeyboardButton(
+                    etiqueta_btn,
+                    callback_data=f"liq|{criterio_corto}|semana|{owner_id}",
+                )
+            ]
+        )
+    return InlineKeyboardMarkup(botones)
+
+
 def _extraer_owner_id_de_callback(data: str, msg_id: int) -> Optional[int]:
     partes = data.split("|")
     if len(partes) >= 2 and partes[-1].isdigit():
@@ -2244,6 +2861,77 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         accion_limpia = "|".join(partes_raw[:-1])
     else:
         accion_limpia = data
+
+    es_admin = await es_usuario_administrador(update, context)
+
+    # Manejadores de consulta de clases dictadas (Día / Semana / Mes / PDF de Liquidación)
+    if accion_limpia == "menu_nomina":
+        if not es_admin:
+            return
+        await query.message.edit_text(
+            "👑 *PANEL DE LIQUIDACIÓN Y CONTROL DE CLASES POR INSTRUCTOR*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Selecciona el instructor que deseas consultar (por Día, Semana o Mes):",
+            reply_markup=teclado_lista_instructores_admin(user_id),
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion_limpia.startswith("ver_mis_clases|"):
+        periodo = accion_limpia.split("|", 1)[1]
+        perfil_inst = sheets_service.obtener_instructor_registrado(user_id)
+        criterio_inst = (
+            perfil_inst["nombre"]
+            if perfil_inst
+            else (query.from_user.full_name or "Instructor")
+        )
+        datos_liq = sheets_service.consultar_clases_por_instructor(
+            criterio_inst, periodo=periodo
+        )
+        await query.message.edit_text(
+            _formatear_texto_liquidacion(datos_liq),
+            reply_markup=teclado_periodos_liquidacion(
+                criterio_inst, periodo, user_id, es_admin=es_admin
+            ),
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion_limpia.startswith("liq|"):
+        _, criterio_inst, periodo = accion_limpia.split("|", 2)
+        datos_liq = sheets_service.consultar_clases_por_instructor(
+            criterio_inst, periodo=periodo
+        )
+        await query.message.edit_text(
+            _formatear_texto_liquidacion(datos_liq),
+            reply_markup=teclado_periodos_liquidacion(
+                criterio_inst, periodo, user_id, es_admin=es_admin
+            ),
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion_limpia.startswith("liq_pdf|"):
+        _, criterio_inst, periodo = accion_limpia.split("|", 2)
+        datos_liq = sheets_service.consultar_clases_por_instructor(
+            criterio_inst, periodo=periodo
+        )
+        pdf_buf = generar_pdf_liquidacion_instructor(datos_liq)
+        nom_archivo_inst = datos_liq["instructor_nombre"].replace(" ", "_")
+        filename = f"Liquidacion_Clases_{nom_archivo_inst}_{datos_liq['fecha_inicio']}_a_{datos_liq['fecha_fin']}.pdf"
+        await context.bot.send_document(
+            chat_id=user_id,
+            document=pdf_buf,
+            filename=filename,
+            caption=(
+                f"📄 *Relación de Clases Dictadas — CEA Auto Oriente*\n"
+                f"👨‍🏫 *Instructor:* {datos_liq['instructor_nombre']}\n"
+                f"📅 *Período:* {datos_liq['periodo_etiqueta']}\n"
+                f"✅ *Total Clases Dictadas:* `{datos_liq['total_clases']}`"
+            ),
+            parse_mode="Markdown",
+        )
+        return
 
     sesion = SESIONES_REPORTE.get((chat_id, user_id))
     if not sesion:
@@ -2605,16 +3293,119 @@ async def cmd_supervisar_admin(update: Update, context: ContextTypes.DEFAULT_TYP
         pass
 
 
+async def cmd_mis_clases(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Permite a cada instructor consultar sus propias clases dictadas (por Día, Semana o Mes)
+    y descargar su PDF de relación de clases.
+    """
+    msg = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if not msg or not user or not chat:
+        return
+
+    es_admin = await es_usuario_administrador(update, context)
+    perfil_inst = sheets_service.obtener_instructor_registrado(user.id)
+    criterio_inst = (
+        perfil_inst["nombre"]
+        if perfil_inst
+        else (user.full_name or "Instructor")
+    )
+
+    periodo = "semana"
+    if context.args:
+        arg0 = context.args[0].lower().strip()
+        if arg0 in ("dia", "día", "hoy"):
+            periodo = "dia"
+        elif arg0 == "ayer":
+            periodo = "ayer"
+        elif arg0 in ("pasada", "anterior", "semana_ant"):
+            periodo = "semana_ant"
+        elif arg0 == "mes":
+            periodo = "mes"
+
+    datos_liq = sheets_service.consultar_clases_por_instructor(
+        criterio_inst, periodo=periodo
+    )
+    msg_resp = await msg.reply_text(
+        _formatear_texto_liquidacion(datos_liq),
+        reply_markup=teclado_periodos_liquidacion(
+            criterio_inst, periodo, user.id, es_admin=es_admin
+        ),
+        reply_to_message_id=msg.message_id,
+        parse_mode="Markdown",
+    )
+    PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
+
+
+async def cmd_nomina_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Exclusivo para Administradores (/nomina, /liquidacion, /clases_instructor):
+    Muestra el panel para consultar las clases dictadas por cualquier instructor (o todos)
+    por Día, Semana, Semana Anterior o Mes y generar el PDF de pago semanal.
+    Si se escribe en un grupo, borra el comando y responde en el chat privado del Administrador.
+    """
+    msg = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if not msg or not user or not chat:
+        return
+
+    es_admin = await es_usuario_administrador(update, context)
+    if chat.type in ("group", "supergroup"):
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
+    if not es_admin:
+        # Si es un instructor normal, mostrarle únicamente sus propias clases
+        await cmd_mis_clases(update, context)
+        return
+
+    ADMIN_USER_IDS.add(user.id)
+    destino_privado = user.id
+
+    if context.args:
+        criterio_inst = " ".join(context.args).strip()
+        datos_liq = sheets_service.consultar_clases_por_instructor(
+            criterio_inst, periodo="semana"
+        )
+        msg_resp = await context.bot.send_message(
+            chat_id=destino_privado,
+            text=_formatear_texto_liquidacion(datos_liq),
+            reply_markup=teclado_periodos_liquidacion(
+                criterio_inst, "semana", user.id, es_admin=True
+            ),
+            parse_mode="Markdown",
+        )
+        PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
+        return
+
+    msg_resp = await context.bot.send_message(
+        chat_id=destino_privado,
+        text=(
+            "👑 *PANEL DE LIQUIDACIÓN Y CLASES POR INSTRUCTOR*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Selecciona el instructor que deseas consultar (por Día, Semana o Mes) para su liquidación:"
+        ),
+        reply_markup=teclado_lista_instructores_admin(user.id),
+        parse_mode="Markdown",
+    )
+    PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
+
+
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     es_admin = await es_usuario_administrador(update, context)
 
     bloque_admin = (
         "\n👑 *Comandos Exclusivos de Administración (Privados):*\n"
-        "• `/reporte [Cédula o Nombre]` — Genera el PDF oficial y te lo envía por privado.\n"
+        "• `/nomina` o `/liquidacion` — Consultar clases dictadas por cualquier instructor (Día/Semana/Mes) y descargar PDF de pago.\n"
+        "• `/reporte [Cédula o Nombre]` — Genera el PDF oficial del alumno y te lo envía por privado.\n"
         "• `/alertas` — Recibe alertas privadas cuando envíen fotos fuera de horario.\n"
         "• `/supervisar` — Recibe en tu privado copia en vivo de todas las clases.\n"
-        "• `/inicializar` — Verifica las hojas en Google Sheets."
+        "• `/inicializar` — Verifica y limpia las hojas en Google Sheets."
         if es_admin
         else ""
     )
@@ -2630,7 +3421,9 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "   • *Si es 1 sola clase:* enviar entre el **minuto 18 y el minuto 28**.\n"
         "2️⃣ Toca la **Categoría** (`🏍️ A1 Moto`, `🏍️ A2 Moto`, `🚗 B1 Carro Particular`, `🚕 C1 Servicio Público`, `🔄 Recategorización C1`).\n"
         "3️⃣ Marca **1 clase** o **2 clases** (`✅`) y pulsa **`💾 CONFIRMAR CLASE(S)`**.\n"
-        "4️⃣ Escribe el **Nombre Completo y Cédula** del alumno (ej. `Sergio Andrés Pérez 1098765432`).\n"
+        "4️⃣ Escribe el **Nombre Completo y Cédula** del alumno (ej. `Sergio Andrés Pérez 1098765432`).\n\n"
+        "📊 *Consultar mis Clases Dictadas (Día / Semana / Mes):*\n"
+        "`/mis_clases` _(Permite ver tus clases por día, semana o mes y descargar tu PDF soporte)_.\n"
         f"{bloque_admin}"
     )
     await msg.reply_text(
@@ -2810,6 +3603,8 @@ def main() -> None:
     app.add_handler(CommandHandler(["start", "ayuda", "help"], cmd_ayuda))
     app.add_handler(CommandHandler(["soy", "instructor", "mi_nombre"], cmd_registrar_instructor))
     app.add_handler(CommandHandler(["clase", "menu", "registrar"], cmd_menu_clase))
+    app.add_handler(CommandHandler(["mis_clases", "misclases", "clases"], cmd_mis_clases))
+    app.add_handler(CommandHandler(["nomina", "liquidacion", "clases_instructor"], cmd_nomina_admin))
     app.add_handler(CommandHandler("alertas", cmd_alertas_admin))
     app.add_handler(CommandHandler("supervisar", cmd_supervisar_admin))
     app.add_handler(CommandHandler("inicializar", cmd_inicializar))
