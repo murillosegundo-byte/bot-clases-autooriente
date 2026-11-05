@@ -980,6 +980,8 @@ class SheetsService:
                 if len(fila) >= 3 and str(fila[2]).strip():
                     original = str(fila[2]).strip()
                     limpio = limpiar_solo_nombre_persona(original)
+                    if limpio and _normalizar_texto(limpio) == "martin sanchez juan herrera":
+                        limpio = "Juan Herrera"
                     if limpio and limpio != original:
                         ws_alu.update_cell(idx_fila, 3, limpio)
                         corregidos += 1
@@ -994,6 +996,13 @@ class SheetsService:
                     if limpio and limpio != original:
                         ws_reg.update_cell(idx_fila, 6, limpio)
                         corregidos += 1
+
+            # Asegurar que el alumno Juan Manuel Melo Hortua (B1 - 1095920107) esté en el listado de Alumnos
+            self.registrar_o_actualizar_alumno(
+                documento="1095920107",
+                nombre_completo="Juan Manuel Melo Hortua",
+                categoria="B1",
+            )
         except Exception as exc:
             logger.warning("No se pudo ejecutar limpieza automática de nombres: %s", exc)
         return corregidos
@@ -1009,6 +1018,7 @@ class SheetsService:
             ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
             registros = self._leer_filas_diccionario(ws, HEADERS_ALUMNOS)
             activos = []
+            filtrar_cat = categoria and categoria.strip().upper() != "TODAS"
             for f in registros:
                 nombre = str(f.get("Nombre_Completo", "")).strip()
                 if not nombre:
@@ -1016,12 +1026,18 @@ class SheetsService:
                 estado = str(f.get("Estado", "En curso")).strip().lower()
                 if "finalizado" in estado:
                     continue
-                if categoria:
+                if filtrar_cat:
                     cat_alumno = normalizar_categoria(str(f.get("Categoria", "")))
                     if cat_alumno != normalizar_categoria(categoria):
                         continue
                 activos.append(f)
-            return activos if activos else [f for f in registros if str(f.get("Nombre_Completo", "")).strip()]
+            lista_base = (
+                activos
+                if activos
+                else [f for f in registros if str(f.get("Nombre_Completo", "")).strip()]
+            )
+            # Mostrar primero los alumnos más recientes (de abajo hacia arriba) para que los nuevos salgan de primeros
+            return list(reversed(lista_base))
         except Exception as exc:
             logger.warning("No se pudo listar alumnos activos: %s", exc)
             return []
@@ -2230,21 +2246,87 @@ def teclado_clases_por_categoria(
     return InlineKeyboardMarkup(botones)
 
 
-def teclado_seleccion_alumno(categoria: str, owner_id: int) -> InlineKeyboardMarkup:
-    alumnos = sheets_service.listar_alumnos_activos(categoria=categoria)
-    botones = []
-    for f in alumnos[:8]:
+def teclado_seleccion_alumno(
+    categoria: str, owner_id: int, pagina: int = 0, filtro_cat: Optional[str] = None
+) -> InlineKeyboardMarkup:
+    cat_consulta = filtro_cat or categoria
+    alumnos = sheets_service.listar_alumnos_activos(categoria=cat_consulta)
+    por_pagina = 25
+    total_alumnos = len(alumnos)
+    total_paginas = max(1, (total_alumnos + por_pagina - 1) // por_pagina)
+    pagina = max(0, min(pagina, total_paginas - 1))
+
+    inicio = pagina * por_pagina
+    fin = inicio + por_pagina
+    alumnos_pagina = alumnos[inicio:fin]
+
+    botones = [
+        [
+            InlineKeyboardButton(
+                "➕ Alumno Nuevo (Escribir Nombre y Cédula)",
+                callback_data=f"nuevo_alu|{categoria}|{owner_id}",
+            )
+        ]
+    ]
+
+    for f in alumnos_pagina:
         nombre = str(f.get("Nombre_Completo", "")).strip()
         doc = str(f.get("Documento", "")).strip()
+        cat_alu = str(f.get("Categoria", "")).strip()
         if nombre and doc:
+            etiqueta_cat = f" [{cat_alu}]" if (cat_consulta == "TODAS" and cat_alu) else ""
             botones.append(
                 [
                     InlineKeyboardButton(
-                        f"👤 {nombre} — CC: {doc}",
+                        f"👤 {nombre}{etiqueta_cat} — CC: {doc}",
                         callback_data=f"alu|{doc}|{owner_id}",
                     )
                 ]
             )
+
+    if total_paginas > 1:
+        fila_nav = []
+        if pagina > 0:
+            fila_nav.append(
+                InlineKeyboardButton(
+                    "⬅️ Anterior",
+                    callback_data=f"alu_pag|{cat_consulta}|{pagina - 1}|{owner_id}",
+                )
+            )
+        fila_nav.append(
+            InlineKeyboardButton(
+                f"📄 Pág {pagina + 1}/{total_paginas} ({total_alumnos})",
+                callback_data=f"alu_pag|{cat_consulta}|{pagina}|{owner_id}",
+            )
+        )
+        if pagina < total_paginas - 1:
+            fila_nav.append(
+                InlineKeyboardButton(
+                    "Siguiente ➡️",
+                    callback_data=f"alu_pag|{cat_consulta}|{pagina + 1}|{owner_id}",
+                )
+            )
+        botones.append(fila_nav)
+
+    if cat_consulta != "TODAS":
+        botones.append(
+            [
+                InlineKeyboardButton(
+                    "👥 Ver alumnos de todas las categorías",
+                    callback_data=f"alu_pag|TODAS|0|{owner_id}",
+                )
+            ]
+        )
+    else:
+        botones.append(
+            [
+                InlineKeyboardButton(
+                    f"🏷 Filtrar solo categoría {categoria}",
+                    callback_data=f"alu_pag|{categoria}|0|{owner_id}",
+                )
+            ]
+        )
+
     botones.append(
         [
             InlineKeyboardButton("⬅️ Volver a Clases", callback_data=f"cat|{categoria}|{owner_id}"),
@@ -2837,9 +2919,11 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
     msg_id = query.message.message_id
     data = query.data or ""
 
-    # 1. CONTROL DE TURNOS EN GRUPO: Validar que quien presiona el botón sea el instructor dueño de la foto
+    es_admin = await es_usuario_administrador(update, context)
+
+    # 1. CONTROL DE TURNOS EN GRUPO: Validar que quien presiona el botón sea el instructor dueño de la foto (o el Administrador)
     owner_id = _extraer_owner_id_de_callback(data, msg_id)
-    if owner_id is not None and user_id != owner_id:
+    if owner_id is not None and user_id != owner_id and not es_admin:
         sesion_dueno = SESIONES_REPORTE.get((chat_id, owner_id))
         nombre_dueno = (
             sesion_dueno.get("instructor_nombre", "otro compañero")
@@ -2862,7 +2946,12 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
     else:
         accion_limpia = data
 
-    es_admin = await es_usuario_administrador(update, context)
+    # Si un administrador interactúa con el menú de un instructor, mantener la sesión del instructor dueño de la foto
+    sesion_uid = (
+        owner_id
+        if (owner_id is not None and (chat_id, owner_id) in SESIONES_REPORTE)
+        else user_id
+    )
 
     # Manejadores de consulta de clases dictadas (Día / Semana / Mes / PDF de Liquidación)
     if accion_limpia == "menu_nomina":
@@ -2933,12 +3022,12 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    sesion = SESIONES_REPORTE.get((chat_id, user_id))
+    sesion = SESIONES_REPORTE.get((chat_id, sesion_uid))
     if not sesion:
         ahora = datetime.now(TZ_COLOMBIA)
-        perfil_inst = sheets_service.obtener_instructor_registrado(user_id)
+        perfil_inst = sheets_service.obtener_instructor_registrado(sesion_uid)
         sesion = {
-            "owner_id": user_id,
+            "owner_id": sesion_uid,
             "foto_msg_id": msg_id,
             "menu_msg_id": msg_id,
             "foto_bytes": None,
@@ -2964,11 +3053,11 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
             "esperando_registro_instructor": False,
             "esperando_nombre_texto": False,
         }
-        SESIONES_REPORTE[(chat_id, user_id)] = sesion
-        PROPIETARIO_MENSAJE_BOT[msg_id] = user_id
+        SESIONES_REPORTE[(chat_id, sesion_uid)] = sesion
+        PROPIETARIO_MENSAJE_BOT[msg_id] = sesion_uid
 
     if accion_limpia == "cancelar":
-        SESIONES_REPORTE.pop((chat_id, user_id), None)
+        SESIONES_REPORTE.pop((chat_id, sesion_uid), None)
         PROPIETARIO_MENSAJE_BOT.pop(msg_id, None)
         await query.message.edit_text(
             f"❌ Registro cancelado por *{sesion.get('instructor_nombre', 'el instructor')}*.",
@@ -2997,7 +3086,7 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         await query.message.edit_text(
             f"{_encabezado_instructor(sesion)}"
             f"👇 *Paso 1:* Selecciona la **Categoría** del curso:",
-            reply_markup=teclado_categorias(user_id),
+            reply_markup=teclado_categorias(sesion_uid),
             parse_mode="Markdown",
         )
         return
@@ -3009,7 +3098,7 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         sesion["esperando_nombre_texto"] = False
         await query.message.edit_text(
             _instrucciones_submenu_clases(sesion, cat_key, []),
-            reply_markup=teclado_clases_por_categoria(cat_key, [], user_id),
+            reply_markup=teclado_clases_por_categoria(cat_key, [], sesion_uid),
             parse_mode="Markdown",
         )
         return
@@ -3019,7 +3108,7 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         sesion["indices_clases"] = []
         await query.message.edit_text(
             _instrucciones_submenu_clases(sesion, cat_key, []),
-            reply_markup=teclado_clases_por_categoria(cat_key, [], user_id),
+            reply_markup=teclado_clases_por_categoria(cat_key, [], sesion_uid),
             parse_mode="Markdown",
         )
         return
@@ -3041,7 +3130,7 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         await query.message.edit_text(
             _instrucciones_submenu_clases(sesion, cat_key, sesion["indices_clases"]),
             reply_markup=teclado_clases_por_categoria(
-                cat_key, sesion["indices_clases"], user_id
+                cat_key, sesion["indices_clases"], sesion_uid
             ),
             parse_mode="Markdown",
         )
@@ -3059,14 +3148,62 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         sesion["cantidad_clases"] = cant_clases
 
         if sesion.get("nombre_alumno_limpio") and sesion.get("documento_detectado"):
-            await guardar_en_sheets_y_confirmar(chat_id, user_id, context, query.message)
+            await guardar_en_sheets_y_confirmar(chat_id, sesion_uid, context, query.message)
         else:
             sesion["esperando_nombre_texto"] = True
             await query.message.edit_text(
                 mensaje_indicaciones_alumno(sesion, cat_key, clases_txt, tema_txt),
-                reply_markup=teclado_seleccion_alumno(cat_key, user_id),
+                reply_markup=teclado_seleccion_alumno(cat_key, sesion_uid, pagina=0),
                 parse_mode="Markdown",
             )
+        return
+
+    if accion_limpia.startswith("alu_pag|"):
+        _, filtro_cat, pag_str = accion_limpia.split("|", 2)
+        cat_key = sesion.get("categoria") or (filtro_cat if filtro_cat != "TODAS" else "B1")
+        clases_txt = sesion.get("clases_texto") or "1-2"
+        tema_txt = sesion.get("tema_oficial") or ""
+        sesion["esperando_nombre_texto"] = True
+        await query.message.edit_text(
+            mensaje_indicaciones_alumno(sesion, cat_key, clases_txt, tema_txt),
+            reply_markup=teclado_seleccion_alumno(
+                cat_key, sesion_uid, pagina=int(pag_str), filtro_cat=filtro_cat
+            ),
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion_limpia.startswith("nuevo_alu|"):
+        cat_key = accion_limpia.split("|", 1)[1]
+        sesion["esperando_nombre_texto"] = True
+        clases_txt = sesion.get("clases_texto") or "1-2"
+        cfg = FORMATOS_OFICIALES.get(cat_key, FORMATOS_OFICIALES["B1"])
+        await query.message.edit_text(
+            f"{_encabezado_instructor(sesion)}"
+            f"✅ *Categoría:* {cfg['nombre_corto']} | *Clase(s):* `{clases_txt}`\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"➕ *REGISTRAR ALUMNO NUEVO Y FINALIZAR CLASE*\n\n"
+            f"Escribe ahora mismo abajo en la barra de mensaje de Telegram el **NOMBRE COMPLETO** y el **NÚMERO DE CÉDULA** del alumno y envíalo:\n\n"
+            f"📌 *Ejemplo:*\n"
+            f"`Juan Manuel Melo Hortua 1095920107`\n\n"
+            f"*(Apenas envíes el mensaje con el nombre y cédula, el bot registrará al alumno en la hoja Alumnos y guardará la clase automáticamente).* 👇",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "⬅️ Volver al listado de Alumnos",
+                            callback_data=f"alu_pag|{cat_key}|0|{sesion_uid}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "❌ Cancelar", callback_data=f"cancelar|{sesion_uid}"
+                        )
+                    ],
+                ]
+            ),
+            parse_mode="Markdown",
+        )
         return
 
     if accion_limpia.startswith("alu|"):
@@ -3080,7 +3217,7 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
             sesion["documento_detectado"] = doc_alu
 
         sesion["esperando_nombre_texto"] = False
-        await guardar_en_sheets_y_confirmar(chat_id, user_id, context, query.message)
+        await guardar_en_sheets_y_confirmar(chat_id, sesion_uid, context, query.message)
         return
 
 
@@ -3094,7 +3231,29 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
     if texto.startswith("/"):
         return
 
-    sesion = SESIONES_REPORTE.get((msg.chat_id, user.id))
+    sesion_uid = user.id
+    sesion = SESIONES_REPORTE.get((msg.chat_id, sesion_uid))
+
+    # Si quien escribe no tiene sesión propia, verificar si respondió al mensaje del bot o si hay una sesión esperando nombre de alumno
+    if not sesion:
+        es_admin = await es_usuario_administrador(update, context)
+        if msg.reply_to_message:
+            owner_reply = PROPIETARIO_MENSAJE_BOT.get(msg.reply_to_message.message_id)
+            if owner_reply and (owner_reply == user.id or es_admin):
+                sesion_uid = owner_reply
+                sesion = SESIONES_REPORTE.get((msg.chat_id, sesion_uid))
+
+        if not sesion:
+            nom_prueba, doc_prueba = extraer_nombre_y_cedula(texto)
+            if nom_prueba and len(nom_prueba.split()) >= 2 and doc_prueba:
+                # Buscar la sesión activa más reciente en este chat que esté esperando el nombre del alumno
+                for (c_id, u_id), ses_cand in reversed(list(SESIONES_REPORTE.items())):
+                    if c_id == msg.chat_id and ses_cand.get("esperando_nombre_texto"):
+                        if es_admin or u_id == user.id:
+                            sesion_uid = u_id
+                            sesion = ses_cand
+                            break
+
     if not sesion:
         return
 
@@ -3112,7 +3271,7 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
 
         info = sheets_service.guardar_instructor_oficial(
-            telegram_user_id=user.id,
+            telegram_user_id=sesion_uid,
             nombre_oficial=nombre_inst,
             documento_oficial=doc_inst,
         )
@@ -3139,7 +3298,7 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
                     chat_id=msg.chat_id,
                     message_id=menu_msg_id,
                     text=texto_paso1,
-                    reply_markup=teclado_categorias(user.id),
+                    reply_markup=teclado_categorias(sesion_uid),
                     parse_mode="Markdown",
                 )
                 return
@@ -3149,15 +3308,15 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
         nuevo_menu = await context.bot.send_message(
             chat_id=msg.chat_id,
             text=texto_paso1,
-            reply_markup=teclado_categorias(user.id),
+            reply_markup=teclado_categorias(sesion_uid),
             reply_to_message_id=sesion.get("foto_msg_id"),
             parse_mode="Markdown",
         )
         sesion["menu_msg_id"] = nuevo_menu.message_id
-        PROPIETARIO_MENSAJE_BOT[nuevo_menu.message_id] = user.id
+        PROPIETARIO_MENSAJE_BOT[nuevo_menu.message_id] = sesion_uid
         return
 
-    # CASO B: El instructor está enviando el Nombre Completo y Cédula del Alumno para su foto
+    # CASO B: El instructor (o administrador) está enviando el Nombre Completo y Cédula del Alumno para su foto
     if sesion.get("esperando_nombre_texto"):
         nombre, documento = extraer_nombre_y_cedula(texto)
 
@@ -3178,7 +3337,7 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
                     text="⏳ Guardando registro en Google Sheets...",
                     reply_to_message_id=sesion.get("foto_msg_id"),
                 )
-                await guardar_en_sheets_y_confirmar(msg.chat_id, user.id, context, aviso)
+                await guardar_en_sheets_y_confirmar(msg.chat_id, sesion_uid, context, aviso)
                 return
 
         if not nombre or len(nombre.split()) < 2 or not documento:
@@ -3211,7 +3370,7 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
             text="⏳ Guardando alumno, instructor y clase en Google Sheets...",
             reply_to_message_id=sesion.get("foto_msg_id"),
         )
-        await guardar_en_sheets_y_confirmar(msg.chat_id, user.id, context, aviso)
+        await guardar_en_sheets_y_confirmar(msg.chat_id, sesion_uid, context, aviso)
         return
 
 
@@ -3463,6 +3622,59 @@ async def cmd_inicializar(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
 
 
+async def cmd_registrar_alumno(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Comando /alumno o /matricular para agregar un alumno directamente al listado de 'Alumnos'
+    (ej: /alumno Juan Manuel Melo Hortua B1 1095920107).
+    """
+    msg = update.effective_message
+    user = update.effective_user
+    if not msg or not user:
+        return
+
+    texto_args = " ".join(context.args).strip() if context.args else ""
+    if not texto_args:
+        await msg.reply_text(
+            "👤 *Matricular / Agregar Alumno al Listado*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Escribe el comando seguido del Nombre Completo, Categoría y Cédula:\n"
+            "`/alumno Juan Manuel Melo Hortua B1 1095920107`",
+            reply_to_message_id=msg.message_id,
+            parse_mode="Markdown",
+        )
+        return
+
+    m_cat = re.search(r"\b(A1|A2|B1|C1|C2|RC1)\b", texto_args, flags=re.IGNORECASE)
+    cat_detectada = normalizar_categoria(m_cat.group(1)) if m_cat else "B1"
+    nombre_alu, doc_alu = extraer_nombre_y_cedula(texto_args)
+
+    if not nombre_alu or len(nombre_alu.split()) < 2 or not doc_alu:
+        await msg.reply_text(
+            "⚠️ Debes indicar el **Nombre Completo** y la **Cédula** del alumno.\n"
+            "📌 *Ejemplo:*\n"
+            "`/alumno Juan Manuel Melo Hortua B1 1095920107`",
+            reply_to_message_id=msg.message_id,
+            parse_mode="Markdown",
+        )
+        return
+
+    ficha = sheets_service.registrar_o_actualizar_alumno(
+        documento=doc_alu,
+        nombre_completo=nombre_alu,
+        categoria=cat_detectada,
+    )
+    await msg.reply_text(
+        f"✅ *ALUMNO AGREGADO AL LISTADO EXITOSAMENTE*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👤 *Alumno:* {ficha.get('Nombre_Completo')}\n"
+        f"🪪 *Documento:* `{ficha.get('Documento')}`\n"
+        f"🏷 *Categoría:* `{ficha.get('Categoria')}`\n\n"
+        f"Ya aparece de primero en los botones para escogerlo al registrar la clase.",
+        reply_to_message_id=msg.message_id,
+        parse_mode="Markdown",
+    )
+
+
 async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Exclusivo para Administradores:
@@ -3602,6 +3814,7 @@ def main() -> None:
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler(["start", "ayuda", "help"], cmd_ayuda))
     app.add_handler(CommandHandler(["soy", "instructor", "mi_nombre"], cmd_registrar_instructor))
+    app.add_handler(CommandHandler(["alumno", "matricular"], cmd_registrar_alumno))
     app.add_handler(CommandHandler(["clase", "menu", "registrar"], cmd_menu_clase))
     app.add_handler(CommandHandler(["mis_clases", "misclases", "clases"], cmd_mis_clases))
     app.add_handler(CommandHandler(["nomina", "liquidacion", "clases_instructor"], cmd_nomina_admin))
