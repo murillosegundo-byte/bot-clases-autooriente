@@ -997,6 +997,34 @@ class SheetsService:
                         ws_reg.update_cell(idx_fila, 6, limpio)
                         corregidos += 1
 
+            # Eliminar registros de clases duplicadas para el mismo alumno, categoría y número de clase
+            filas_reg_act = ws_reg.get_all_values()
+            clases_vistas_por_alumno: set = set()
+            filas_a_eliminar: List[int] = []
+            for idx_fila in range(2, len(filas_reg_act) + 1):
+                fila = filas_reg_act[idx_fila - 1]
+                if not any(str(c).strip() for c in fila):
+                    continue
+                id_alu = _normalizar_texto(str(fila[4]).strip()) if len(fila) > 4 else ""
+                nom_alu = _normalizar_texto(str(fila[5]).strip()) if len(fila) > 5 else ""
+                cat_alu = normalizar_categoria(str(fila[6]).strip()) if len(fila) > 6 else "B1"
+                clases_rep = str(fila[7]).strip() if len(fila) > 7 else ""
+                nums_cl = tuple(sorted(extraer_numeros_clase(clases_rep)))
+                clave_alu = id_alu or nom_alu
+                if clave_alu and nums_cl:
+                    clave_unica = (clave_alu, cat_alu, nums_cl)
+                    if clave_unica in clases_vistas_por_alumno:
+                        filas_a_eliminar.append(idx_fila)
+                    else:
+                        clases_vistas_por_alumno.add(clave_unica)
+
+            for idx_del in reversed(filas_a_eliminar):
+                try:
+                    ws_reg.delete_rows(idx_del)
+                    corregidos += 1
+                except Exception as exc_del:
+                    logger.warning("No se pudo eliminar fila duplicada %s: %s", idx_del, exc_del)
+
             # Asegurar que el alumno Juan Manuel Melo Hortua (B1 - 1095920107) esté en el listado de Alumnos
             self.registrar_o_actualizar_alumno(
                 documento="1095920107",
@@ -1286,6 +1314,89 @@ class SheetsService:
                 return mapa_nombres[coincidencias[0]]
         return None
 
+    def verificar_clase_duplicada(
+        self,
+        id_alumno: str,
+        nombre_alumno: str,
+        categoria: str,
+        clases_reportadas: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Verifica si alguna de las clases que el instructor intenta registrar (ej. '1-2')
+        YA FUE REGISTRADA anteriormente para ese mismo alumno en esa categoría.
+        Si encuentra duplicado, devuelve el detalle del registro previo y la sugerencia de la siguiente clase.
+        """
+        nums_nuevos = set(extraer_numeros_clase(clases_reportadas))
+        if not nums_nuevos:
+            return None
+
+        try:
+            ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
+            todas_filas = self._leer_filas_diccionario(ws_reg, HEADERS_REGISTRO)
+        except Exception as exc:
+            logger.warning("No se pudo verificar duplicado de clase: %s", exc)
+            return None
+
+        id_norm = _normalizar_texto(id_alumno)
+        nom_norm = _normalizar_texto(nombre_alumno)
+        cat_norm = normalizar_categoria(categoria)
+
+        todas_clases_alumno: set = set()
+        conflicto_info: Optional[Dict[str, Any]] = None
+
+        for fila in todas_filas:
+            id_f = _normalizar_texto(str(fila.get("ID_Alumno", "")))
+            nom_f = _normalizar_texto(
+                limpiar_solo_nombre_persona(str(fila.get("Nombre_Alumno", "")))
+                or str(fila.get("Nombre_Alumno", ""))
+            )
+            cat_f = normalizar_categoria(str(fila.get("Categoria", "B1")))
+
+            mismo_id = bool(
+                id_norm
+                and id_f
+                and id_norm not in ("pendiente", "desconocido")
+                and id_f == id_norm
+            )
+            mismo_nom = bool(nom_norm and nom_f and nom_f == nom_norm)
+            if not (mismo_id or mismo_nom):
+                continue
+            if cat_f != cat_norm:
+                continue
+
+            nums_fila = set(extraer_numeros_clase(str(fila.get("Clases_Reportadas", ""))))
+            todas_clases_alumno.update(nums_fila)
+
+            repetidas = sorted(nums_nuevos & nums_fila)
+            if repetidas and conflicto_info is None:
+                conflicto_info = {
+                    "clases_duplicadas": formatear_clases(repetidas),
+                    "fecha_previa": str(fila.get("Fecha_Reporte", "")).strip() or "Hoy",
+                    "hora_previa": str(fila.get("Hora_Reporte", "")).strip() or "--:--",
+                    "instructor_previo": str(fila.get("Instructor", "")).strip() or "Instructor",
+                }
+
+        if not conflicto_info:
+            return None
+
+        cfg = FORMATOS_OFICIALES.get(cat_norm, FORMATOS_OFICIALES["B1"])
+        total_cat = cfg.get("total_clases", 20)
+        ordenadas_vistas = sorted(todas_clases_alumno)
+        conflicto_info["todas_registradas_txt"] = (
+            ", ".join(str(c) for c in ordenadas_vistas) if ordenadas_vistas else "Ninguna"
+        )
+
+        # Calcular cuál es la siguiente clase disponible para sugerirla al instructor
+        disponibles = [c for c in range(1, total_cat + 1) if c not in todas_clases_alumno]
+        if len(disponibles) >= 2 and disponibles[1] == disponibles[0] + 1:
+            conflicto_info["sugerencia_siguiente"] = f"{disponibles[0]}-{disponibles[1]}"
+        elif disponibles:
+            conflicto_info["sugerencia_siguiente"] = str(disponibles[0])
+        else:
+            conflicto_info["sugerencia_siguiente"] = "Curso completado"
+
+        return conflicto_info
+
     def registrar_clase(
         self,
         timestamp: str,
@@ -1499,8 +1610,25 @@ class SheetsService:
         clases_por_instructor: Dict[str, int] = {}
         en_tiempo_count = 0
         fuera_tiempo_count = 0
+        clases_unicas_vistas: set = set()
 
         for fila in todas_filas:
+            id_alu_f = _normalizar_texto(str(fila.get("ID_Alumno", "")))
+            nom_alu_f = _normalizar_texto(
+                limpiar_solo_nombre_persona(str(fila.get("Nombre_Alumno", "")))
+                or str(fila.get("Nombre_Alumno", ""))
+            )
+            cat_f = normalizar_categoria(str(fila.get("Categoria", "B1")))
+            raw_clases_f = str(fila.get("Clases_Reportadas", "")).strip()
+            nums_f = tuple(sorted(extraer_numeros_clase(raw_clases_f)))
+            clave_alu_f = id_alu_f or nom_alu_f
+            if clave_alu_f and nums_f:
+                clave_dup = (clave_alu_f, cat_f, nums_f)
+                if clave_dup in clases_unicas_vistas:
+                    # Omitir registro duplicado de la misma clase para el mismo alumno
+                    continue
+                clases_unicas_vistas.add(clave_dup)
+
             fecha_fila = str(fila.get("Fecha_Reporte", "")).strip()
             if not fecha_fila and fila.get("Timestamp"):
                 fecha_fila = str(fila.get("Timestamp", "")).strip()[:10]
@@ -2409,6 +2537,62 @@ async def guardar_en_sheets_y_confirmar(
         id_alumno_final = str(ficha.get("Documento") or documento_alumno).strip()
         nombre_final = str(ficha.get("Nombre_Completo") or nombre_alumno).strip()
 
+        # 2.5 VALIDACIÓN ANTI-DUPLICADOS: No permitir registrar la misma clase dos veces para el mismo alumno
+        duplicado = sheets_service.verificar_clase_duplicada(
+            id_alumno=id_alumno_final,
+            nombre_alumno=nombre_final,
+            categoria=categoria,
+            clases_reportadas=clases_texto,
+        )
+        if duplicado:
+            # Restaurar la sesión para que el instructor pueda corregir la clase o cancelar sin reenviar la foto
+            sesion["nombre_alumno_limpio"] = nombre_final
+            sesion["documento_detectado"] = id_alumno_final
+            SESIONES_REPORTE[(chat_id, user_id)] = sesion
+            if menu_msg_id:
+                PROPIETARIO_MENSAJE_BOT[menu_msg_id] = user_id
+
+            cfg = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])
+            texto_dup = (
+                f"⛔ *CLASE DUPLICADA — NO SE PERMITE REGISTRAR DOS VECES LA MISMA CLASE*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 *Alumno:* {nombre_final} (CC: `{id_alumno_final}`)\n"
+                f"🏷 *Categoría:* {cfg['nombre_corto']}\n"
+                f"⚠️ *Clase(s) que intentaste registrar:* `{clases_texto}`\n"
+                f"🚨 *Motivo del bloqueo:* La(s) clase(s) `{duplicado['clases_duplicadas']}` **YA FUE(RON) REGISTRADA(S)** para este alumno el `{duplicado['fecha_previa']}` a las `{duplicado['hora_previa']}` por *{duplicado['instructor_previo']}*.\n\n"
+                f"📚 *Clases ya registradas a este alumno:* `{duplicado['todas_registradas_txt']}`\n"
+                f"💡 *Siguiente clase disponible:* `{duplicado['sugerencia_siguiente']}`\n\n"
+                f"👇 *Selecciona qué deseas hacer:* "
+            )
+            teclado_dup = InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            f"📚 Cambiar Número de Clase (Sugerida: {duplicado['sugerencia_siguiente']})",
+                            callback_data=f"cat|{categoria}|{user_id}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "👤 Cambiar de Alumno",
+                            callback_data=f"cambiar_alu_dup|{categoria}|{user_id}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "✅ Finalizar / Cancelar registro duplicado",
+                            callback_data=f"cancelar|{user_id}",
+                        )
+                    ],
+                ]
+            )
+            await mensaje_respuesta.edit_text(
+                texto_dup, reply_markup=teclado_dup, parse_mode="Markdown"
+            )
+            PROPIETARIO_MENSAJE_BOT[mensaje_respuesta.message_id] = user_id
+            sesion["menu_msg_id"] = mensaje_respuesta.message_id
+            return
+
         # 3. Validar el minuto de envío según cantidad de clases (2 clases: 40-50 | 1 clase: 18-28)
         en_tiempo, estado_horario_sheets, alerta_horario_txt = validar_minuto_envio(
             minuto=minuto_envio, cantidad_clases=cantidad_clases
@@ -2771,7 +2955,7 @@ def _formatear_texto_liquidacion(datos: Dict[str, Any]) -> str:
         or "Ninguna"
     )
     doc_txt = (
-        f" *(CC: `{datos['instructor_documento']}`)*"
+        f" (CC: `{datos['instructor_documento']}`)"
         if datos.get("instructor_documento")
         else ""
     )
@@ -2873,6 +3057,14 @@ def teclado_periodos_liquidacion(
                 )
             ]
         )
+    botones.append(
+        [
+            InlineKeyboardButton(
+                "✅ Finalizar / Cerrar Consulta",
+                callback_data=f"cerrar_consulta|{owner_id}",
+            )
+        ]
+    )
     return InlineKeyboardMarkup(botones)
 
 
@@ -2899,6 +3091,14 @@ def teclado_lista_instructores_admin(owner_id: int) -> InlineKeyboardMarkup:
                 )
             ]
         )
+    botones.append(
+        [
+            InlineKeyboardButton(
+                "✅ Finalizar / Cerrar Consulta",
+                callback_data=f"cerrar_consulta|{owner_id}",
+            )
+        ]
+    )
     return InlineKeyboardMarkup(botones)
 
 
@@ -2954,6 +3154,22 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
     )
 
     # Manejadores de consulta de clases dictadas (Día / Semana / Mes / PDF de Liquidación)
+    if accion_limpia == "cerrar_consulta":
+        sesion_activa = SESIONES_REPORTE.get((chat_id, sesion_uid))
+        if sesion_activa and sesion_activa.get("foto_bytes"):
+            await query.message.edit_text(
+                _texto_menu_paso_1(sesion_activa),
+                reply_markup=teclado_categorias(sesion_uid),
+                parse_mode="Markdown",
+            )
+        else:
+            PROPIETARIO_MENSAJE_BOT.pop(msg_id, None)
+            await query.message.edit_text(
+                "✅ *Consulta de clases dictadas finalizada.*",
+                parse_mode="Markdown",
+            )
+        return
+
     if accion_limpia == "menu_nomina":
         if not es_admin:
             return
@@ -3156,6 +3372,20 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
                 reply_markup=teclado_seleccion_alumno(cat_key, sesion_uid, pagina=0),
                 parse_mode="Markdown",
             )
+        return
+
+    if accion_limpia.startswith("cambiar_alu_dup|"):
+        cat_key = accion_limpia.split("|", 1)[1]
+        sesion["nombre_alumno_limpio"] = None
+        sesion["documento_detectado"] = None
+        sesion["esperando_nombre_texto"] = True
+        clases_txt = sesion.get("clases_texto") or "1-2"
+        tema_txt = sesion.get("tema_oficial") or ""
+        await query.message.edit_text(
+            mensaje_indicaciones_alumno(sesion, cat_key, clases_txt, tema_txt),
+            reply_markup=teclado_seleccion_alumno(cat_key, sesion_uid, pagina=0),
+            parse_mode="Markdown",
+        )
         return
 
     if accion_limpia.startswith("alu_pag|"):
