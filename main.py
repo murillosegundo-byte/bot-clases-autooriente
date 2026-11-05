@@ -815,6 +815,56 @@ class SheetsService:
             ws.append_row(encabezados)
             return ws
 
+    def _agregar_fila_al_final(self, ws: gspread.Worksheet, valores_fila: List[Any]) -> int:
+        """
+        Inserta siempre en la primera fila completamente libre al final de la hoja,
+        evitando que las Tablas de Google Sheets (Tabla_1, Tabla_2, Tabla_3) sobrescriban la fila 2.
+        """
+        todas_las_filas = ws.get_all_values()
+        ultima_fila_ocupada = 1
+        for idx, fila in enumerate(todas_las_filas, start=1):
+            if any(str(celda).strip() for celda in fila):
+                ultima_fila_ocupada = idx
+
+        siguiente_fila = max(2, ultima_fila_ocupada + 1)
+        if siguiente_fila > ws.row_count:
+            ws.add_rows(100)
+
+        ws.update(
+            values=[valores_fila],
+            range_name=f"A{siguiente_fila}",
+            value_input_option="USER_ENTERED",
+        )
+        return siguiente_fila
+
+    def _leer_filas_diccionario(
+        self, ws: gspread.Worksheet, encabezados_esperados: List[str]
+    ) -> List[Dict[str, str]]:
+        """
+        Lee todas las filas usando get_all_values() para que funcione incluso si hay columnas
+        fuera de una Tabla de Google Sheets (ej. Documento_Instructor en columna D).
+        """
+        valores = ws.get_all_values()
+        if not valores or len(valores) < 2:
+            return []
+
+        cabecera_real = [str(c).strip() for c in valores[0]]
+        resultado: List[Dict[str, str]] = []
+        num_cols = max(len(cabecera_real), len(encabezados_esperados))
+
+        for fila in valores[1:]:
+            if not any(str(c).strip() for c in fila):
+                continue
+            item: Dict[str, str] = {}
+            for i in range(num_cols):
+                val = str(fila[i]).strip() if i < len(fila) else ""
+                if i < len(cabecera_real) and cabecera_real[i]:
+                    item[cabecera_real[i]] = val
+                if i < len(encabezados_esperados):
+                    item[encabezados_esperados[i]] = val
+            resultado.append(item)
+        return resultado
+
     def inicializar_estructura(self) -> None:
         self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
         self.obtener_o_crear_hoja(SHEET_INSTRUCTORES, HEADERS_INSTRUCTORES)
@@ -823,7 +873,7 @@ class SheetsService:
     def listar_alumnos_activos(self, categoria: Optional[str] = None) -> List[Dict[str, Any]]:
         try:
             ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
-            registros = ws.get_all_records()
+            registros = self._leer_filas_diccionario(ws, HEADERS_ALUMNOS)
             activos = []
             for f in registros:
                 nombre = str(f.get("Nombre_Completo", "")).strip()
@@ -844,18 +894,18 @@ class SheetsService:
 
     def obtener_instructor_registrado(self, telegram_user_id: int) -> Optional[Dict[str, str]]:
         """
-        Verifica si el instructor ya tiene Nombre Oficial (Nombre + Apellido) y Cédula
-        registrados en la pestaña 'Instructores'.
+        Verifica si el instructor ya está registrado en la pestaña 'Instructores'.
+        Recorre de abajo hacia arriba para devolver el último instructor vinculado a ese Telegram_User_ID.
         """
         if telegram_user_id in self._cache_instructores:
             cached = self._cache_instructores[telegram_user_id]
-            if cached.get("documento") and len(cached.get("nombre", "").split()) >= 2:
+            if len(cached.get("nombre", "").split()) >= 2:
                 return cached
 
         try:
             ws = self.obtener_o_crear_hoja(SHEET_INSTRUCTORES, HEADERS_INSTRUCTORES)
-            registros = ws.get_all_records()
-            for fila in registros:
+            registros = self._leer_filas_diccionario(ws, HEADERS_INSTRUCTORES)
+            for fila in reversed(registros):
                 if str(fila.get("Telegram_User_ID", "")).strip() == str(telegram_user_id):
                     nombre = str(fila.get("Nombre_Instructor", "")).strip()
                     doc = str(fila.get("Documento_Instructor", "")).strip()
@@ -864,10 +914,9 @@ class SheetsService:
                         "documento": doc,
                         "categorias": str(fila.get("Categoria_Habilitada", "")).strip(),
                     }
-                    if nombre and len(nombre.split()) >= 2 and doc:
+                    if nombre and len(nombre.split()) >= 2:
                         self._cache_instructores[telegram_user_id] = info
                         return info
-                    return None
         except Exception as exc:
             logger.warning("No se pudo consultar hoja Instructores: %s", exc)
         return None
@@ -880,12 +929,15 @@ class SheetsService:
         categoria_inicial: str = "",
     ) -> Dict[str, str]:
         """
-        Guarda o actualiza en la pestaña 'Instructores' el Nombre Oficial y la Cédula
-        del instructor vinculados a su Telegram_User_ID (o vincula una fila pre-cargada por cédula).
+        Guarda en la pestaña 'Instructores' el Nombre Oficial y la Cédula del instructor.
+        - Si el instructor ya existe (misma Cédula o mismo Nombre), actualiza únicamente su fila.
+        - Si es un instructor nuevo (otra Cédula u otro Nombre), SIEMPRE crea una fila nueva al final
+          sin borrar jamás al instructor anterior (incluso si se envía desde el mismo Telegram).
         """
         nombre_limpio = nombre_oficial.strip().title()
         doc_limpio = documento_oficial.strip()
         cat_norm = normalizar_categoria(categoria_inicial) if categoria_inicial else ""
+        nombre_norm = _normalizar_texto(nombre_limpio)
 
         info = {
             "nombre": nombre_limpio,
@@ -896,31 +948,34 @@ class SheetsService:
 
         try:
             ws = self.obtener_o_crear_hoja(SHEET_INSTRUCTORES, HEADERS_INSTRUCTORES)
-            registros = ws.get_all_records()
-            for idx_fila, fila in enumerate(registros, start=2):
-                tg_id_fila = str(fila.get("Telegram_User_ID", "")).strip()
-                doc_fila = str(fila.get("Documento_Instructor", "")).strip()
+            todas_filas = ws.get_all_values()
 
-                # Coincide por Telegram_User_ID o por Documento pre-cargado por administración
-                if tg_id_fila == str(telegram_user_id) or (doc_fila and doc_fila == doc_limpio):
-                    cats_actuales = [
-                        c.strip()
-                        for c in str(fila.get("Categoria_Habilitada", "")).split(",")
-                        if c.strip()
-                    ]
+            for idx_fila in range(2, len(todas_filas) + 1):
+                fila = todas_filas[idx_fila - 1]
+                nom_fila = str(fila[1]).strip() if len(fila) > 1 else ""
+                cats_fila = str(fila[2]).strip() if len(fila) > 2 else ""
+                doc_fila = str(fila[3]).strip() if len(fila) > 3 else ""
+
+                mismo_doc = bool(doc_fila and doc_limpio and doc_fila == doc_limpio)
+                mismo_nombre = bool(nom_fila and _normalizar_texto(nom_fila) == nombre_norm)
+
+                # Solo actualiza si es exactamente la misma persona (misma cédula o mismo nombre)
+                if mismo_doc or mismo_nombre:
+                    cats_actuales = [c.strip() for c in cats_fila.split(",") if c.strip()]
                     if cat_norm and cat_norm not in cats_actuales:
                         cats_actuales.append(cat_norm)
                     cats_str = ", ".join(cats_actuales)
-                    ws.update_cell(idx_fila, 1, str(telegram_user_id))
-                    ws.update_cell(idx_fila, 2, nombre_limpio)
-                    ws.update_cell(idx_fila, 3, cats_str)
-                    ws.update_cell(idx_fila, 4, doc_limpio)
+                    ws.update(
+                        values=[[str(telegram_user_id), nombre_limpio, cats_str, doc_limpio or doc_fila]],
+                        range_name=f"A{idx_fila}:D{idx_fila}",
+                        value_input_option="USER_ENTERED",
+                    )
                     info["categorias"] = cats_str
                     return info
 
-            ws.append_row(
-                [str(telegram_user_id), nombre_limpio, cat_norm, doc_limpio],
-                value_input_option="USER_ENTERED",
+            # Es un instructor nuevo: agregar siempre en una fila nueva debajo sin tocar las anteriores
+            self._agregar_fila_al_final(
+                ws, [str(telegram_user_id), nombre_limpio, cat_norm, doc_limpio]
             )
         except Exception as exc:
             logger.warning("No se pudo guardar instructor oficial en Sheets: %s", exc)
@@ -934,49 +989,80 @@ class SheetsService:
         documento_instructor: str = "",
     ) -> str:
         """
-        Busca al instructor en la pestaña 'Instructores'.
-        - Si ya existe, devuelve su Nombre_Instructor oficial y actualiza sus categorías habilitadas.
-        - Si no existe aún, lo agrega automáticamente en la pestaña 'Instructores' con su nombre y cédula.
+        Busca al instructor en la pestaña 'Instructores' por su Cédula, Nombre o Telegram_User_ID.
+        - Si ya existe ese instructor, actualiza sus categorías habilitadas sin borrar a nadie.
+        - Si es un instructor nuevo, lo agrega en una nueva fila al final de 'Instructores'.
         """
         cat_norm = normalizar_categoria(categoria_dictada)
+        nombre_limpio = nombre_telegram.strip()
+        nombre_norm = _normalizar_texto(nombre_limpio)
+        doc_limpio = documento_instructor.strip()
+
         try:
             ws = self.obtener_o_crear_hoja(SHEET_INSTRUCTORES, HEADERS_INSTRUCTORES)
-            registros = ws.get_all_records()
-            for idx_fila, fila in enumerate(registros, start=2):
-                if str(fila.get("Telegram_User_ID", "")).strip() == str(telegram_user_id):
-                    nombre_oficial = str(fila.get("Nombre_Instructor", "")).strip() or nombre_telegram
-                    doc_actual = str(fila.get("Documento_Instructor", "")).strip() or documento_instructor
-                    cats_actuales = [
-                        c.strip()
-                        for c in str(fila.get("Categoria_Habilitada", "")).split(",")
-                        if c.strip()
-                    ]
-                    if cat_norm not in cats_actuales:
-                        cats_actuales.append(cat_norm)
-                        ws.update_cell(idx_fila, 3, ", ".join(cats_actuales))
-                    if documento_instructor and not str(fila.get("Documento_Instructor", "")).strip():
-                        ws.update_cell(idx_fila, 4, documento_instructor)
-                    self._cache_instructores[telegram_user_id] = {
-                        "nombre": nombre_oficial,
-                        "documento": doc_actual,
-                        "categorias": ", ".join(cats_actuales),
-                    }
-                    return nombre_oficial
+            todas_filas = ws.get_all_values()
 
-            # Si no estaba registrado en la hoja 'Instructores', agregarlo automáticamente
-            ws.append_row(
-                [str(telegram_user_id), nombre_telegram, cat_norm, documento_instructor],
-                value_input_option="USER_ENTERED",
+            # 1. Buscar coincidencia exacta por Documento o por Nombre del instructor
+            fila_encontrada_idx = None
+            for idx_fila in range(len(todas_filas), 1, -1):
+                fila = todas_filas[idx_fila - 1]
+                if not any(str(c).strip() for c in fila):
+                    continue
+                tg_fila = str(fila[0]).strip() if len(fila) > 0 else ""
+                nom_fila = str(fila[1]).strip() if len(fila) > 1 else ""
+                doc_fila = str(fila[3]).strip() if len(fila) > 3 else ""
+
+                if (doc_limpio and doc_fila == doc_limpio) or (
+                    nombre_norm and _normalizar_texto(nom_fila) == nombre_norm
+                ):
+                    fila_encontrada_idx = idx_fila
+                    break
+
+            # 2. Si no coincidió por nombre/documento, buscar la última fila con ese Telegram_User_ID
+            if fila_encontrada_idx is None:
+                for idx_fila in range(len(todas_filas), 1, -1):
+                    fila = todas_filas[idx_fila - 1]
+                    tg_fila = str(fila[0]).strip() if len(fila) > 0 else ""
+                    if tg_fila == str(telegram_user_id):
+                        fila_encontrada_idx = idx_fila
+                        break
+
+            if fila_encontrada_idx is not None:
+                fila = todas_filas[fila_encontrada_idx - 1]
+                nombre_oficial = (str(fila[1]).strip() if len(fila) > 1 else "") or nombre_limpio
+                cats_fila = str(fila[2]).strip() if len(fila) > 2 else ""
+                doc_actual = (str(fila[3]).strip() if len(fila) > 3 else "") or doc_limpio
+
+                cats_actuales = [c.strip() for c in cats_fila.split(",") if c.strip()]
+                if cat_norm and cat_norm not in cats_actuales:
+                    cats_actuales.append(cat_norm)
+                cats_str = ", ".join(cats_actuales)
+
+                ws.update(
+                    values=[[str(telegram_user_id), nombre_oficial, cats_str, doc_actual]],
+                    range_name=f"A{fila_encontrada_idx}:D{fila_encontrada_idx}",
+                    value_input_option="USER_ENTERED",
+                )
+                self._cache_instructores[telegram_user_id] = {
+                    "nombre": nombre_oficial,
+                    "documento": doc_actual,
+                    "categorias": cats_str,
+                }
+                return nombre_oficial
+
+            # Si no estaba registrado en la hoja 'Instructores', agregarlo en una fila nueva al final
+            self._agregar_fila_al_final(
+                ws, [str(telegram_user_id), nombre_limpio, cat_norm, doc_limpio]
             )
             self._cache_instructores[telegram_user_id] = {
-                "nombre": nombre_telegram,
-                "documento": documento_instructor,
+                "nombre": nombre_limpio,
+                "documento": doc_limpio,
                 "categorias": cat_norm,
             }
-            return nombre_telegram
+            return nombre_limpio
         except Exception as exc:
             logger.warning("No se pudo actualizar hoja Instructores: %s", exc)
-            return nombre_telegram
+            return nombre_limpio
 
     def registrar_o_actualizar_alumno(
         self, documento: str, nombre_completo: str, categoria: str
@@ -987,11 +1073,11 @@ class SheetsService:
 
         try:
             ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
-            filas = ws.get_all_records()
+            filas = self._leer_filas_diccionario(ws, HEADERS_ALUMNOS)
             nuevo_id = f"MAT-{len(filas) + 1:03d}"
             cat_norm = normalizar_categoria(categoria)
             nueva_fila = [nuevo_id, documento, nombre_completo.title(), cat_norm, "En curso"]
-            ws.append_row(nueva_fila, value_input_option="USER_ENTERED")
+            self._agregar_fila_al_final(ws, nueva_fila)
             return {
                 "ID_Matricula": nuevo_id,
                 "Documento": documento,
@@ -1014,7 +1100,7 @@ class SheetsService:
             return None
         try:
             ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
-            registros = ws.get_all_records()
+            registros = self._leer_filas_diccionario(ws, HEADERS_ALUMNOS)
         except Exception as exc:
             logger.error("Error leyendo hoja Alumnos: %s", exc)
             return None
@@ -1061,7 +1147,8 @@ class SheetsService:
         validacion_horario: str = "EN TIEMPO",
     ) -> None:
         ws = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
-        ws.append_row(
+        self._agregar_fila_al_final(
+            ws,
             [
                 timestamp,
                 fecha_reporte,
@@ -1075,13 +1162,12 @@ class SheetsService:
                 url_foto_drive,
                 validacion_horario,
             ],
-            value_input_option="USER_ENTERED",
         )
 
     def obtener_clases_alumno(self, criterio_alumno: str) -> Dict[str, Any]:
         info_alumno = self.buscar_alumno(criterio_alumno)
         ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
-        todas_filas = ws_reg.get_all_records()
+        todas_filas = self._leer_filas_diccionario(ws_reg, HEADERS_REGISTRO)
 
         criterio_norm = _normalizar_texto(criterio_alumno)
         nombre_oficial_norm = (
@@ -1439,6 +1525,12 @@ def teclado_categorias(owner_id: int) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("🔄 Recategorización C1", callback_data=f"cat|RECAT_C1|{owner_id}"),
+        ],
+        [
+            InlineKeyboardButton(
+                "👨‍🏫 Cambiar / Registrar otro Instructor",
+                callback_data=f"cambiar_inst|{owner_id}",
+            ),
         ],
         [
             InlineKeyboardButton("❌ Cancelar", callback_data=f"cancelar|{owner_id}"),
@@ -2033,6 +2125,21 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         PROPIETARIO_MENSAJE_BOT.pop(msg_id, None)
         await query.message.edit_text(
             f"❌ Registro cancelado por *{sesion.get('instructor_nombre', 'el instructor')}*.",
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion_limpia == "cambiar_inst":
+        sesion["esperando_registro_instructor"] = True
+        sesion["esperando_nombre_texto"] = False
+        sesion["menu_msg_id"] = msg_id
+        await query.message.edit_text(
+            "👨‍🏫 *Registrar / Cambiar Instructor Oficial*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Escribe ahora en el chat el **NOMBRE COMPLETO (Nombre y Apellido)** y el **NÚMERO DE CÉDULA** del instructor:\n\n"
+            "📌 *Ejemplo:*\n"
+            "`Jhoan Sebastián Carreño Sierra 1099739620`\n\n"
+            "*(Se agregará en una fila nueva de la hoja `Instructores` sin borrar a los instructores anteriores).* 👇",
             parse_mode="Markdown",
         )
         return
