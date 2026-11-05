@@ -101,10 +101,40 @@ logger = logging.getLogger(__name__)
 SESIONES_REPORTE: Dict[Tuple[int, int], Dict[str, Any]] = {}
 # Mapa de seguridad: message_id del menú del bot -> user_id propietario del turno
 PROPIETARIO_MENSAJE_BOT: Dict[int, int] = {}
-# Lista de chats de administradores suscritos a alertas con /alertas
-ADMIN_CHATS_ALERTA: set = set()
+# IDs de usuarios administradores autorizados (incluye al director/admin principal)
+ADMIN_USER_IDS: set = {6843014700}
+# Lista de chats privados de administradores suscritos a alertas fuera de horario (/alertas)
+ADMIN_CHATS_ALERTA: set = {6843014700}
+# Lista de chats privados de administradores que desean copia en vivo de cada clase (/supervisar)
+ADMIN_CHATS_SUPERVISION: set = set()
 if ADMIN_CHAT_ID_ENV.lstrip("-").isdigit():
-    ADMIN_CHATS_ALERTA.add(int(ADMIN_CHAT_ID_ENV))
+    _admin_id_env = int(ADMIN_CHAT_ID_ENV)
+    ADMIN_CHATS_ALERTA.add(_admin_id_env)
+    if _admin_id_env > 0:
+        ADMIN_USER_IDS.add(_admin_id_env)
+
+
+async def es_usuario_administrador(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    """
+    Verifica si quien ejecuta el comando es Administrador:
+    1. Está en la lista de ADMIN_USER_IDS.
+    2. O tiene rango de Creator / Administrator en un grupo de Telegram.
+    """
+    user = update.effective_user
+    chat = update.effective_chat
+    if not user:
+        return False
+    if user.id in ADMIN_USER_IDS:
+        return True
+    if chat and chat.type in ("group", "supergroup"):
+        try:
+            miembro = await context.bot.get_chat_member(chat.id, user.id)
+            if miembro.status in ("creator", "administrator"):
+                ADMIN_USER_IDS.add(user.id)
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def obtener_ruta_logo() -> Optional[Path]:
@@ -724,6 +754,85 @@ def formatear_clases(clases: List[int]) -> str:
     return "-".join(str(c) for c in ordenadas)
 
 
+# Palabras del temario/clases que NUNCA hacen parte del nombre de un ciudadano
+PALABRAS_CORTE_CLASE = (
+    r"\b(?:"
+    r"clases?|temas?|categor[ií]as?|bloque|bloques|horas?|fecha|"
+    r"a1|a2|b1|b2|b3|c1|c2|c3|rc1|recategorizaci[oó]n|"
+    r"ex[aá]men(?:es)?|pr[aá]ctic[oa]s?|evaluaci[oó]n(?:es)?|"
+    r"parqueos?|estacionamientos?|espejos?|retrovisor(?:es)?|"
+    r"conducci[oó]n|inspecci[oó]n|preoperacional|pre|operacional|"
+    r"adaptaci[oó]n|seguridad|tablero|instrumentos|mandos|pedales|encendido|motor|"
+    r"maniobras?|carreteo|embrague|selector|acelerador|frenos?|frenado|desaceleraci[oó]n|"
+    r"franja|equilibrio|giros?|conos|eslalon|slalom|obst[aá]culos|emergencia|"
+    r"arranques?|terrenos?|planos?|inclinados?|pendientes?|reversa|adelantamientos?|"
+    r"avances?|detenci[oó]n|se[ñn]ales|tr[aá]nsito|lum[ií]nicas|corporales|ac[uú]sticas|"
+    r"calzadas?|carril(?:es)?|pares|barrios?|flujo|vehicular|refuerzos?|cale|"
+    r"glorietas?|intersecciones|deprimidos|puentes|zonas|escolares|"
+    r"urban[oa]s?|nacional(?:es)?|principales|pista|v[ií]as?|transporte|masivo|buses|taxis|"
+    r"motos?|motocicletas?|carros?|veh[ií]culos?|instructor(?:es)?|profes?(?:or)?|notas?"
+    r")\b"
+)
+
+
+def limpiar_solo_nombre_persona(texto_bruto: str) -> Optional[str]:
+    """
+    Recibe un texto que puede traer pegada la clase o el tema (ej.
+    'Maria Porras Clase Parqueo Estacionamiento Con Uso De Espejos Retrovisores'
+    o 'Juan Figueroa Clase Exámen Práctico') y devuelve ÚNICAMENTE el nombre
+    y apellido limpios del ciudadano ('Maria Porras', 'Juan Figueroa').
+    """
+    if not texto_bruto or not texto_bruto.strip():
+        return None
+
+    # 1. Revisar línea por línea para descartar líneas que describan la clase o el tema
+    lineas_validas: List[str] = []
+    for linea in texto_bruto.splitlines():
+        linea_str = linea.strip()
+        if not linea_str:
+            continue
+        # Cortar en esa línea todo lo que aparezca desde la primera palabra de clase/tema
+        corte = re.split(PALABRAS_CORTE_CLASE, linea_str, maxsplit=1, flags=re.IGNORECASE)[0]
+        corte = corte.strip()
+        if corte:
+            lineas_validas.append(corte)
+
+    unido = " ".join(lineas_validas) if lineas_validas else texto_bruto
+    # 2. Asegurar corte global ante cualquier palabra de clase/tema
+    unido = re.split(PALABRAS_CORTE_CLASE, unido, maxsplit=1, flags=re.IGNORECASE)[0]
+
+    # 3. Quitar números de documento y prefijos como 'Alumno:', 'CC:', 'Nombre:'
+    sin_doc = re.sub(r"\b\d+\b", " ", unido)
+    sin_prefijos = re.sub(
+        r"\b(?:alumn[oa]s?|ciudadan[oa]s?|aprendiz|nombre|cc|ti|ce|c[eé]dula|documento|doc|id)\b\s*[:#.\-]?",
+        " ",
+        sin_doc,
+        flags=re.IGNORECASE,
+    )
+
+    # 4. Dejar únicamente letras válidas de nombres en español
+    solo_letras = re.sub(r"[^A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]", " ", sin_prefijos)
+    conectores = {"de", "del", "la", "las", "los"}
+    palabras: List[str] = []
+    for p in solo_letras.split():
+        if len(p) >= 2 or p.lower() in conectores:
+            palabras.append(p)
+
+    # Quitar conectores sueltos al inicio o al final (ej. si quedó un 'Con' o 'De' al final)
+    while palabras and palabras[-1].lower() in (conectores | {"con", "sin", "por", "para", "en", "el", "al", "y"}):
+        palabras.pop()
+    while palabras and palabras[0].lower() in (conectores | {"con", "sin", "por", "para", "en", "el", "al", "y"}):
+        palabras.pop(0)
+
+    # Un nombre completo tiene máximo 4 palabras principales (2 nombres + 2 apellidos)
+    if len(palabras) > 4:
+        palabras = palabras[:4]
+
+    if not palabras:
+        return None
+    return " ".join(palabras).title()
+
+
 def extraer_nombre_y_cedula(texto: str) -> Tuple[Optional[str], Optional[str]]:
     if not texto or not texto.strip():
         return None, None
@@ -732,17 +841,8 @@ def extraer_nombre_y_cedula(texto: str) -> Tuple[Optional[str], Optional[str]]:
     m_doc = re.search(r"\b(\d{6,12})\b", limpio)
     documento = m_doc.group(1) if m_doc else None
 
-    sin_doc = re.sub(r"\b\d{5,12}\b", "", limpio)
-    sin_prefijos = re.sub(
-        r"\b(?:alumn[oa]s?|nombre|cc|ti|ce|c[eé]dula|documento|doc|id)\b\s*[:#.\-]?",
-        "",
-        sin_doc,
-        flags=re.IGNORECASE,
-    )
-    nombre_limpio = re.sub(r"[^A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]", " ", sin_prefijos)
-    palabras = [p for p in nombre_limpio.split() if len(p) >= 2]
-
-    nombre_formateado = " ".join(palabras).title() if palabras else None
+    # Si el documento está en el texto, priorizar el texto que acompaña al documento o está antes de él
+    nombre_formateado = limpiar_solo_nombre_persona(limpio)
     return nombre_formateado, documento
 
 
@@ -865,10 +965,44 @@ class SheetsService:
             resultado.append(item)
         return resultado
 
+    def limpiar_nombres_contaminados(self) -> int:
+        """
+        Revisa las hojas 'Alumnos' y 'Registro_Clases' y limpia automáticamente
+        cualquier nombre que haya quedado con palabras de clase o temario pegadas
+        (ej. 'Juan Figueroa Clase Exámen Práctico' -> 'Juan Figueroa').
+        """
+        corregidos = 0
+        try:
+            ws_alu = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
+            filas_alu = ws_alu.get_all_values()
+            for idx_fila in range(2, len(filas_alu) + 1):
+                fila = filas_alu[idx_fila - 1]
+                if len(fila) >= 3 and str(fila[2]).strip():
+                    original = str(fila[2]).strip()
+                    limpio = limpiar_solo_nombre_persona(original)
+                    if limpio and limpio != original:
+                        ws_alu.update_cell(idx_fila, 3, limpio)
+                        corregidos += 1
+
+            ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
+            filas_reg = ws_reg.get_all_values()
+            for idx_fila in range(2, len(filas_reg) + 1):
+                fila = filas_reg[idx_fila - 1]
+                if len(fila) >= 6 and str(fila[5]).strip():
+                    original = str(fila[5]).strip()
+                    limpio = limpiar_solo_nombre_persona(original)
+                    if limpio and limpio != original:
+                        ws_reg.update_cell(idx_fila, 6, limpio)
+                        corregidos += 1
+        except Exception as exc:
+            logger.warning("No se pudo ejecutar limpieza automática de nombres: %s", exc)
+        return corregidos
+
     def inicializar_estructura(self) -> None:
         self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
         self.obtener_o_crear_hoja(SHEET_INSTRUCTORES, HEADERS_INSTRUCTORES)
         self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
+        self.limpiar_nombres_contaminados()
 
     def listar_alumnos_activos(self, categoria: Optional[str] = None) -> List[Dict[str, Any]]:
         try:
@@ -1067,8 +1201,12 @@ class SheetsService:
     def registrar_o_actualizar_alumno(
         self, documento: str, nombre_completo: str, categoria: str
     ) -> Dict[str, Any]:
-        existente = self.buscar_alumno(documento) or self.buscar_alumno(nombre_completo)
+        nombre_depurado = limpiar_solo_nombre_persona(nombre_completo) or nombre_completo.strip().title()
+        existente = self.buscar_alumno(documento) or self.buscar_alumno(nombre_depurado)
         if existente:
+            nom_actual = str(existente.get("Nombre_Completo", "")).strip()
+            nom_limpio = limpiar_solo_nombre_persona(nom_actual) or nom_actual
+            existente["Nombre_Completo"] = nom_limpio
             return existente
 
         try:
@@ -1076,12 +1214,12 @@ class SheetsService:
             filas = self._leer_filas_diccionario(ws, HEADERS_ALUMNOS)
             nuevo_id = f"MAT-{len(filas) + 1:03d}"
             cat_norm = normalizar_categoria(categoria)
-            nueva_fila = [nuevo_id, documento, nombre_completo.title(), cat_norm, "En curso"]
+            nueva_fila = [nuevo_id, documento, nombre_depurado, cat_norm, "En curso"]
             self._agregar_fila_al_final(ws, nueva_fila)
             return {
                 "ID_Matricula": nuevo_id,
                 "Documento": documento,
-                "Nombre_Completo": nombre_completo.title(),
+                "Nombre_Completo": nombre_depurado,
                 "Categoria": cat_norm,
                 "Estado": "En curso",
             }
@@ -1090,7 +1228,7 @@ class SheetsService:
             return {
                 "ID_Matricula": documento,
                 "Documento": documento,
-                "Nombre_Completo": nombre_completo.title(),
+                "Nombre_Completo": nombre_depurado,
                 "Categoria": normalizar_categoria(categoria),
                 "Estado": "En curso",
             }
@@ -1771,7 +1909,7 @@ async def guardar_en_sheets_y_confirmar(
             except Exception:
                 pass
 
-        # 6. Si el envío fue fuera de los minutos estipulados, notificar a los administradores suscritos
+        # 6. Si el envío fue fuera de los minutos estipulados, notificar en PRIVADO a los administradores
         if not en_tiempo and ADMIN_CHATS_ALERTA:
             msg_admin = (
                 f"🚨 *REPORTE ENVIADO FUERA DEL TIEMPO ESTIPULADO*\n"
@@ -1788,6 +1926,27 @@ async def guardar_en_sheets_y_confirmar(
                         await context.bot.send_message(
                             chat_id=admin_chat, text=msg_admin, parse_mode="Markdown"
                         )
+                    except Exception:
+                        pass
+
+        # 7. Si el administrador activó /supervisar en su chat privado, enviarle copia en vivo de la evidencia
+        if ADMIN_CHATS_SUPERVISION:
+            for sup_chat in list(ADMIN_CHATS_SUPERVISION):
+                if sup_chat != chat_id:
+                    try:
+                        if sesion.get("file_id"):
+                            await context.bot.send_photo(
+                                chat_id=sup_chat,
+                                photo=sesion["file_id"],
+                                caption=f"👁️ *SUPERVISIÓN EN VIVO*\n{texto_exito}",
+                                parse_mode="Markdown",
+                            )
+                        else:
+                            await context.bot.send_message(
+                                chat_id=sup_chat,
+                                text=f"👁️ *SUPERVISIÓN EN VIVO*\n{texto_exito}",
+                                parse_mode="Markdown",
+                            )
                     except Exception:
                         pass
 
@@ -2273,6 +2432,12 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
         sesion["instructor_documento"] = info["documento"]
         sesion["esperando_registro_instructor"] = False
 
+        # Borrar el mensaje de texto suelto del instructor en el grupo para mantener limpio el chat
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
         # Actualizar el mensaje del menú que cita la foto original del instructor para pasar al Paso 1
         menu_msg_id = sesion.get("menu_msg_id")
         texto_paso1 = (
@@ -2293,10 +2458,11 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception:
                 pass
 
-        nuevo_menu = await msg.reply_text(
-            texto_paso1,
+        nuevo_menu = await context.bot.send_message(
+            chat_id=msg.chat_id,
+            text=texto_paso1,
             reply_markup=teclado_categorias(user.id),
-            reply_to_message_id=sesion.get("foto_msg_id") or msg.message_id,
+            reply_to_message_id=sesion.get("foto_msg_id"),
             parse_mode="Markdown",
         )
         sesion["menu_msg_id"] = nuevo_menu.message_id
@@ -2315,9 +2481,14 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
                 sesion["nombre_alumno_limpio"] = nombre_oficial
                 sesion["documento_detectado"] = doc_oficial
                 sesion["esperando_nombre_texto"] = False
-                aviso = await msg.reply_text(
-                    "⏳ Guardando registro en Google Sheets...",
-                    reply_to_message_id=sesion.get("foto_msg_id") or msg.message_id,
+                try:
+                    await msg.delete()
+                except Exception:
+                    pass
+                aviso = await context.bot.send_message(
+                    chat_id=msg.chat_id,
+                    text="⏳ Guardando registro en Google Sheets...",
+                    reply_to_message_id=sesion.get("foto_msg_id"),
                 )
                 await guardar_en_sheets_y_confirmar(msg.chat_id, user.id, context, aviso)
                 return
@@ -2343,50 +2514,124 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
         sesion["nombre_alumno_limpio"] = nombre
         sesion["documento_detectado"] = documento
         sesion["esperando_nombre_texto"] = False
-        aviso = await msg.reply_text(
-            "⏳ Guardando alumno, instructor y clase en Google Sheets...",
-            reply_to_message_id=sesion.get("foto_msg_id") or msg.message_id,
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+        aviso = await context.bot.send_message(
+            chat_id=msg.chat_id,
+            text="⏳ Guardando alumno, instructor y clase en Google Sheets...",
+            reply_to_message_id=sesion.get("foto_msg_id"),
         )
         await guardar_en_sheets_y_confirmar(msg.chat_id, user.id, context, aviso)
         return
 
 
 async def cmd_alertas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Activa las notificaciones al administrador en el chat actual cuando una foto llegue fuera de horario."""
+    """
+    Solo para Administradores: Activa las notificaciones fuera de horario
+    SIEMPRE en el chat PRIVADO del administrador (nunca en el grupo general).
+    """
     msg = update.effective_message
-    if not msg:
+    user = update.effective_user
+    chat = update.effective_chat
+    if not msg or not user or not chat:
         return
-    ADMIN_CHATS_ALERTA.add(msg.chat_id)
-    await msg.reply_text(
-        "🔔 *Alertas de Administrador activadas en este chat.*\n"
-        "Recibirás un aviso automático cada vez que un instructor envíe una foto fuera de los minutos estipulados "
-        "(minuto 40 al 50 para 2 clases / minuto 18 al 28 para 1 clase).",
-        reply_to_message_id=msg.message_id,
-        parse_mode="Markdown",
-    )
+
+    es_admin = await es_usuario_administrador(update, context)
+    if chat.type in ("group", "supergroup"):
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
+    if not es_admin:
+        return
+
+    ADMIN_USER_IDS.add(user.id)
+    # Guardar el ID privado del administrador (user.id) para que las alertas nunca salgan en el grupo
+    ADMIN_CHATS_ALERTA.add(user.id)
+    try:
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=(
+                "🔔 *Alertas Privadas de Administrador activadas.*\n"
+                "Recibirás aquí en tu chat privado un aviso automático cada vez que un instructor envíe "
+                "una foto fuera de los minutos estipulados (minuto 40 al 50 para 2 clases / minuto 18 al 28 para 1 clase)."
+            ),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        if chat.type == "private":
+            await msg.reply_text("🔔 Alertas activadas en este chat privado.")
+
+
+async def cmd_supervisar_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Solo para Administradores: Activa o desactiva en el chat privado del administrador
+    la recepción en vivo de cada foto y clase registrada por cualquier instructor.
+    """
+    msg = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if not msg or not user or not chat:
+        return
+
+    es_admin = await es_usuario_administrador(update, context)
+    if chat.type in ("group", "supergroup"):
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
+    if not es_admin:
+        return
+
+    ADMIN_USER_IDS.add(user.id)
+    if user.id in ADMIN_CHATS_SUPERVISION:
+        ADMIN_CHATS_SUPERVISION.discard(user.id)
+        estado_txt = "🔕 *Supervisión en vivo desactivada.* (Seguirás recibiendo las alertas de horario con `/alertas`)."
+    else:
+        ADMIN_CHATS_SUPERVISION.add(user.id)
+        estado_txt = (
+            "👁️ *Supervisión en vivo ACTIVADA en tu chat privado.*\n"
+            "Cada vez que un instructor registre una clase por privado con el bot, "
+            "recibirás aquí mismo una copia de la foto y los datos registrados."
+        )
+
+    try:
+        await context.bot.send_message(chat_id=user.id, text=estado_txt, parse_mode="Markdown")
+    except Exception:
+        pass
 
 
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
+    es_admin = await es_usuario_administrador(update, context)
+
+    bloque_admin = (
+        "\n👑 *Comandos Exclusivos de Administración (Privados):*\n"
+        "• `/reporte [Cédula o Nombre]` — Genera el PDF oficial y te lo envía por privado.\n"
+        "• `/alertas` — Recibe alertas privadas cuando envíen fotos fuera de horario.\n"
+        "• `/supervisar` — Recibe en tu privado copia en vivo de todas las clases.\n"
+        "• `/inicializar` — Verifica las hojas en Google Sheets."
+        if es_admin
+        else ""
+    )
+
     texto = (
         "🚗 *Bot de Seguimiento de Clases — CEA Auto Oriente*\n\n"
         "👨‍🏫 *Vinculación Oficial del Instructor (1 sola vez):*\n"
         "`/soy [Tu Nombre Completo] [Tu Cédula]`\n"
         "*(Si aún no lo has hecho, el bot te lo pedirá automáticamente en tu primera foto).* \n\n"
-        "📸 *Pasos para el Instructor en el Grupo:*\n"
-        "1️⃣ Envía la **foto de la clase** al grupo.\n"
+        "📸 *Pasos para el Instructor:*\n"
+        "1️⃣ Envía la **foto de la clase** directamente al chat con el bot.\n"
         "   • *Si son 2 clases:* enviar entre el **minuto 40 y el minuto 50**.\n"
         "   • *Si es 1 sola clase:* enviar entre el **minuto 18 y el minuto 28**.\n"
-        "2️⃣ El bot responderá **citando tu foto** y tus botones estarán bloqueados para que ningún otro compañero los toque por error.\n"
-        "3️⃣ Toca la **Categoría** (`🏍️ A1 Moto`, `🏍️ A2 Moto`, `🚗 B1 Carro Particular`, `🚕 C1 Servicio Público`, `🔄 Recategorización C1`).\n"
-        "4️⃣ Marca **1 clase** o **2 clases** (`✅`) y pulsa **`💾 CONFIRMAR CLASE(S)`**.\n"
-        "5️⃣ Escribe el **Nombre Completo y Cédula** del alumno (ej. `Sergio Andrés Pérez 1098765432`).\n\n"
-        "📄 *Generar PDF Oficial para Carpeta/Matrícula:*\n"
-        "`/reporte [Cédula o Nombre del Alumno]`\n\n"
-        "🔔 *Recibir alertas de horario (Administrador):*\n"
-        "`/alertas`\n\n"
-        "⚙️ *Inicializar Hojas en Google Sheets:*\n"
-        "`/inicializar`"
+        "2️⃣ Toca la **Categoría** (`🏍️ A1 Moto`, `🏍️ A2 Moto`, `🚗 B1 Carro Particular`, `🚕 C1 Servicio Público`, `🔄 Recategorización C1`).\n"
+        "3️⃣ Marca **1 clase** o **2 clases** (`✅`) y pulsa **`💾 CONFIRMAR CLASE(S)`**.\n"
+        "4️⃣ Escribe el **Nombre Completo y Cédula** del alumno (ej. `Sergio Andrés Pérez 1098765432`).\n"
+        f"{bloque_admin}"
     )
     await msg.reply_text(
         texto,
@@ -2397,34 +2642,82 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_inicializar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if not msg or not user or not chat:
+        return
+
+    es_admin = await es_usuario_administrador(update, context)
+    if chat.type in ("group", "supergroup"):
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+    if not es_admin:
+        return
+
     try:
         sheets_service.inicializar_estructura()
-        await msg.reply_text(
-            "✅ Hojas `Alumnos`, `Instructores` y `Registro_Clases` verificadas en Google Sheets.",
-            reply_to_message_id=msg.message_id,
+        await context.bot.send_message(
+            chat_id=user.id,
+            text="✅ Hojas `Alumnos`, `Instructores` y `Registro_Clases` verificadas en Google Sheets.",
             parse_mode="Markdown",
         )
     except Exception as exc:
-        await msg.reply_text(
-            f"❌ Error conectando con Google Sheets: {exc}",
-            reply_to_message_id=msg.message_id,
+        await context.bot.send_message(
+            chat_id=user.id,
+            text=f"❌ Error conectando con Google Sheets: {exc}",
         )
 
 
 async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Exclusivo para Administradores:
+    - Si se pide desde un grupo, borra el comando del grupo para que no aparezca en el chat general
+      y envía el PDF directamente al chat privado del Administrador.
+    - Si un instructor intenta usarlo, no se le permite generar reportes.
+    """
     msg = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if not msg or not user or not chat:
+        return
+
+    es_admin = await es_usuario_administrador(update, context)
+
+    # Si fue escrito en un grupo, borrar el mensaje de inmediato para que no salga en el chat general
+    if chat.type in ("group", "supergroup"):
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+
+    if not es_admin:
+        try:
+            await context.bot.send_message(
+                chat_id=user.id,
+                text="⛔ *Acceso restringido:* Solo el administrador de CEA Auto Oriente puede generar los formatos PDF oficiales.",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+        return
+
+    ADMIN_USER_IDS.add(user.id)
+    destino_privado = user.id
+
     if not context.args:
-        await msg.reply_text(
-            "⚠️ Indica el nombre o cédula del alumno.\nEjemplo: `/reporte Segundo Murillo`",
-            reply_to_message_id=msg.message_id,
+        await context.bot.send_message(
+            chat_id=destino_privado,
+            text="⚠️ Indica el nombre o cédula del alumno.\nEjemplo: `/reporte 1095304561`",
             parse_mode="Markdown",
         )
         return
 
     criterio = " ".join(context.args).strip()
-    aviso = await msg.reply_text(
-        f"⏳ Generando formato PDF para *{criterio}*...",
-        reply_to_message_id=msg.message_id,
+    aviso = await context.bot.send_message(
+        chat_id=destino_privado,
+        text=f"⏳ Generando formato PDF para *{criterio}*...",
         parse_mode="Markdown",
     )
 
@@ -2450,7 +2743,8 @@ async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         filename = f"{codigo_fmt}_{categoria}_{nombre_limpio}.pdf"
 
-        await msg.reply_document(
+        await context.bot.send_document(
+            chat_id=destino_privado,
             document=pdf_buffer,
             filename=filename,
             caption=(
@@ -2460,7 +2754,6 @@ async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 f"🏷 *Categoría:* {categoria}\n"
                 f"📊 *Reportes registrados:* {len(registros)}"
             ),
-            reply_to_message_id=msg.message_id,
             parse_mode="Markdown",
         )
         await aviso.delete()
@@ -2511,12 +2804,14 @@ def main() -> None:
         sys.exit(1)
 
     iniciar_servidor_healthcheck()
+    threading.Thread(target=sheets_service.limpiar_nombres_contaminados, daemon=True).start()
 
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler(["start", "ayuda", "help"], cmd_ayuda))
     app.add_handler(CommandHandler(["soy", "instructor", "mi_nombre"], cmd_registrar_instructor))
     app.add_handler(CommandHandler(["clase", "menu", "registrar"], cmd_menu_clase))
     app.add_handler(CommandHandler("alertas", cmd_alertas_admin))
+    app.add_handler(CommandHandler("supervisar", cmd_supervisar_admin))
     app.add_handler(CommandHandler("inicializar", cmd_inicializar))
     app.add_handler(CommandHandler("reporte", cmd_reporte))
 
