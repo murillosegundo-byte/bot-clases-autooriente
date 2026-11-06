@@ -89,6 +89,7 @@ PORT = int(os.getenv("PORT", "10000"))
 SHEET_ALUMNOS = "Alumnos"
 SHEET_INSTRUCTORES = "Instructores"
 SHEET_REGISTRO = "Registro_Clases"
+SHEET_CIERRES = "Cierres_Jornada"
 TZ_COLOMBIA = timezone(timedelta(hours=-5))
 
 logging.basicConfig(
@@ -682,10 +683,10 @@ FORMATOS_OFICIALES: Dict[str, Dict[str, Any]] = {
 }
 
 
-def normalizar_categoria(cat: str) -> str:
+def normalizar_categoria(cat: Optional[str]) -> str:
     if not cat:
         return "B1"
-    limpio = cat.strip().upper().replace("-", "_").replace(" ", "_")
+    limpio = str(cat).strip().upper().replace("-", "_").replace(" ", "_")
     if "RECAT" in limpio or limpio == "RC1":
         return "RECAT_C1"
     if "A1" in limpio:
@@ -732,8 +733,10 @@ def validar_minuto_envio(minuto: int, cantidad_clases: int) -> Tuple[bool, str, 
 # =============================================================================
 # 3. EXTRACTOR DE REPORTES Y VALIDACIÓN DE NOMBRE + CÉDULA
 # =============================================================================
-def extraer_numeros_clase(texto_clase: str) -> List[int]:
-    numeros = [int(n) for n in re.findall(r"\d+", texto_clase) if 1 <= int(n) <= 35]
+def extraer_numeros_clase(texto_clase: Optional[str]) -> List[int]:
+    if not texto_clase:
+        return []
+    numeros = [int(n) for n in re.findall(r"\d+", str(texto_clase)) if 1 <= int(n) <= 35]
     if not numeros:
         return []
     if len(numeros) == 2 and numeros[1] > numeros[0] and (numeros[1] - numeros[0]) <= 4:
@@ -775,15 +778,31 @@ PALABRAS_CORTE_CLASE = (
 )
 
 
-def limpiar_solo_nombre_persona(texto_bruto: str) -> Optional[str]:
+def limpiar_solo_nombre_persona(texto_bruto: Optional[str]) -> Optional[str]:
     """
     Recibe un texto que puede traer pegada la clase o el tema (ej.
-    'Maria Porras Clase Parqueo Estacionamiento Con Uso De Espejos Retrovisores'
-    o 'Juan Figueroa Clase Exámen Práctico') y devuelve ÚNICAMENTE el nombre
-    y apellido limpios del ciudadano ('Maria Porras', 'Juan Figueroa').
+    'Maria Porras Clase Parqueo Estacionamiento Con Uso De Espejos Retrovisores',
+    'Juan Figueroa Clase Exámen Práctico', o
+    'Clase 13 y 14 conducción en vías urbanas refuercen pruebas Caleb alumno María angarita')
+    y devuelve ÚNICAMENTE el nombre y apellido limpios del ciudadano.
     """
-    if not texto_bruto or not texto_bruto.strip():
+    if not texto_bruto or not str(texto_bruto).strip():
         return None
+    texto_bruto = str(texto_bruto)
+
+    # 0. Si el instructor puso explícitamente 'alumno María Angarita' al final de una descripción de clase
+    m_explicito = re.search(
+        r"\b(?:alumn[oa]s?|aprendiz|ciudadan[oa]s?)\b\s*[:#.\-]?\s*([A-Za-zÁÉÍÓÚáéíóúÑñÜü\s]{3,})",
+        texto_bruto,
+        flags=re.IGNORECASE,
+    )
+    if m_explicito:
+        fragmento_alu = re.split(
+            PALABRAS_CORTE_CLASE, m_explicito.group(1), maxsplit=1, flags=re.IGNORECASE
+        )[0].strip()
+        palabras_exp = [p for p in fragmento_alu.split() if len(p) >= 2]
+        if len(palabras_exp) >= 2:
+            return " ".join(palabras_exp[:4]).title()
 
     # 1. Revisar línea por línea para descartar líneas que describan la clase o el tema
     lineas_validas: List[str] = []
@@ -873,6 +892,18 @@ HEADERS_REGISTRO = [
     "Tema_Registrado",
     "URL_Foto_Drive",
     "Validacion_Horario",
+]
+HEADERS_CIERRES = [
+    "Timestamp",
+    "Fecha_Jornada",
+    "Hora_Cierre",
+    "Instructor",
+    "Documento_Instructor",
+    "Clases_Registradas_Bot",
+    "Clases_Segun_Agenda",
+    "Estado_Cruce",
+    "Detalle_Alumnos_Dia",
+    "URL_Captura_Agenda",
 ]
 
 
@@ -1039,6 +1070,7 @@ class SheetsService:
         self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
         self.obtener_o_crear_hoja(SHEET_INSTRUCTORES, HEADERS_INSTRUCTORES)
         self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
+        self.obtener_o_crear_hoja(SHEET_CIERRES, HEADERS_CIERRES)
         self.limpiar_nombres_contaminados()
 
     def listar_alumnos_activos(self, categoria: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -1426,6 +1458,36 @@ class SheetsService:
                 tema_registrado,
                 url_foto_drive,
                 validacion_horario,
+            ],
+        )
+
+    def registrar_cierre_jornada(
+        self,
+        timestamp: str,
+        fecha_jornada: str,
+        hora_cierre: str,
+        instructor: str,
+        documento_instructor: str,
+        clases_registradas_bot: int,
+        clases_segun_agenda: int,
+        estado_cruce: str,
+        detalle_alumnos_dia: str,
+        url_captura_agenda: str,
+    ) -> None:
+        ws = self.obtener_o_crear_hoja(SHEET_CIERRES, HEADERS_CIERRES)
+        self._agregar_fila_al_final(
+            ws,
+            [
+                timestamp,
+                fecha_jornada,
+                hora_cierre,
+                instructor,
+                documento_instructor,
+                str(clases_registradas_bot),
+                str(clases_segun_agenda),
+                estado_cruce,
+                detalle_alumnos_dia,
+                url_captura_agenda,
             ],
         )
 
@@ -2282,6 +2344,12 @@ def teclado_categorias(owner_id: int) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
+                "📋 Cierre de Jornada (Pantallazo Agenda del Día)",
+                callback_data=f"cierre_jornada|{owner_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
                 "📊 Consultar mis clases (Día/Semana/Mes)",
                 callback_data=f"ver_mis_clases|semana|{owner_id}",
             ),
@@ -2490,6 +2558,252 @@ def mensaje_indicaciones_alumno(
     )
 
 
+def _recuperar_sesion_desde_texto_mensaje(sesion: Dict[str, Any], texto_msg: str) -> None:
+    """
+    Si el servidor en Render se reinició mientras el instructor tenía el menú abierto en Telegram,
+    recupera la Categoría, Clase(s) y Tema directamente del texto visible del mensaje del bot
+    para evitar cualquier error de 'NoneType'.
+    """
+    if not texto_msg:
+        return
+
+    if not sesion.get("categoria"):
+        m_cat = re.search(
+            r"Categor[ií]a:\s*([^\n|]+)", texto_msg, flags=re.IGNORECASE
+        )
+        if m_cat:
+            sesion["categoria"] = normalizar_categoria(m_cat.group(1))
+
+    if not sesion.get("clases_texto"):
+        m_cl = re.search(
+            r"Clase\(s\)(?:\s+marcada\(s\))?:\s*([0-9,\-\s]+)",
+            texto_msg,
+            flags=re.IGNORECASE,
+        )
+        if m_cl:
+            nums = extraer_numeros_clase(m_cl.group(1))
+            if nums:
+                cat_k = sesion.get("categoria") or "B1"
+                cfg = FORMATOS_OFICIALES.get(cat_k, FORMATOS_OFICIALES["B1"])
+                temas_rec: List[str] = []
+                for fila in cfg["filas"]:
+                    if any(c in nums for c in fila["clases"]):
+                        t_l = fila["tema"].replace("\n", " ")
+                        if t_l not in temas_rec:
+                            temas_rec.append(t_l)
+                sesion["clases_texto"] = formatear_clases(nums)
+                sesion["cantidad_clases"] = len(nums)
+                sesion["tema_oficial"] = (
+                    " / ".join(temas_rec) if temas_rec else "Práctica de conducción"
+                )
+
+
+def construir_vista_cierre_jornada(
+    sesion: Dict[str, Any], owner_id: int
+) -> Tuple[str, InlineKeyboardMarkup]:
+    """
+    Construye la pantalla interactiva cuando el instructor envía al finalizar la jornada
+    el pantallazo de 'Agenda práctica' con el listado de clases dictadas en el día.
+    Cruza automáticamente con las fotos individuales registradas hoy por ese instructor.
+    """
+    instructor_nom = sesion.get("instructor_nombre") or "Instructor"
+    datos_hoy = sheets_service.consultar_clases_por_instructor(
+        instructor_nom, periodo="dia"
+    )
+    total_hoy = datos_hoy["total_clases"]
+    registros_hoy = datos_hoy["registros"]
+
+    if registros_hoy:
+        lineas_hoy = []
+        for idx, r in enumerate(registros_hoy[:20], start=1):
+            hora_c = str(r.get("Hora_Reporte", ""))
+            alu = str(r.get("Nombre_Alumno", ""))
+            cat = normalizar_categoria(str(r.get("Categoria", "B1")))
+            cl_rep = str(r.get("Clases_Reportadas", ""))
+            cant = r.get("Cantidad_Clases_Calc", 1)
+            lineas_hoy.append(
+                f"`{idx:02d}.` `{hora_c}` — *{alu}* ({cat} Cl.{cl_rep} = *{cant} cl.*)"
+            )
+        detalle_txt = "\n".join(lineas_hoy)
+    else:
+        detalle_txt = "_Aún no figuran fotos individuales registradas hoy con tu nombre._"
+
+    texto = (
+        f"📋 *REPORTE DE CIERRE DE JORNADA (AGENDA PRÁCTICA)*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{_encabezado_instructor(sesion)}"
+        f"📅 *Fecha y Hora de Cierre:* {sesion['fecha_reporte']} ({sesion['hora_reporte']})\n"
+        f"📸 *Clases registradas hoy con foto en el bot:* `{total_hoy}` clase(s)\n\n"
+        f"📝 *Tus clases con foto registradas hoy:*\n"
+        f"{detalle_txt}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"👇 *Para finalizar tu Cierre de Jornada, toca cuántas clases/horas aparecen como \"Finalizada Ok\" en tu pantallazo de Agenda Práctica de hoy:*"
+    )
+
+    botones = []
+    if total_hoy > 0:
+        botones.append(
+            [
+                InlineKeyboardButton(
+                    f"✅ Confirmar {total_hoy} clase(s) (Coincide exacto con Agenda)",
+                    callback_data=f"guardar_cierre|{total_hoy}|{owner_id}",
+                )
+            ]
+        )
+
+    botones.extend(
+        [
+            [
+                InlineKeyboardButton("2 cl.", callback_data=f"guardar_cierre|2|{owner_id}"),
+                InlineKeyboardButton("4 cl.", callback_data=f"guardar_cierre|4|{owner_id}"),
+                InlineKeyboardButton("6 cl.", callback_data=f"guardar_cierre|6|{owner_id}"),
+                InlineKeyboardButton("8 cl.", callback_data=f"guardar_cierre|8|{owner_id}"),
+            ],
+            [
+                InlineKeyboardButton("10 cl.", callback_data=f"guardar_cierre|10|{owner_id}"),
+                InlineKeyboardButton("12 cl.", callback_data=f"guardar_cierre|12|{owner_id}"),
+                InlineKeyboardButton("14 cl.", callback_data=f"guardar_cierre|14|{owner_id}"),
+                InlineKeyboardButton("16 cl.", callback_data=f"guardar_cierre|16|{owner_id}"),
+            ],
+            [
+                InlineKeyboardButton("1 cl.", callback_data=f"guardar_cierre|1|{owner_id}"),
+                InlineKeyboardButton("3 cl.", callback_data=f"guardar_cierre|3|{owner_id}"),
+                InlineKeyboardButton("5 cl.", callback_data=f"guardar_cierre|5|{owner_id}"),
+                InlineKeyboardButton("7 cl.", callback_data=f"guardar_cierre|7|{owner_id}"),
+                InlineKeyboardButton("9 cl.", callback_data=f"guardar_cierre|9|{owner_id}"),
+                InlineKeyboardButton("11 cl.", callback_data=f"guardar_cierre|11|{owner_id}"),
+            ],
+            [
+                InlineKeyboardButton(
+                    "⬅️ Volver (Es foto de una clase individual)",
+                    callback_data=f"volver_cat|{owner_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton("❌ Cancelar", callback_data=f"cancelar|{owner_id}"),
+            ],
+        ]
+    )
+    return texto, InlineKeyboardMarkup(botones)
+
+
+async def guardar_cierre_jornada_en_sheets(
+    chat_id: int,
+    user_id: int,
+    clases_agenda: int,
+    context: ContextTypes.DEFAULT_TYPE,
+    mensaje_respuesta,
+) -> None:
+    """
+    Guarda el pantallazo de 'Agenda práctica' al finalizar la jornada en la hoja 'Cierres_Jornada',
+    compara las clases de la Agenda con las fotos individuales enviadas en el día,
+    y envía copia privada del cierre al Administrador.
+    """
+    sesion = SESIONES_REPORTE.pop((chat_id, user_id), None)
+    if not sesion:
+        return
+
+    menu_msg_id = sesion.get("menu_msg_id")
+    if menu_msg_id:
+        PROPIETARIO_MENSAJE_BOT.pop(menu_msg_id, None)
+
+    try:
+        instructor = sesion.get("instructor_nombre") or "Instructor"
+        doc_instructor = sesion.get("instructor_documento") or ""
+
+        datos_hoy = sheets_service.consultar_clases_por_instructor(
+            instructor, periodo="dia"
+        )
+        clases_bot = datos_hoy["total_clases"]
+        registros_hoy = datos_hoy["registros"]
+
+        resumen_alumnos = [
+            f"{r.get('Nombre_Alumno', '')} ({normalizar_categoria(str(r.get('Categoria', 'B1')))} Cl.{r.get('Clases_Reportadas', '')})"
+            for r in registros_hoy
+        ]
+        detalle_alumnos_str = (
+            ", ".join(resumen_alumnos) if resumen_alumnos else "Sin fotos individuales hoy"
+        )
+
+        if clases_agenda == clases_bot:
+            estado_cruce = f"COINCIDE EXACTO ({clases_agenda} clases)"
+            alerta_cruce_txt = (
+                f"\n\n✅ *Cruce de Jornada Exitoso:* Las **{clases_agenda} clase(s)** de tu "
+                f"Agenda Práctica coinciden exactamente con tus fotos registradas hoy."
+            )
+        else:
+            estado_cruce = (
+                f"DIFERENCIA (Agenda: {clases_agenda} cl. vs Fotos Bot: {clases_bot} cl.)"
+            )
+            alerta_cruce_txt = (
+                f"\n\n⚠️ *Novedad en Cruce de Jornada:*\n"
+                f"En tu captura de Agenda Práctica reportas **{clases_agenda} clase(s)** y en el bot "
+                f"figuran **{clases_bot} clase(s)** registradas con foto hoy.\n"
+                f"📩 *Se adjunta tu pantallazo de Agenda al administrador para validación.*"
+            )
+
+        url_captura = subir_foto_evidencia(
+            imagen_bytes=sesion.get("foto_bytes"),
+            documento_alumno=doc_instructor or "AGENDA",
+            nombre_alumno=f"Cierre_{instructor}",
+            clases_texto=f"{clases_agenda}cl",
+            fecha_reporte=sesion["fecha_reporte"],
+            fallback_file_id=sesion.get("file_id", ""),
+            fallback_url=sesion.get("file_url", ""),
+        )
+
+        sheets_service.registrar_cierre_jornada(
+            timestamp=sesion["timestamp"],
+            fecha_jornada=sesion["fecha_reporte"],
+            hora_cierre=sesion["hora_reporte"],
+            instructor=instructor,
+            documento_instructor=doc_instructor,
+            clases_registradas_bot=clases_bot,
+            clases_segun_agenda=clases_agenda,
+            estado_cruce=estado_cruce,
+            detalle_alumnos_dia=detalle_alumnos_str,
+            url_captura_agenda=url_captura,
+        )
+
+        doc_inst_txt = f" (CC: `{doc_instructor}`)" if doc_instructor else ""
+        texto_exito = (
+            f"✅ *CIERRE DE JORNADA REGISTRADO EXITOSAMENTE*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👨‍🏫 *Instructor:* {instructor}{doc_inst_txt}\n"
+            f"📅 *Fecha y Hora de Cierre:* {sesion['fecha_reporte']} {sesion['hora_reporte']}\n"
+            f"📋 *Clases según Agenda Práctica:* `{clases_agenda}` clase(s)\n"
+            f"📸 *Clases con foto hoy en el Bot:* `{clases_bot}` clase(s)\n"
+            f"👥 *Alumnos registrados hoy:* {detalle_alumnos_str}"
+            f"{alerta_cruce_txt}"
+        )
+        await mensaje_respuesta.edit_text(texto_exito, parse_mode="Markdown")
+
+        # Enviar el pantallazo de Cierre de Jornada (Agenda Práctica) en PRIVADO al Administrador
+        destinos_admin = set(ADMIN_CHATS_ALERTA) | set(ADMIN_USER_IDS) | set(ADMIN_CHATS_SUPERVISION)
+        for admin_chat in list(destinos_admin):
+            if admin_chat != chat_id and admin_chat > 0:
+                try:
+                    if sesion.get("file_id"):
+                        await context.bot.send_photo(
+                            chat_id=admin_chat,
+                            photo=sesion["file_id"],
+                            caption=f"📋 *SOPORTE DE CIERRE DE JORNADA (AGENDA PRÁCTICA)*\n{texto_exito}",
+                            parse_mode="Markdown",
+                        )
+                    else:
+                        await context.bot.send_message(
+                            chat_id=admin_chat,
+                            text=f"📋 *SOPORTE DE CIERRE DE JORNADA (AGENDA PRÁCTICA)*\n{texto_exito}",
+                            parse_mode="Markdown",
+                        )
+                except Exception:
+                    pass
+
+    except Exception as exc:
+        logger.exception("Error guardando cierre de jornada: %s", exc)
+        await mensaje_respuesta.edit_text(f"⚠️ Error al guardar el cierre de jornada: {exc}")
+
+
 async def guardar_en_sheets_y_confirmar(
     chat_id: int,
     user_id: int,
@@ -2511,12 +2825,32 @@ async def guardar_en_sheets_y_confirmar(
         PROPIETARIO_MENSAJE_BOT.pop(menu_msg_id, None)
 
     try:
-        categoria = sesion["categoria"]
+        # Recuperar categoría y clases del texto del mensaje si el servidor en Render se reinició
+        _recuperar_sesion_desde_texto_mensaje(
+            sesion, getattr(mensaje_respuesta, "text", "") or ""
+        )
+
+        categoria = sesion.get("categoria")
+        clases_texto = sesion.get("clases_texto")
+
+        if not categoria or not clases_texto:
+            # Si tras un reinicio de servidor faltan la categoría o las clases, pedir seleccionarlas sin dar error
+            SESIONES_REPORTE[(chat_id, user_id)] = sesion
+            await mensaje_respuesta.edit_text(
+                f"{_encabezado_instructor(sesion)}"
+                f"🔄 *El servidor se actualizó hace un momento.*\n"
+                f"Por favor vuelve a seleccionar la **Categoría** y la **Clase** en los botones de abajo para guardar tu reporte:",
+                reply_markup=teclado_categorias(user_id),
+                parse_mode="Markdown",
+            )
+            PROPIETARIO_MENSAJE_BOT[mensaje_respuesta.message_id] = user_id
+            sesion["menu_msg_id"] = mensaje_respuesta.message_id
+            return
+
         nombre_alumno = sesion.get("nombre_alumno_limpio") or "Desconocido"
         documento_alumno = sesion.get("documento_detectado") or "Pendiente"
-        clases_texto = sesion["clases_texto"]
-        cantidad_clases = sesion.get("cantidad_clases", 2)
-        tema_oficial = sesion["tema_oficial"]
+        cantidad_clases = sesion.get("cantidad_clases") or 2
+        tema_oficial = sesion.get("tema_oficial") or "Práctica de conducción"
         minuto_envio = sesion.get("minuto_envio", 45)
         doc_instructor = sesion.get("instructor_documento", "")
 
@@ -2744,8 +3078,21 @@ async def procesar_mensaje_imagen(update: Update, context: ContextTypes.DEFAULT_
     dt_col = msg.date.astimezone(TZ_COLOMBIA)
 
     nombre_cap, doc_cap = extraer_nombre_y_cedula(caption)
+    if nombre_cap and len(nombre_cap.split()) >= 2 and not doc_cap:
+        ficha_cap = sheets_service.buscar_alumno(nombre_cap)
+        if ficha_cap and str(ficha_cap.get("Documento", "")).strip():
+            nombre_cap = str(ficha_cap.get("Nombre_Completo", nombre_cap)).strip()
+            doc_cap = str(ficha_cap.get("Documento", "")).strip()
+
     tiene_datos_completos = bool(
         nombre_cap and len(nombre_cap.split()) >= 2 and doc_cap
+    )
+    es_captura_cierre = bool(
+        re.search(
+            r"\b(agenda|cierre|jornada|finalizada\s*ok|resumen)\b",
+            caption,
+            flags=re.IGNORECASE,
+        )
     )
 
     # Verificar si este instructor ya está registrado con su Nombre Oficial y Cédula en 'Instructores'
@@ -2791,6 +3138,19 @@ async def procesar_mensaje_imagen(update: Update, context: ContextTypes.DEFAULT_
             f"📌 *Ejemplo:*\n"
             f"`Segundo Murillo 13959739`\n\n"
             f"*(Solo tendrás que hacerlo esta primera vez; en tus próximas fotos el bot te reconocerá automáticamente).* 👇",
+            reply_to_message_id=msg.message_id,
+            parse_mode="Markdown",
+        )
+        sesion["menu_msg_id"] = msg_bot.message_id
+        PROPIETARIO_MENSAJE_BOT[msg_bot.message_id] = user.id
+        return
+
+    # Si el pie de foto indica que es el pantallazo de Agenda Práctica / Cierre de Jornada, abrir directo la vista de Cierre
+    if es_captura_cierre:
+        texto_cierre, teclado_cierre = construir_vista_cierre_jornada(sesion, user.id)
+        msg_bot = await msg.reply_text(
+            texto_cierre,
+            reply_markup=teclado_cierre,
             reply_to_message_id=msg.message_id,
             parse_mode="Markdown",
         )
@@ -3271,6 +3631,28 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         }
         SESIONES_REPORTE[(chat_id, sesion_uid)] = sesion
         PROPIETARIO_MENSAJE_BOT[msg_id] = sesion_uid
+
+    # Si la sesión perdió categoría o clases por reinicio de Render, recuperarla del texto visible del mensaje
+    _recuperar_sesion_desde_texto_mensaje(
+        sesion, getattr(query.message, "text", "") or ""
+    )
+
+    if accion_limpia == "cierre_jornada":
+        texto_cierre, teclado_cierre = construir_vista_cierre_jornada(sesion, sesion_uid)
+        await query.message.edit_text(
+            texto_cierre,
+            reply_markup=teclado_cierre,
+            parse_mode="Markdown",
+        )
+        return
+
+    if accion_limpia.startswith("guardar_cierre|"):
+        cant_str = accion_limpia.split("|", 1)[1]
+        clases_agenda = int(cant_str) if cant_str.isdigit() else 0
+        await guardar_cierre_jornada_en_sheets(
+            chat_id, sesion_uid, clases_agenda, context, query.message
+        )
+        return
 
     if accion_limpia == "cancelar":
         SESIONES_REPORTE.pop((chat_id, sesion_uid), None)
