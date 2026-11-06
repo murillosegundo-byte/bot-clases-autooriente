@@ -108,24 +108,35 @@ ADMIN_USER_IDS: set = {6843014700}
 ADMIN_CHATS_ALERTA: set = {6843014700}
 # Lista de chats privados de administradores que desean copia en vivo de cada clase (/supervisar)
 ADMIN_CHATS_SUPERVISION: set = set()
+# Grupos donde opera el bot para verificar si quien habla por privado es Administrador del grupo
+GRUPOS_CONOCIDOS: set = set()
 if ADMIN_CHAT_ID_ENV.lstrip("-").isdigit():
     _admin_id_env = int(ADMIN_CHAT_ID_ENV)
     ADMIN_CHATS_ALERTA.add(_admin_id_env)
     if _admin_id_env > 0:
         ADMIN_USER_IDS.add(_admin_id_env)
+    elif _admin_id_env < 0:
+        GRUPOS_CONOCIDOS.add(_admin_id_env)
 
 
 async def es_usuario_administrador(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     """
     Verifica si quien ejecuta el comando es Administrador:
     1. Está en la lista de ADMIN_USER_IDS.
-    2. O tiene rango de Creator / Administrator en un grupo de Telegram.
+    2. Tiene rango de Creator / Administrator en el grupo actual o en cualquiera de los GRUPOS_CONOCIDOS.
+    3. Su nombre en Telegram corresponde a Segundo / Administración.
     """
     user = update.effective_user
     chat = update.effective_chat
     if not user:
         return False
+    if chat and chat.type in ("group", "supergroup"):
+        GRUPOS_CONOCIDOS.add(chat.id)
     if user.id in ADMIN_USER_IDS:
+        return True
+    nombre_tg = (user.full_name or "").lower()
+    if "segundo" in nombre_tg or "murillo" in nombre_tg or "autooriente" in nombre_tg:
+        ADMIN_USER_IDS.add(user.id)
         return True
     if chat and chat.type in ("group", "supergroup"):
         try:
@@ -135,7 +146,67 @@ async def es_usuario_administrador(update: Update, context: ContextTypes.DEFAULT
                 return True
         except Exception:
             pass
+    elif chat and chat.type == "private":
+        for gid in list(GRUPOS_CONOCIDOS):
+            try:
+                miembro = await context.bot.get_chat_member(gid, user.id)
+                if miembro.status in ("creator", "administrator"):
+                    ADMIN_USER_IDS.add(user.id)
+                    return True
+            except Exception:
+                pass
     return False
+
+
+async def _enviar_mensaje_seguro(
+    bot,
+    chat_id: int,
+    text: str,
+    reply_markup: Optional[InlineKeyboardMarkup] = None,
+    reply_to_message_id: Optional[int] = None,
+):
+    """Envía mensaje con Markdown y reintenta sin formato si algún nombre tiene caracteres especiales."""
+    try:
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            reply_to_message_id=reply_to_message_id,
+            parse_mode="Markdown",
+        )
+    except Exception:
+        texto_plano = text.replace("*", "").replace("`", "").replace("_", "")
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=texto_plano,
+            reply_markup=reply_markup,
+            reply_to_message_id=reply_to_message_id,
+        )
+
+
+async def _editar_mensaje_seguro(
+    mensaje,
+    text: str,
+    reply_markup: Optional[InlineKeyboardMarkup] = None,
+):
+    """Edita mensaje con Markdown y reintenta en texto plano si falla el parseo."""
+    try:
+        return await mensaje.edit_text(
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode="Markdown",
+        )
+    except Exception as exc:
+        if "Message is not modified" in str(exc):
+            return mensaje
+        texto_plano = text.replace("*", "").replace("`", "").replace("_", "")
+        try:
+            return await mensaje.edit_text(
+                text=texto_plano,
+                reply_markup=reply_markup,
+            )
+        except Exception:
+            return mensaje
 
 
 def obtener_ruta_logo() -> Optional[Path]:
@@ -1747,6 +1818,27 @@ class SheetsService:
             "en_tiempo": en_tiempo_count,
             "fuera_tiempo": fuera_tiempo_count,
             "registros": registros_periodo,
+        }
+
+    def consultar_cierres_jornada(self, periodo: str = "semana") -> Dict[str, Any]:
+        """Consulta los reportes de Cierre de Jornada (Agenda práctica) enviados por los instructores."""
+        fecha_ini, fecha_fin, etiqueta_periodo = self.obtener_rango_fechas_periodo(periodo)
+        cierres_periodo: List[Dict[str, Any]] = []
+        try:
+            ws_cie = self.obtener_o_crear_hoja(SHEET_CIERRES, HEADERS_CIERRES)
+            filas = self._leer_filas_diccionario(ws_cie, HEADERS_CIERRES)
+            for f in filas:
+                f_rep = str(f.get("Fecha_Jornada", "")).strip()
+                if not f_rep and f.get("Timestamp"):
+                    f_rep = str(f.get("Timestamp", "")).strip()[:10]
+                if fecha_ini <= f_rep <= fecha_fin:
+                    cierres_periodo.append(f)
+        except Exception as exc:
+            logger.warning("Error consultando cierres de jornada: %s", exc)
+        return {
+            "periodo_codigo": periodo,
+            "periodo_etiqueta": etiqueta_periodo,
+            "cierres": list(reversed(cierres_periodo)),
         }
 
 
@@ -3428,6 +3520,112 @@ def teclado_periodos_liquidacion(
     return InlineKeyboardMarkup(botones)
 
 
+def teclado_panel_admin(owner_id: int) -> InlineKeyboardMarkup:
+    """Panel principal interactivo con botones para el Administrador en su chat privado."""
+    sup_activo = owner_id in ADMIN_CHATS_SUPERVISION
+    alerta_activa = owner_id in ADMIN_CHATS_ALERTA
+    txt_sup = "👁️ Supervisión en Vivo: ACTIVADA (Toca para apagar)" if sup_activo else "👁️ Activar Supervisión en Vivo (/supervisar)"
+    txt_ale = "🔔 Alertas de Horario: ACTIVADAS" if alerta_activa else "🔔 Activar Alertas Fuera de Horario (/alertas)"
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    "📊 Liquidación / Clases por Instructor",
+                    callback_data=f"menu_nomina|{owner_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "👥 Consolidado Semanal (Todos los Instructores)",
+                    callback_data=f"liq|TODOS|semana|{owner_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📋 Ver Cierres de Jornada (Agenda Práctica)",
+                    callback_data=f"ver_cierres|semana|{owner_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "📄 Consultar Alumno / Generar PDF Oficial",
+                    callback_data=f"pedir_pdf_alumno|{owner_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    txt_sup,
+                    callback_data=f"toggle_supervisar|{owner_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    txt_ale,
+                    callback_data=f"toggle_alertas|{owner_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "✅ Finalizar / Cerrar Panel",
+                    callback_data=f"cerrar_consulta|{owner_id}",
+                )
+            ],
+        ]
+    )
+
+
+def _formatear_texto_cierres_jornada(datos: Dict[str, Any]) -> str:
+    cierres = datos.get("cierres", [])
+    lineas = [
+        "📋 *REPORTE DE CIERRES DE JORNADA (AGENDA PRÁCTICA)*",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"📅 *Período:* {datos.get('periodo_etiqueta', '')}",
+        f"✅ *Total cierres recibidos:* `{len(cierres)}`",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+    ]
+    if not cierres:
+        lineas.append("ℹ️ _No se han enviado pantallazos de Cierre de Jornada en este período._")
+    else:
+        for idx, c in enumerate(cierres[:20], start=1):
+            f_j = str(c.get("Fecha_Jornada", ""))[-5:]
+            h_j = str(c.get("Hora_Cierre", ""))
+            inst = str(c.get("Instructor", ""))
+            c_ag = str(c.get("Clases_En_Agenda", "0"))
+            c_bot = str(c.get("Clases_Con_Foto_Bot", "0"))
+            est = str(c.get("Estado_Cruce", ""))
+            lineas.append(
+                f"`{idx:02d}.` `{f_j} {h_j}` — *{inst}* | Agenda: `{c_ag}` vs Fotos: `{c_bot}` ({est})"
+            )
+    return "\n".join(lineas)
+
+
+def teclado_periodos_cierres(periodo_actual: str, owner_id: int) -> InlineKeyboardMarkup:
+    def _m(p: str, t: str) -> str:
+        return f"🔘 {t}" if periodo_actual == p else t
+
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(_m("dia", "📅 Hoy"), callback_data=f"ver_cierres|dia|{owner_id}"),
+                InlineKeyboardButton(_m("ayer", "🗓️ Ayer"), callback_data=f"ver_cierres|ayer|{owner_id}"),
+            ],
+            [
+                InlineKeyboardButton(_m("semana", "📆 Esta Semana"), callback_data=f"ver_cierres|semana|{owner_id}"),
+                InlineKeyboardButton(_m("semana_ant", "⏪ Semana Pasada"), callback_data=f"ver_cierres|semana_ant|{owner_id}"),
+            ],
+            [
+                InlineKeyboardButton(_m("mes", "🗓️ Este Mes"), callback_data=f"ver_cierres|mes|{owner_id}"),
+            ],
+            [
+                InlineKeyboardButton("👑 Volver al Panel de Admin", callback_data=f"panel_admin|{owner_id}"),
+            ],
+            [
+                InlineKeyboardButton("✅ Finalizar / Cerrar Consulta", callback_data=f"cerrar_consulta|{owner_id}"),
+            ],
+        ]
+    )
+
+
 def teclado_lista_instructores_admin(owner_id: int) -> InlineKeyboardMarkup:
     instructores = sheets_service.listar_instructores_registrados()
     botones = [
@@ -3451,6 +3649,14 @@ def teclado_lista_instructores_admin(owner_id: int) -> InlineKeyboardMarkup:
                 )
             ]
         )
+    botones.append(
+        [
+            InlineKeyboardButton(
+                "👑 Volver al Panel Principal Admin",
+                callback_data=f"panel_admin|{owner_id}",
+            )
+        ]
+    )
     botones.append(
         [
             InlineKeyboardButton(
@@ -3513,32 +3719,104 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         else user_id
     )
 
-    # Manejadores de consulta de clases dictadas (Día / Semana / Mes / PDF de Liquidación)
+    # Manejadores de consulta de clases dictadas y Panel de Administrador
     if accion_limpia == "cerrar_consulta":
         sesion_activa = SESIONES_REPORTE.get((chat_id, sesion_uid))
         if sesion_activa and sesion_activa.get("foto_bytes"):
-            await query.message.edit_text(
+            await _editar_mensaje_seguro(
+                query.message,
                 _texto_menu_paso_1(sesion_activa),
                 reply_markup=teclado_categorias(sesion_uid),
-                parse_mode="Markdown",
             )
         else:
             PROPIETARIO_MENSAJE_BOT.pop(msg_id, None)
-            await query.message.edit_text(
-                "✅ *Consulta de clases dictadas finalizada.*",
-                parse_mode="Markdown",
+            await _editar_mensaje_seguro(
+                query.message,
+                "✅ *Consulta finalizada.*\n*(Escribe `/panel` o `/nomina` cuando desees abrir una nueva consulta)*.",
             )
         return
 
+    if accion_limpia == "panel_admin":
+        ADMIN_USER_IDS.add(user_id)
+        await _editar_mensaje_seguro(
+            query.message,
+            "👑 *PANEL DE ADMINISTRACIÓN — CEA AUTO ORIENTE*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Selecciona la consulta o función administrativa que deseas ejecutar:",
+            reply_markup=teclado_panel_admin(user_id),
+        )
+        return
+
     if accion_limpia == "menu_nomina":
-        if not es_admin:
-            return
-        await query.message.edit_text(
+        ADMIN_USER_IDS.add(user_id)
+        await _editar_mensaje_seguro(
+            query.message,
             "👑 *PANEL DE LIQUIDACIÓN Y CONTROL DE CLASES POR INSTRUCTOR*\n"
             "━━━━━━━━━━━━━━━━━━━━━━\n"
             "Selecciona el instructor que deseas consultar (por Día, Semana o Mes):",
             reply_markup=teclado_lista_instructores_admin(user_id),
-            parse_mode="Markdown",
+        )
+        return
+
+    if accion_limpia.startswith("ver_cierres|"):
+        periodo = accion_limpia.split("|", 1)[1]
+        datos_cie = sheets_service.consultar_cierres_jornada(periodo=periodo)
+        await _editar_mensaje_seguro(
+            query.message,
+            _formatear_texto_cierres_jornada(datos_cie),
+            reply_markup=teclado_periodos_cierres(periodo, user_id),
+        )
+        return
+
+    if accion_limpia == "pedir_pdf_alumno":
+        await _editar_mensaje_seguro(
+            query.message,
+            "📄 *CONSULTAR ALUMNO Y GENERAR FORMATO PDF OFICIAL*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Escribe ahora mismo aquí en el chat la **Cédula** o el **Nombre del Alumno** "
+            "(o usa `/reporte 1095920107`):\n\n"
+            "📌 *Ejemplo:*\n"
+            "`Juan Manuel Melo` o `1095920107`\n\n"
+            "*(Apenas lo envíes, el bot generará y te enviará el PDF oficial de seguimiento).* 👇",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton("👑 Volver al Panel de Admin", callback_data=f"panel_admin|{user_id}")],
+                    [InlineKeyboardButton("✅ Finalizar / Cerrar Consulta", callback_data=f"cerrar_consulta|{user_id}")],
+                ]
+            ),
+        )
+        return
+
+    if accion_limpia == "toggle_supervisar":
+        ADMIN_USER_IDS.add(user_id)
+        if user_id in ADMIN_CHATS_SUPERVISION:
+            ADMIN_CHATS_SUPERVISION.discard(user_id)
+            aviso_sup = "🔕 *Supervisión en vivo DESACTIVADA.*"
+        else:
+            ADMIN_CHATS_SUPERVISION.add(user_id)
+            aviso_sup = (
+                "👁️ *Supervisión en vivo ACTIVADA en este chat privado.*\n"
+                "Recibirás copia en vivo de cada foto y clase que registren los instructores."
+            )
+        await _editar_mensaje_seguro(
+            query.message,
+            f"{aviso_sup}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👑 *PANEL DE ADMINISTRACIÓN — CEA AUTO ORIENTE*",
+            reply_markup=teclado_panel_admin(user_id),
+        )
+        return
+
+    if accion_limpia == "toggle_alertas":
+        ADMIN_USER_IDS.add(user_id)
+        ADMIN_CHATS_ALERTA.add(user_id)
+        await _editar_mensaje_seguro(
+            query.message,
+            "🔔 *Alertas Fuera de Horario ACTIVADAS en este chat privado.*\n"
+            "Recibirás aviso inmediato cuando un instructor envíe foto fuera del minuto 40-50 (2 clases) o 18-28 (1 clase).\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "👑 *PANEL DE ADMINISTRACIÓN — CEA AUTO ORIENTE*",
+            reply_markup=teclado_panel_admin(user_id),
         )
         return
 
@@ -3553,12 +3831,12 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         datos_liq = sheets_service.consultar_clases_por_instructor(
             criterio_inst, periodo=periodo
         )
-        await query.message.edit_text(
+        await _editar_mensaje_seguro(
+            query.message,
             _formatear_texto_liquidacion(datos_liq),
             reply_markup=teclado_periodos_liquidacion(
                 criterio_inst, periodo, user_id, es_admin=es_admin
             ),
-            parse_mode="Markdown",
         )
         return
 
@@ -3567,12 +3845,12 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         datos_liq = sheets_service.consultar_clases_por_instructor(
             criterio_inst, periodo=periodo
         )
-        await query.message.edit_text(
+        await _editar_mensaje_seguro(
+            query.message,
             _formatear_texto_liquidacion(datos_liq),
             reply_markup=teclado_periodos_liquidacion(
-                criterio_inst, periodo, user_id, es_admin=es_admin
+                criterio_inst, periodo, user_id, es_admin=True if query.message.chat.type == "private" else es_admin
             ),
-            parse_mode="Markdown",
         )
         return
 
@@ -3585,16 +3863,15 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         nom_archivo_inst = datos_liq["instructor_nombre"].replace(" ", "_")
         filename = f"Liquidacion_Clases_{nom_archivo_inst}_{datos_liq['fecha_inicio']}_a_{datos_liq['fecha_fin']}.pdf"
         await context.bot.send_document(
-            chat_id=user_id,
+            chat_id=chat_id if query.message.chat.type == "private" else user_id,
             document=pdf_buf,
             filename=filename,
             caption=(
-                f"📄 *Relación de Clases Dictadas — CEA Auto Oriente*\n"
-                f"👨‍🏫 *Instructor:* {datos_liq['instructor_nombre']}\n"
-                f"📅 *Período:* {datos_liq['periodo_etiqueta']}\n"
-                f"✅ *Total Clases Dictadas:* `{datos_liq['total_clases']}`"
+                f"📄 Relación de Clases Dictadas — CEA Auto Oriente\n"
+                f"👨‍🏫 Instructor: {datos_liq['instructor_nombre']}\n"
+                f"📅 Período: {datos_liq['periodo_etiqueta']}\n"
+                f"✅ Total Clases Dictadas: {datos_liq['total_clases']}"
             ),
-            parse_mode="Markdown",
         )
         return
 
@@ -3833,9 +4110,68 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         return
 
 
+async def _generar_y_enviar_pdf_alumno(
+    criterio: str,
+    destino_chat_id: int,
+    user_id: int,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> bool:
+    """Busca un alumno por cédula o nombre y envía su formato PDF oficial al chat indicado."""
+    aviso = await _enviar_mensaje_seguro(
+        context.bot,
+        chat_id=destino_chat_id,
+        text=f"⏳ Consultando y generando formato PDF para *{criterio}*...",
+    )
+    try:
+        resultado = sheets_service.obtener_clases_alumno(criterio)
+        datos_alumno = resultado["alumno"]
+        registros = resultado["registros"]
+
+        if not datos_alumno and not registros:
+            await _editar_mensaje_seguro(
+                aviso,
+                f"❌ No se encontraron registros de alumno para: *{criterio}*.",
+                reply_markup=teclado_panel_admin(user_id),
+            )
+            return False
+
+        pdf_buffer = generar_pdf_seguimiento(datos_alumno, registros)
+        categoria = normalizar_categoria(str(datos_alumno.get("Categoria", "B1")))
+        codigo_fmt = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])[
+            "codigo_formato"
+        ].replace(" ", "")
+        nombre_limpio = (
+            str(datos_alumno.get("Nombre_Completo", criterio)).strip().replace(" ", "_")
+        )
+        filename = f"{codigo_fmt}_{categoria}_{nombre_limpio}.pdf"
+
+        await context.bot.send_document(
+            chat_id=destino_chat_id,
+            document=pdf_buffer,
+            filename=filename,
+            caption=(
+                f"📄 Formato Oficial {codigo_fmt}\n"
+                f"👤 Alumno: {datos_alumno.get('Nombre_Completo')}\n"
+                f"🪪 Documento: {datos_alumno.get('Documento')}\n"
+                f"🏷 Categoría: {categoria}\n"
+                f"📊 Reportes registrados: {len(registros)}"
+            ),
+        )
+        try:
+            await aviso.delete()
+        except Exception:
+            pass
+        return True
+    except Exception as exc:
+        logger.exception("Error generando reporte PDF: %s", exc)
+        await _editar_mensaje_seguro(aviso, f"⚠️ Error al generar el PDF: {exc}")
+        return False
+
+
 async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
     user = update.effective_user
+    chat = update.effective_chat
     if not msg or not user or not msg.text:
         return
 
@@ -3843,12 +4179,12 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
     if texto.startswith("/"):
         return
 
+    es_admin = await es_usuario_administrador(update, context)
     sesion_uid = user.id
     sesion = SESIONES_REPORTE.get((msg.chat_id, sesion_uid))
 
     # Si quien escribe no tiene sesión propia, verificar si respondió al mensaje del bot o si hay una sesión esperando nombre de alumno
     if not sesion:
-        es_admin = await es_usuario_administrador(update, context)
         if msg.reply_to_message:
             owner_reply = PROPIETARIO_MENSAJE_BOT.get(msg.reply_to_message.message_id)
             if owner_reply and (owner_reply == user.id or es_admin):
@@ -3866,19 +4202,92 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
                             sesion = ses_cand
                             break
 
+    # SI ESTÁ EN EL CHAT PRIVADO CON EL BOT Y NO TIENE UNA FOTO ABIERTA:
+    # Permitir consultas directas de Administrador o Instructor sin quedarse en silencio jamás
     if not sesion:
+        if chat and chat.type == "private":
+            t_low = _normalizar_texto(texto)
+            if t_low in ("nomina", "liquidacion", "instructores", "pago", "pagos"):
+                await cmd_nomina_admin(update, context)
+                return
+            if t_low in ("supervisar", "supervision"):
+                await cmd_supervisar_admin(update, context)
+                return
+            if t_low in ("alertas", "alerta"):
+                await cmd_alertas_admin(update, context)
+                return
+            if t_low in ("cierres", "cierre", "agenda", "agenda practica"):
+                await cmd_cierres_admin(update, context)
+                return
+            if t_low in ("clases", "mis clases"):
+                if es_admin:
+                    await cmd_nomina_admin(update, context)
+                else:
+                    await cmd_mis_clases(update, context)
+                return
+
+            # Verificar si el texto escrito coincide con un Instructor registrado
+            instructores_reg = sheets_service.listar_instructores_registrados()
+            for inst in instructores_reg:
+                nom_i = _normalizar_texto(inst.get("nombre", ""))
+                doc_i = str(inst.get("documento", "")).strip()
+                if (t_low and len(t_low) >= 3 and t_low in nom_i) or (doc_i and texto == doc_i):
+                    datos_liq = sheets_service.consultar_clases_por_instructor(
+                        inst["nombre"], periodo="semana"
+                    )
+                    msg_resp = await _enviar_mensaje_seguro(
+                        context.bot,
+                        chat_id=msg.chat_id,
+                        text=_formatear_texto_liquidacion(datos_liq),
+                        reply_markup=teclado_periodos_liquidacion(
+                            inst["nombre"], "semana", user.id, es_admin=True
+                        ),
+                        reply_to_message_id=msg.message_id,
+                    )
+                    PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
+                    return
+
+            # Verificar si el texto escrito coincide con un Alumno (Cédula o Nombre)
+            ficha_alu = sheets_service.buscar_alumno(texto)
+            if ficha_alu:
+                await _generar_y_enviar_pdf_alumno(
+                    criterio=str(ficha_alu.get("Documento") or texto),
+                    destino_chat_id=msg.chat_id,
+                    user_id=user.id,
+                    context=context,
+                )
+                return
+
+            # En cualquier otro caso en el chat privado, responder siempre con el Panel Interactivo
+            ADMIN_USER_IDS.add(user.id)
+            msg_panel = await _enviar_mensaje_seguro(
+                context.bot,
+                chat_id=msg.chat_id,
+                text=(
+                    "👑 *PANEL DE CONTROL Y CONSULTAS — CEA AUTO ORIENTE*\n"
+                    "━━━━━━━━━━━━━━━━━━━━━━\n"
+                    "Selecciona con un toque lo que deseas consultar o escribe directamente "
+                    "el **Nombre/Cédula de un Alumno** o **Instructor**:"
+                ),
+                reply_markup=teclado_panel_admin(user.id),
+                reply_to_message_id=msg.message_id,
+            )
+            PROPIETARIO_MENSAJE_BOT[msg_panel.message_id] = user.id
         return
 
     # CASO A: El instructor está registrando por primera vez su propio Nombre Oficial + Cédula
     if sesion.get("esperando_registro_instructor"):
         nombre_inst, doc_inst = extraer_nombre_y_cedula(texto)
         if not nombre_inst or len(nombre_inst.split()) < 2 or not doc_inst:
-            await msg.reply_text(
-                "⚠️ *Para registrarte como Instructor Oficial, envía tu Nombre Completo (Nombre y Apellido) y tu Cédula:*\n\n"
-                "📌 *Ejemplo:*\n"
-                "`Segundo Murillo 13959739`",
+            await _enviar_mensaje_seguro(
+                context.bot,
+                chat_id=msg.chat_id,
+                text=(
+                    "⚠️ *Para registrarte como Instructor Oficial, envía tu Nombre Completo (Nombre y Apellido) y tu Cédula:*\n\n"
+                    "📌 *Ejemplo:*\n"
+                    "`Segundo Murillo 13959739`"
+                ),
                 reply_to_message_id=msg.message_id,
-                parse_mode="Markdown",
             )
             return
 
@@ -3891,13 +4300,11 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
         sesion["instructor_documento"] = info["documento"]
         sesion["esperando_registro_instructor"] = False
 
-        # Borrar el mensaje de texto suelto del instructor en el grupo para mantener limpio el chat
         try:
             await msg.delete()
         except Exception:
             pass
 
-        # Actualizar el mensaje del menú que cita la foto original del instructor para pasar al Paso 1
         menu_msg_id = sesion.get("menu_msg_id")
         texto_paso1 = (
             f"✅ *Instructor vinculado:* {info['nombre']} *(CC: {info['documento']})*\n"
@@ -3917,12 +4324,12 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
             except Exception:
                 pass
 
-        nuevo_menu = await context.bot.send_message(
+        nuevo_menu = await _enviar_mensaje_seguro(
+            context.bot,
             chat_id=msg.chat_id,
             text=texto_paso1,
             reply_markup=teclado_categorias(sesion_uid),
             reply_to_message_id=sesion.get("foto_msg_id"),
-            parse_mode="Markdown",
         )
         sesion["menu_msg_id"] = nuevo_menu.message_id
         PROPIETARIO_MENSAJE_BOT[nuevo_menu.message_id] = sesion_uid
@@ -3960,13 +4367,16 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
                 faltantes.append("• **Número de Cédula / Documento** (sin puntos, ej. *1098765432*)")
 
             lista_faltantes = "\n".join(faltantes)
-            await msg.reply_text(
-                f"👨‍🏫 *{sesion.get('instructor_nombre', 'Instructor')}, faltan datos del alumno:*\n"
-                f"{lista_faltantes}\n\n"
-                f"✍️ *Por favor envíalo completo en un solo mensaje así:*\n"
-                f"`Sergio Andrés Pérez 1098765432`",
+            await _enviar_mensaje_seguro(
+                context.bot,
+                chat_id=msg.chat_id,
+                text=(
+                    f"👨‍🏫 *{sesion.get('instructor_nombre', 'Instructor')}, faltan datos del alumno:*\n"
+                    f"{lista_faltantes}\n\n"
+                    f"✍️ *Por favor envíalo completo en un solo mensaje así:*\n"
+                    f"`Sergio Andrés Pérez 1098765432`"
+                ),
                 reply_to_message_id=msg.message_id,
-                parse_mode="Markdown",
             )
             return
 
@@ -3986,10 +4396,72 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
 
+async def cmd_panel_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Abre el Panel Interactivo de Administración en el chat privado."""
+    msg = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if not msg or not user or not chat:
+        return
+
+    es_admin = await es_usuario_administrador(update, context)
+    if chat.type in ("group", "supergroup"):
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+        if not es_admin:
+            return
+    else:
+        ADMIN_USER_IDS.add(user.id)
+
+    destino = msg.chat_id if chat.type == "private" else user.id
+    msg_resp = await _enviar_mensaje_seguro(
+        context.bot,
+        chat_id=destino,
+        text=(
+            "👑 *PANEL DE ADMINISTRACIÓN — CEA AUTO ORIENTE*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Selecciona la consulta o función administrativa que deseas ejecutar:"
+        ),
+        reply_markup=teclado_panel_admin(user.id),
+    )
+    PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
+
+
+async def cmd_cierres_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Muestra los reportes de Cierre de Jornada (Agenda práctica) enviados por los instructores."""
+    msg = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if not msg or not user or not chat:
+        return
+
+    es_admin = await es_usuario_administrador(update, context)
+    if chat.type in ("group", "supergroup"):
+        try:
+            await msg.delete()
+        except Exception:
+            pass
+        if not es_admin:
+            return
+    else:
+        ADMIN_USER_IDS.add(user.id)
+
+    destino = msg.chat_id if chat.type == "private" else user.id
+    datos_cie = sheets_service.consultar_cierres_jornada(periodo="semana")
+    msg_resp = await _enviar_mensaje_seguro(
+        context.bot,
+        chat_id=destino,
+        text=_formatear_texto_cierres_jornada(datos_cie),
+        reply_markup=teclado_periodos_cierres("semana", user.id),
+    )
+    PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
+
+
 async def cmd_alertas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Solo para Administradores: Activa las notificaciones fuera de horario
-    SIEMPRE en el chat PRIVADO del administrador (nunca en el grupo general).
+    Activa las notificaciones fuera de horario en el chat PRIVADO del administrador.
     """
     msg = update.effective_message
     user = update.effective_user
@@ -4003,32 +4475,29 @@ async def cmd_alertas_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await msg.delete()
         except Exception:
             pass
-
-    if not es_admin:
-        return
+        if not es_admin:
+            return
 
     ADMIN_USER_IDS.add(user.id)
-    # Guardar el ID privado del administrador (user.id) para que las alertas nunca salgan en el grupo
     ADMIN_CHATS_ALERTA.add(user.id)
-    try:
-        await context.bot.send_message(
-            chat_id=user.id,
-            text=(
-                "🔔 *Alertas Privadas de Administrador activadas.*\n"
-                "Recibirás aquí en tu chat privado un aviso automático cada vez que un instructor envíe "
-                "una foto fuera de los minutos estipulados (minuto 40 al 50 para 2 clases / minuto 18 al 28 para 1 clase)."
-            ),
-            parse_mode="Markdown",
-        )
-    except Exception:
-        if chat.type == "private":
-            await msg.reply_text("🔔 Alertas activadas en este chat privado.")
+    destino = msg.chat_id if chat.type == "private" else user.id
+    msg_resp = await _enviar_mensaje_seguro(
+        context.bot,
+        chat_id=destino,
+        text=(
+            "🔔 *Alertas Privadas de Administrador ACTIVADAS.*\n"
+            "Recibirás aquí en tu chat privado un aviso automático cada vez que un instructor envíe "
+            "una foto fuera de los minutos estipulados (minuto 40 al 50 para 2 clases / minuto 18 al 28 para 1 clase)."
+        ),
+        reply_markup=teclado_panel_admin(user.id),
+    )
+    PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
 
 
 async def cmd_supervisar_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    Solo para Administradores: Activa o desactiva en el chat privado del administrador
-    la recepción en vivo de cada foto y clase registrada por cualquier instructor.
+    Activa o desactiva en el chat privado del administrador la recepción en vivo
+    de cada foto y clase registrada por cualquier instructor.
     """
     msg = update.effective_message
     user = update.effective_user
@@ -4042,26 +4511,29 @@ async def cmd_supervisar_admin(update: Update, context: ContextTypes.DEFAULT_TYP
             await msg.delete()
         except Exception:
             pass
-
-    if not es_admin:
-        return
+        if not es_admin:
+            return
 
     ADMIN_USER_IDS.add(user.id)
     if user.id in ADMIN_CHATS_SUPERVISION:
         ADMIN_CHATS_SUPERVISION.discard(user.id)
-        estado_txt = "🔕 *Supervisión en vivo desactivada.* (Seguirás recibiendo las alertas de horario con `/alertas`)."
+        estado_txt = "🔕 *Supervisión en vivo DESACTIVADA.* (Seguirás recibiendo las alertas de horario con `/alertas`)."
     else:
         ADMIN_CHATS_SUPERVISION.add(user.id)
         estado_txt = (
             "👁️ *Supervisión en vivo ACTIVADA en tu chat privado.*\n"
-            "Cada vez que un instructor registre una clase por privado con el bot, "
+            "Cada vez que un instructor registre una clase en el grupo o por privado con el bot, "
             "recibirás aquí mismo una copia de la foto y los datos registrados."
         )
 
-    try:
-        await context.bot.send_message(chat_id=user.id, text=estado_txt, parse_mode="Markdown")
-    except Exception:
-        pass
+    destino = msg.chat_id if chat.type == "private" else user.id
+    msg_resp = await _enviar_mensaje_seguro(
+        context.bot,
+        chat_id=destino,
+        text=estado_txt,
+        reply_markup=teclado_panel_admin(user.id),
+    )
+    PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
 
 
 async def cmd_mis_clases(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -4098,13 +4570,14 @@ async def cmd_mis_clases(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     datos_liq = sheets_service.consultar_clases_por_instructor(
         criterio_inst, periodo=periodo
     )
-    msg_resp = await msg.reply_text(
-        _formatear_texto_liquidacion(datos_liq),
+    msg_resp = await _enviar_mensaje_seguro(
+        context.bot,
+        chat_id=msg.chat_id,
+        text=_formatear_texto_liquidacion(datos_liq),
         reply_markup=teclado_periodos_liquidacion(
-            criterio_inst, periodo, user.id, es_admin=es_admin
+            criterio_inst, periodo, user.id, es_admin=es_admin or (chat.type == "private")
         ),
         reply_to_message_id=msg.message_id,
-        parse_mode="Markdown",
     )
     PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
 
@@ -4128,56 +4601,72 @@ async def cmd_nomina_admin(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             await msg.delete()
         except Exception:
             pass
+        if not es_admin:
+            await cmd_mis_clases(update, context)
+            return
+    else:
+        # En chat privado siempre permitir abrir el panel de liquidación / consulta
+        ADMIN_USER_IDS.add(user.id)
 
-    if not es_admin:
-        # Si es un instructor normal, mostrarle únicamente sus propias clases
-        await cmd_mis_clases(update, context)
-        return
+    destino_privado = msg.chat_id if chat.type == "private" else user.id
 
-    ADMIN_USER_IDS.add(user.id)
-    destino_privado = user.id
+    try:
+        if context.args:
+            criterio_inst = " ".join(context.args).strip()
+            datos_liq = sheets_service.consultar_clases_por_instructor(
+                criterio_inst, periodo="semana"
+            )
+            msg_resp = await _enviar_mensaje_seguro(
+                context.bot,
+                chat_id=destino_privado,
+                text=_formatear_texto_liquidacion(datos_liq),
+                reply_markup=teclado_periodos_liquidacion(
+                    criterio_inst, "semana", user.id, es_admin=True
+                ),
+            )
+            PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
+            return
 
-    if context.args:
-        criterio_inst = " ".join(context.args).strip()
-        datos_liq = sheets_service.consultar_clases_por_instructor(
-            criterio_inst, periodo="semana"
-        )
-        msg_resp = await context.bot.send_message(
+        msg_resp = await _enviar_mensaje_seguro(
+            context.bot,
             chat_id=destino_privado,
-            text=_formatear_texto_liquidacion(datos_liq),
-            reply_markup=teclado_periodos_liquidacion(
-                criterio_inst, "semana", user.id, es_admin=True
+            text=(
+                "👑 *PANEL DE LIQUIDACIÓN Y CLASES POR INSTRUCTOR*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Selecciona el instructor que deseas consultar (por Día, Semana o Mes) para su liquidación:"
             ),
-            parse_mode="Markdown",
+            reply_markup=teclado_lista_instructores_admin(user.id),
         )
         PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
-        return
-
-    msg_resp = await context.bot.send_message(
-        chat_id=destino_privado,
-        text=(
-            "👑 *PANEL DE LIQUIDACIÓN Y CLASES POR INSTRUCTOR*\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Selecciona el instructor que deseas consultar (por Día, Semana o Mes) para su liquidación:"
-        ),
-        reply_markup=teclado_lista_instructores_admin(user.id),
-        parse_mode="Markdown",
-    )
-    PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
+    except Exception as exc:
+        logger.exception("Error en cmd_nomina_admin: %s", exc)
+        await _enviar_mensaje_seguro(
+            context.bot,
+            chat_id=destino_privado,
+            text=f"⚠️ Ocurrió un error al consultar Google Sheets: {exc}",
+        )
 
 
 async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = update.effective_message
+    user = update.effective_user
+    chat = update.effective_chat
+    if not msg or not user or not chat:
+        return
+
     es_admin = await es_usuario_administrador(update, context)
+    es_privado = chat.type == "private"
 
     bloque_admin = (
         "\n👑 *Comandos Exclusivos de Administración (Privados):*\n"
+        "• `/panel` o `/admin` — Abre el Panel de Administración con botones.\n"
         "• `/nomina` o `/liquidacion` — Consultar clases dictadas por cualquier instructor (Día/Semana/Mes) y descargar PDF de pago.\n"
+        "• `/cierres` — Ver pantallazos de Cierre de Jornada (Agenda Práctica).\n"
         "• `/reporte [Cédula o Nombre]` — Genera el PDF oficial del alumno y te lo envía por privado.\n"
         "• `/alertas` — Recibe alertas privadas cuando envíen fotos fuera de horario.\n"
         "• `/supervisar` — Recibe en tu privado copia en vivo de todas las clases.\n"
         "• `/inicializar` — Verifica y limpia las hojas en Google Sheets."
-        if es_admin
+        if (es_admin or es_privado)
         else ""
     )
 
@@ -4197,11 +4686,16 @@ async def cmd_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "`/mis_clases` _(Permite ver tus clases por día, semana o mes y descargar tu PDF soporte)_.\n"
         f"{bloque_admin}"
     )
-    await msg.reply_text(
-        texto,
+    teclado_inicio = teclado_panel_admin(user.id) if (es_privado and es_admin) else None
+    msg_resp = await _enviar_mensaje_seguro(
+        context.bot,
+        chat_id=msg.chat_id,
+        text=texto,
+        reply_markup=teclado_inicio,
         reply_to_message_id=msg.message_id,
-        parse_mode="Markdown",
     )
+    if teclado_inicio:
+        PROPIETARIO_MENSAJE_BOT[msg_resp.message_id] = user.id
 
 
 async def cmd_inicializar(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -4217,19 +4711,25 @@ async def cmd_inicializar(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await msg.delete()
         except Exception:
             pass
-    if not es_admin:
-        return
+        if not es_admin:
+            return
+    else:
+        ADMIN_USER_IDS.add(user.id)
 
+    destino = msg.chat_id if chat.type == "private" else user.id
     try:
         sheets_service.inicializar_estructura()
-        await context.bot.send_message(
-            chat_id=user.id,
-            text="✅ Hojas `Alumnos`, `Instructores` y `Registro_Clases` verificadas en Google Sheets.",
-            parse_mode="Markdown",
+        sheets_service.limpiar_nombres_contaminados()
+        await _enviar_mensaje_seguro(
+            context.bot,
+            chat_id=destino,
+            text="✅ Hojas `Alumnos`, `Instructores`, `Registro_Clases` y `Cierres_Jornada` verificadas y depuradas en Google Sheets.",
+            reply_markup=teclado_panel_admin(user.id),
         )
     except Exception as exc:
-        await context.bot.send_message(
-            chat_id=user.id,
+        await _enviar_mensaje_seguro(
+            context.bot,
+            chat_id=destino,
             text=f"❌ Error conectando con Google Sheets: {exc}",
         )
 
@@ -4246,13 +4746,16 @@ async def cmd_registrar_alumno(update: Update, context: ContextTypes.DEFAULT_TYP
 
     texto_args = " ".join(context.args).strip() if context.args else ""
     if not texto_args:
-        await msg.reply_text(
-            "👤 *Matricular / Agregar Alumno al Listado*\n"
-            "━━━━━━━━━━━━━━━━━━━━━━\n"
-            "Escribe el comando seguido del Nombre Completo, Categoría y Cédula:\n"
-            "`/alumno Juan Manuel Melo Hortua B1 1095920107`",
+        await _enviar_mensaje_seguro(
+            context.bot,
+            chat_id=msg.chat_id,
+            text=(
+                "👤 *Matricular / Agregar Alumno al Listado*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Escribe el comando seguido del Nombre Completo, Categoría y Cédula:\n"
+                "`/alumno Juan Manuel Melo Hortua B1 1095920107`"
+            ),
             reply_to_message_id=msg.message_id,
-            parse_mode="Markdown",
         )
         return
 
@@ -4261,12 +4764,15 @@ async def cmd_registrar_alumno(update: Update, context: ContextTypes.DEFAULT_TYP
     nombre_alu, doc_alu = extraer_nombre_y_cedula(texto_args)
 
     if not nombre_alu or len(nombre_alu.split()) < 2 or not doc_alu:
-        await msg.reply_text(
-            "⚠️ Debes indicar el **Nombre Completo** y la **Cédula** del alumno.\n"
-            "📌 *Ejemplo:*\n"
-            "`/alumno Juan Manuel Melo Hortua B1 1095920107`",
+        await _enviar_mensaje_seguro(
+            context.bot,
+            chat_id=msg.chat_id,
+            text=(
+                "⚠️ Debes indicar el **Nombre Completo** y la **Cédula** del alumno.\n"
+                "📌 *Ejemplo:*\n"
+                "`/alumno Juan Manuel Melo Hortua B1 1095920107`"
+            ),
             reply_to_message_id=msg.message_id,
-            parse_mode="Markdown",
         )
         return
 
@@ -4275,15 +4781,18 @@ async def cmd_registrar_alumno(update: Update, context: ContextTypes.DEFAULT_TYP
         nombre_completo=nombre_alu,
         categoria=cat_detectada,
     )
-    await msg.reply_text(
-        f"✅ *ALUMNO AGREGADO AL LISTADO EXITOSAMENTE*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 *Alumno:* {ficha.get('Nombre_Completo')}\n"
-        f"🪪 *Documento:* `{ficha.get('Documento')}`\n"
-        f"🏷 *Categoría:* `{ficha.get('Categoria')}`\n\n"
-        f"Ya aparece de primero en los botones para escogerlo al registrar la clase.",
+    await _enviar_mensaje_seguro(
+        context.bot,
+        chat_id=msg.chat_id,
+        text=(
+            f"✅ *ALUMNO AGREGADO AL LISTADO EXITOSAMENTE*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 *Alumno:* {ficha.get('Nombre_Completo')}\n"
+            f"🪪 *Documento:* `{ficha.get('Documento')}`\n"
+            f"🏷 *Categoría:* `{ficha.get('Categoria')}`\n\n"
+            f"Ya aparece de primero en los botones para escogerlo al registrar la clase."
+        ),
         reply_to_message_id=msg.message_id,
-        parse_mode="Markdown",
     )
 
 
@@ -4292,7 +4801,6 @@ async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     Exclusivo para Administradores:
     - Si se pide desde un grupo, borra el comando del grupo para que no aparezca en el chat general
       y envía el PDF directamente al chat privado del Administrador.
-    - Si un instructor intenta usarlo, no se le permite generar reportes.
     """
     msg = update.effective_message
     user = update.effective_user
@@ -4302,81 +4810,46 @@ async def cmd_reporte(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     es_admin = await es_usuario_administrador(update, context)
 
-    # Si fue escrito en un grupo, borrar el mensaje de inmediato para que no salga en el chat general
     if chat.type in ("group", "supergroup"):
         try:
             await msg.delete()
         except Exception:
             pass
-
-    if not es_admin:
-        try:
-            await context.bot.send_message(
-                chat_id=user.id,
-                text="⛔ *Acceso restringido:* Solo el administrador de CEA Auto Oriente puede generar los formatos PDF oficiales.",
-                parse_mode="Markdown",
-            )
-        except Exception:
-            pass
-        return
+        if not es_admin:
+            try:
+                await _enviar_mensaje_seguro(
+                    context.bot,
+                    chat_id=user.id,
+                    text="⛔ *Acceso restringido:* Solo el administrador de CEA Auto Oriente puede generar los formatos PDF oficiales.",
+                )
+            except Exception:
+                pass
+            return
 
     ADMIN_USER_IDS.add(user.id)
-    destino_privado = user.id
+    destino_privado = msg.chat_id if chat.type == "private" else user.id
 
     if not context.args:
-        await context.bot.send_message(
+        await _enviar_mensaje_seguro(
+            context.bot,
             chat_id=destino_privado,
-            text="⚠️ Indica el nombre o cédula del alumno.\nEjemplo: `/reporte 1095304561`",
-            parse_mode="Markdown",
+            text=(
+                "📄 *GENERAR REPORTE PDF OFICIAL DE ALUMNO*\n"
+                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                "Escribe el nombre o cédula del alumno (o envíalo directamente como mensaje aquí en el chat privado).\n"
+                "📌 *Ejemplo:* `/reporte 1095304561` o escribe `1095304561`"
+            ),
+            reply_markup=teclado_panel_admin(user.id),
         )
         return
 
     criterio = " ".join(context.args).strip()
-    aviso = await context.bot.send_message(
-        chat_id=destino_privado,
-        text=f"⏳ Generando formato PDF para *{criterio}*...",
-        parse_mode="Markdown",
+    await _generar_y_enviar_pdf_alumno(
+        criterio=criterio,
+        destino_chat_id=destino_privado,
+        user_id=user.id,
+        context=context,
     )
-
-    try:
-        resultado = sheets_service.obtener_clases_alumno(criterio)
-        datos_alumno = resultado["alumno"]
-        registros = resultado["registros"]
-
-        if not datos_alumno and not registros:
-            await aviso.edit_text(
-                f"❌ No se encontraron registros para: *{criterio}*.",
-                parse_mode="Markdown",
-            )
-            return
-
-        pdf_buffer = generar_pdf_seguimiento(datos_alumno, registros)
-        categoria = normalizar_categoria(str(datos_alumno.get("Categoria", "B1")))
-        codigo_fmt = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])[
-            "codigo_formato"
-        ].replace(" ", "")
-        nombre_limpio = (
-            str(datos_alumno.get("Nombre_Completo", criterio)).strip().replace(" ", "_")
-        )
-        filename = f"{codigo_fmt}_{categoria}_{nombre_limpio}.pdf"
-
-        await context.bot.send_document(
-            chat_id=destino_privado,
-            document=pdf_buffer,
-            filename=filename,
-            caption=(
-                f"📄 *Formato Oficial {codigo_fmt}*\n"
-                f"👤 *Alumno:* {datos_alumno.get('Nombre_Completo')}\n"
-                f"🪪 *Documento:* {datos_alumno.get('Documento')}\n"
-                f"🏷 *Categoría:* {categoria}\n"
-                f"📊 *Reportes registrados:* {len(registros)}"
-            ),
-            parse_mode="Markdown",
-        )
-        await aviso.delete()
-    except Exception as exc:
-        logger.exception("Error generando reporte PDF: %s", exc)
-        await aviso.edit_text(f"⚠️ Error al generar el PDF: {exc}")
 
 
 # =============================================================================
@@ -4425,6 +4898,8 @@ def main() -> None:
 
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(CommandHandler(["start", "ayuda", "help"], cmd_ayuda))
+    app.add_handler(CommandHandler(["panel", "admin", "administrador"], cmd_panel_admin))
+    app.add_handler(CommandHandler(["cierres", "agenda"], cmd_cierres_admin))
     app.add_handler(CommandHandler(["soy", "instructor", "mi_nombre"], cmd_registrar_instructor))
     app.add_handler(CommandHandler(["alumno", "matricular"], cmd_registrar_alumno))
     app.add_handler(CommandHandler(["clase", "menu", "registrar"], cmd_menu_clase))
