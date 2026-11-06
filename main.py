@@ -1133,9 +1133,107 @@ class SheetsService:
                 nombre_completo="Juan Manuel Melo Hortua",
                 categoria="B1",
             )
+
+            # Sincronizar Estado = 'Finalizado' para todos los alumnos que ya cumplieron el mínimo de clases de su categoría
+            self.sincronizar_estados_alumnos_finalizados()
         except Exception as exc:
             logger.warning("No se pudo ejecutar limpieza automática de nombres: %s", exc)
         return corregidos
+
+    def _calcular_mapa_clases_por_alumno(self) -> Tuple[Dict[str, set], Dict[str, set]]:
+        """
+        Recorre 'Registro_Clases' y devuelve (clases_por_doc, clases_por_nombre)
+        con el conjunto de números de clase únicos ya dictados a cada alumno.
+        """
+        por_doc: Dict[str, set] = {}
+        por_nom: Dict[str, set] = {}
+        try:
+            ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
+            filas_reg = self._leer_filas_diccionario(ws_reg, HEADERS_REGISTRO)
+            for r in filas_reg:
+                doc_r = _normalizar_texto(str(r.get("ID_Alumno", "")))
+                nom_r = _normalizar_texto(
+                    limpiar_solo_nombre_persona(str(r.get("Nombre_Alumno", "")))
+                    or str(r.get("Nombre_Alumno", ""))
+                )
+                nums = extraer_numeros_clase(str(r.get("Clases_Reportadas", "")))
+                if not nums:
+                    continue
+                if doc_r and doc_r not in ("pendiente", "desconocido", "s/n"):
+                    por_doc.setdefault(doc_r, set()).update(nums)
+                if nom_r:
+                    por_nom.setdefault(nom_r, set()).update(nums)
+        except Exception as exc:
+            logger.warning("No se pudo calcular mapa de clases por alumno: %s", exc)
+        return por_doc, por_nom
+
+    def sincronizar_estados_alumnos_finalizados(self) -> int:
+        """
+        Verifica en la hoja 'Alumnos' quiénes ya cumplieron el total mínimo de clases de su categoría
+        (15 en A1/A2, 20 en B1, 30 en C1, 10 en RECAT_C1) y actualiza su Estado a 'Finalizado'.
+        """
+        actualizados = 0
+        try:
+            por_doc, por_nom = self._calcular_mapa_clases_por_alumno()
+            ws_alu = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
+            filas_alu = ws_alu.get_all_values()
+            for idx_fila in range(2, len(filas_alu) + 1):
+                fila = filas_alu[idx_fila - 1]
+                if len(fila) < 3:
+                    continue
+                doc_a = _normalizar_texto(str(fila[1]).strip()) if len(fila) > 1 else ""
+                nom_a = _normalizar_texto(str(fila[2]).strip()) if len(fila) > 2 else ""
+                cat_a = normalizar_categoria(str(fila[3]).strip()) if len(fila) > 3 else "B1"
+                est_a = str(fila[4]).strip() if len(fila) > 4 else "En curso"
+
+                cfg = FORMATOS_OFICIALES.get(cat_a, FORMATOS_OFICIALES["B1"])
+                total_req = cfg.get("total_clases", 20)
+                clases_alu = set()
+                if doc_a and doc_a in por_doc:
+                    clases_alu.update(por_doc[doc_a])
+                if nom_a and nom_a in por_nom:
+                    clases_alu.update(por_nom[nom_a])
+
+                clases_validas = {c for c in clases_alu if 1 <= c <= total_req}
+                if len(clases_validas) >= total_req and "finalizado" not in est_a.lower():
+                    ws_alu.update_cell(idx_fila, 5, "Finalizado")
+                    actualizados += 1
+        except Exception as exc:
+            logger.warning("Error sincronizando estados de alumnos finalizados: %s", exc)
+        return actualizados
+
+    def actualizar_estado_alumno(self, documento_o_nombre: str, nuevo_estado: str) -> None:
+        """Actualiza la columna Estado ('En curso' / 'Finalizado') de un alumno en la hoja Alumnos."""
+        try:
+            ws_alu = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
+            filas_alu = ws_alu.get_all_values()
+            crit_norm = _normalizar_texto(documento_o_nombre)
+            for idx_fila in range(2, len(filas_alu) + 1):
+                fila = filas_alu[idx_fila - 1]
+                doc_a = _normalizar_texto(str(fila[1]).strip()) if len(fila) > 1 else ""
+                nom_a = _normalizar_texto(str(fila[2]).strip()) if len(fila) > 2 else ""
+                if crit_norm and crit_norm in (doc_a, nom_a):
+                    ws_alu.update_cell(idx_fila, 5, nuevo_estado)
+                    break
+        except Exception as exc:
+            logger.warning("No se pudo actualizar estado del alumno %s: %s", documento_o_nombre, exc)
+
+    def obtener_documento_por_nombre_instructor(self, nombre_instructor: str) -> str:
+        """Busca la cédula oficial de un instructor por su nombre en la hoja Instructores."""
+        if not nombre_instructor:
+            return ""
+        nom_buscado = _normalizar_texto(nombre_instructor)
+        try:
+            ws_inst = self.obtener_o_crear_hoja(SHEET_INSTRUCTORES, HEADERS_INSTRUCTORES)
+            registros = self._leer_filas_diccionario(ws_inst, HEADERS_INSTRUCTORES)
+            for fila in reversed(registros):
+                nom_f = _normalizar_texto(str(fila.get("Nombre_Instructor", "")))
+                doc_f = str(fila.get("Documento_Instructor", "")).strip()
+                if doc_f and nom_f and (nom_f == nom_buscado or nom_buscado in nom_f or nom_f in nom_buscado):
+                    return doc_f
+        except Exception:
+            pass
+        return ""
 
     def inicializar_estructura(self) -> None:
         self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
@@ -1144,33 +1242,74 @@ class SheetsService:
         self.obtener_o_crear_hoja(SHEET_CIERRES, HEADERS_CIERRES)
         self.limpiar_nombres_contaminados()
 
-    def listar_alumnos_activos(self, categoria: Optional[str] = None) -> List[Dict[str, Any]]:
+    def listar_alumnos_activos(
+        self, categoria: Optional[str] = None, modo: str = "activos"
+    ) -> List[Dict[str, Any]]:
+        """
+        Lista alumnos filtrando automáticamente según su progreso de clases:
+        - modo='activos': Solo devuelve alumnos 'En curso' que AÚN NO HAN CUMPLIDO el mínimo de clases
+          de su categoría (15 en A1/A2, 20 en B1, 30 en C1, 10 en RECAT_C1).
+          Si detecta que un alumno ya cumplió todas sus clases, lo marca 'Finalizado' y lo oculta.
+        - modo='refuerzo': Devuelve únicamente los alumnos que YA FINALIZARON su curso, para cuando
+          el instructor necesite dictar una Clase de Refuerzo adicional.
+        """
         try:
+            por_doc, por_nom = self._calcular_mapa_clases_por_alumno()
             ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
             registros = self._leer_filas_diccionario(ws, HEADERS_ALUMNOS)
-            activos = []
-            filtrar_cat = categoria and categoria.strip().upper() != "TODAS"
-            for f in registros:
+            resultado = []
+            filtrar_cat = categoria and categoria.strip().upper() not in ("TODAS", "REFUERZO")
+
+            for idx_r, f in enumerate(registros, start=2):
                 nombre = str(f.get("Nombre_Completo", "")).strip()
                 if not nombre:
                     continue
+                doc = str(f.get("Documento", "")).strip()
+                cat_alumno = normalizar_categoria(str(f.get("Categoria", "B1")))
                 estado = str(f.get("Estado", "En curso")).strip().lower()
-                if "finalizado" in estado:
+
+                cfg = FORMATOS_OFICIALES.get(cat_alumno, FORMATOS_OFICIALES["B1"])
+                total_req = cfg.get("total_clases", 20)
+
+                doc_norm = _normalizar_texto(doc)
+                nom_norm = _normalizar_texto(nombre)
+                clases_vistas: set = set()
+                if doc_norm and doc_norm in por_doc:
+                    clases_vistas.update(por_doc[doc_norm])
+                if nom_norm and nom_norm in por_nom:
+                    clases_vistas.update(por_nom[nom_norm])
+
+                clases_validas = {c for c in clases_vistas if 1 <= c <= total_req}
+                cant_completadas = len(clases_validas)
+                ya_cumplio_minimo = cant_completadas >= total_req or ("finalizado" in estado)
+
+                # Si ya cumplió el mínimo de clases y seguía figurando 'En curso', actualizarlo a 'Finalizado'
+                if cant_completadas >= total_req and "finalizado" not in estado:
+                    try:
+                        ws.update_cell(idx_r, 5, "Finalizado")
+                    except Exception:
+                        pass
+
+                if filtrar_cat and cat_alumno != normalizar_categoria(categoria):
                     continue
-                if filtrar_cat:
-                    cat_alumno = normalizar_categoria(str(f.get("Categoria", "")))
-                    if cat_alumno != normalizar_categoria(categoria):
-                        continue
-                activos.append(f)
-            lista_base = (
-                activos
-                if activos
-                else [f for f in registros if str(f.get("Nombre_Completo", "")).strip()]
-            )
-            # Mostrar primero los alumnos más recientes (de abajo hacia arriba) para que los nuevos salgan de primeros
-            return list(reversed(lista_base))
+
+                item_alu = dict(f)
+                item_alu["Clases_Completadas"] = cant_completadas
+                item_alu["Clases_Requeridas"] = total_req
+                item_alu["Curso_Completado"] = ya_cumplio_minimo
+
+                if modo == "refuerzo":
+                    if ya_cumplio_minimo:
+                        resultado.append(item_alu)
+                else:
+                    # En modo 'activos', ocultar SIEMPRE a quienes ya cumplieron el mínimo de clases
+                    if not ya_cumplio_minimo:
+                        resultado.append(item_alu)
+
+            # Mostrar primero los alumnos más recientes (de abajo hacia arriba)
+            return list(reversed(resultado))
         except Exception as exc:
-            logger.warning("No se pudo listar alumnos activos: %s", exc)
+            logger.warning("No se pudo listar alumnos (%s): %s", modo, exc)
             return []
 
     def obtener_instructor_registrado(self, telegram_user_id: int) -> Optional[Dict[str, str]]:
@@ -2084,47 +2223,68 @@ def generar_pdf_seguimiento(
     elementos.append(tabla_clases)
     elementos.append(Spacer(1, 0.15 * cm))
 
+    # Determinar el último instructor que dictó la clase final del curso (y su cédula oficial)
+    ultimo_instructor = ""
+    if mapa_clases:
+        max_clase_num = max(mapa_clases.keys())
+        ultimo_instructor = str(mapa_clases[max_clase_num].get("instructor", "")).strip()
+    if not ultimo_instructor and registros:
+        ultimo_instructor = str(registros[-1].get("Instructor", "")).strip()
+    doc_ultimo_instructor = (
+        sheets_service.obtener_documento_por_nombre_instructor(ultimo_instructor)
+        if ultimo_instructor
+        else ""
+    )
+
     filas_pie = [
-        [Paragraph("<b>OBSERVACIONES AL PROCESO DE APRENDIZAJE:</b>", estilo_celda), ""],
-        [Paragraph("&nbsp;", estilo_celda), ""],
+        [Paragraph("<b>OBSERVACIONES AL PROCESO DE APRENDIZAJE:</b>", estilo_celda), "", ""],
+        [Paragraph("&nbsp;", estilo_celda), "", ""],
         [
             Paragraph(
                 "Concluida las clases se realizara evaluación práctica, calificada y aprobada por SICOV.",
                 estilo_celda,
             ),
             "",
+            "",
         ],
         [
             Paragraph(
-                "En constancia de haber realizado las clases de Técnicas de Conducción por el alumno abajo identificado,",
+                "En constancia de haber realizado las clases de Técnicas de Conducción por el alumno e instructor abajo identificados,",
                 estilo_celda,
             ),
+            "",
             "",
         ],
         [
             Paragraph(
                 f"<b>Nombre Alumno:</b> {nombre_alumno}<br/><br/>"
-                f"<b>Firma del alumno:</b> ____________________________________<br/>"
+                f"<b>Firma del Alumno:</b> ____________________________<br/>"
                 f"<b>CC, TI, CE.:</b> {documento_alumno}",
                 estilo_celda,
             ),
             Paragraph(
-                "<br/><br/>____________________________________<br/><b>Recibido de Archivo</b>",
+                f"<b>Nombre Instructor:</b> {ultimo_instructor or '______________________'}<br/><br/>"
+                f"<b>Firma del Instructor:</b> ____________________________<br/>"
+                f"<b>CC. Instructor:</b> {doc_ultimo_instructor or '______________________'}",
+                estilo_celda,
+            ),
+            Paragraph(
+                "<br/><br/>____________________________<br/><b>Recibido de Archivo</b>",
                 estilo_celda_centro,
             ),
         ],
     ]
 
-    tabla_pie = Table(filas_pie, colWidths=[11.5 * cm, 8.0 * cm])
+    tabla_pie = Table(filas_pie, colWidths=[6.8 * cm, 6.8 * cm, 5.9 * cm])
     tabla_pie.setStyle(
         TableStyle(
             [
                 ("BOX", (0, 0), (-1, 1), 0.6, colors.black),
                 ("LINEBELOW", (0, 0), (-1, 0), 0.4, colors.grey),
-                ("SPAN", (0, 0), (1, 0)),
-                ("SPAN", (0, 1), (1, 1)),
-                ("SPAN", (0, 2), (1, 2)),
-                ("SPAN", (0, 3), (1, 3)),
+                ("SPAN", (0, 0), (2, 0)),
+                ("SPAN", (0, 1), (2, 1)),
+                ("SPAN", (0, 2), (2, 2)),
+                ("SPAN", (0, 3), (2, 3)),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
                 ("TOPPADDING", (0, 0), (-1, -1), 3),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
@@ -2538,7 +2698,14 @@ def teclado_seleccion_alumno(
     categoria: str, owner_id: int, pagina: int = 0, filtro_cat: Optional[str] = None
 ) -> InlineKeyboardMarkup:
     cat_consulta = filtro_cat or categoria
-    alumnos = sheets_service.listar_alumnos_activos(categoria=cat_consulta)
+    es_modo_refuerzo = cat_consulta == "REFUERZO"
+    if es_modo_refuerzo:
+        alumnos = sheets_service.listar_alumnos_activos(categoria=categoria, modo="refuerzo")
+        if not alumnos:
+            alumnos = sheets_service.listar_alumnos_activos(categoria="TODAS", modo="refuerzo")
+    else:
+        alumnos = sheets_service.listar_alumnos_activos(categoria=cat_consulta, modo="activos")
+
     por_pagina = 25
     total_alumnos = len(alumnos)
     total_paginas = max(1, (total_alumnos + por_pagina - 1) // por_pagina)
@@ -2561,13 +2728,21 @@ def teclado_seleccion_alumno(
         nombre = str(f.get("Nombre_Completo", "")).strip()
         doc = str(f.get("Documento", "")).strip()
         cat_alu = str(f.get("Categoria", "")).strip()
+        cl_comp = f.get("Clases_Completadas", 0)
+        cl_req = f.get("Clases_Requeridas", 20)
         if nombre and doc:
-            etiqueta_cat = f" [{cat_alu}]" if (cat_consulta == "TODAS" and cat_alu) else ""
+            etiqueta_cat = f" [{cat_alu}]" if (cat_consulta in ("TODAS", "REFUERZO") and cat_alu) else ""
+            if es_modo_refuerzo:
+                texto_btn = f"🔄 {nombre}{etiqueta_cat} ({cl_comp}/{cl_req} Fin.) — CC: {doc}"
+                cb_alu = f"alu_ref|{doc}|{owner_id}"
+            else:
+                texto_btn = f"👤 {nombre}{etiqueta_cat} ({cl_comp}/{cl_req} cl.) — CC: {doc}"
+                cb_alu = f"alu|{doc}|{owner_id}"
             botones.append(
                 [
                     InlineKeyboardButton(
-                        f"👤 {nombre}{etiqueta_cat} — CC: {doc}",
-                        callback_data=f"alu|{doc}|{owner_id}",
+                        texto_btn,
+                        callback_data=cb_alu,
                     )
                 ]
             )
@@ -2596,21 +2771,39 @@ def teclado_seleccion_alumno(
             )
         botones.append(fila_nav)
 
-    if cat_consulta != "TODAS":
+    if es_modo_refuerzo:
         botones.append(
             [
                 InlineKeyboardButton(
-                    "👥 Ver alumnos de todas las categorías",
-                    callback_data=f"alu_pag|TODAS|0|{owner_id}",
+                    "⬅️ Volver a Alumnos en Curso (Pendientes de horas)",
+                    callback_data=f"alu_pag|{categoria}|0|{owner_id}",
                 )
             ]
         )
     else:
+        if cat_consulta != "TODAS":
+            botones.append(
+                [
+                    InlineKeyboardButton(
+                        "👥 Ver alumnos en curso de todas las categorías",
+                        callback_data=f"alu_pag|TODAS|0|{owner_id}",
+                    )
+                ]
+            )
+        else:
+            botones.append(
+                [
+                    InlineKeyboardButton(
+                        f"🏷 Filtrar solo categoría {categoria}",
+                        callback_data=f"alu_pag|{categoria}|0|{owner_id}",
+                    )
+                ]
+            )
         botones.append(
             [
                 InlineKeyboardButton(
-                    f"🏷 Filtrar solo categoría {categoria}",
-                    callback_data=f"alu_pag|{categoria}|0|{owner_id}",
+                    "🔄 Clase de Refuerzo (Buscar Alumno Finalizado)",
+                    callback_data=f"alu_pag|REFUERZO|0|{owner_id}",
                 )
             ]
         )
@@ -2945,6 +3138,7 @@ async def guardar_en_sheets_y_confirmar(
         tema_oficial = sesion.get("tema_oficial") or "Práctica de conducción"
         minuto_envio = sesion.get("minuto_envio", 45)
         doc_instructor = sesion.get("instructor_documento", "")
+        es_refuerzo = bool(sesion.get("es_refuerzo", False))
 
         # 1. Auto-registrar o actualizar al Instructor en la hoja 'Instructores'
         instructor = sheets_service.registrar_o_actualizar_instructor(
@@ -2963,39 +3157,45 @@ async def guardar_en_sheets_y_confirmar(
         id_alumno_final = str(ficha.get("Documento") or documento_alumno).strip()
         nombre_final = str(ficha.get("Nombre_Completo") or nombre_alumno).strip()
 
-        # 2.5 VALIDACIÓN ANTI-DUPLICADOS: No permitir registrar la misma clase dos veces para el mismo alumno
-        duplicado = sheets_service.verificar_clase_duplicada(
-            id_alumno=id_alumno_final,
-            nombre_alumno=nombre_final,
-            categoria=categoria,
-            clases_reportadas=clases_texto,
-        )
-        if duplicado:
-            # Restaurar la sesión para que el instructor pueda corregir la clase o cancelar sin reenviar la foto
-            sesion["nombre_alumno_limpio"] = nombre_final
-            sesion["documento_detectado"] = id_alumno_final
-            SESIONES_REPORTE[(chat_id, user_id)] = sesion
-            if menu_msg_id:
-                PROPIETARIO_MENSAJE_BOT[menu_msg_id] = user_id
-
-            cfg = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])
-            texto_dup = (
-                f"⛔ *CLASE DUPLICADA — NO SE PERMITE REGISTRAR DOS VECES LA MISMA CLASE*\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━\n"
-                f"👤 *Alumno:* {nombre_final} (CC: `{id_alumno_final}`)\n"
-                f"🏷 *Categoría:* {cfg['nombre_corto']}\n"
-                f"⚠️ *Clase(s) que intentaste registrar:* `{clases_texto}`\n"
-                f"🚨 *Motivo del bloqueo:* La(s) clase(s) `{duplicado['clases_duplicadas']}` **YA FUE(RON) REGISTRADA(S)** para este alumno el `{duplicado['fecha_previa']}` a las `{duplicado['hora_previa']}` por *{duplicado['instructor_previo']}*.\n\n"
-                f"📚 *Clases ya registradas a este alumno:* `{duplicado['todas_registradas_txt']}`\n"
-                f"💡 *Siguiente clase disponible:* `{duplicado['sugerencia_siguiente']}`\n\n"
-                f"👇 *Selecciona qué deseas hacer:* "
+        # 2.5 VALIDACIÓN ANTI-DUPLICADOS: No permitir registrar la misma clase dos veces salvo que sea Clase de Refuerzo
+        if not es_refuerzo:
+            duplicado = sheets_service.verificar_clase_duplicada(
+                id_alumno=id_alumno_final,
+                nombre_alumno=nombre_final,
+                categoria=categoria,
+                clases_reportadas=clases_texto,
             )
-            teclado_dup = InlineKeyboardMarkup(
-                [
+            if duplicado:
+                # Restaurar la sesión para que el instructor pueda corregir la clase, elegir refuerzo o cancelar
+                sesion["nombre_alumno_limpio"] = nombre_final
+                sesion["documento_detectado"] = id_alumno_final
+                SESIONES_REPORTE[(chat_id, user_id)] = sesion
+                if menu_msg_id:
+                    PROPIETARIO_MENSAJE_BOT[menu_msg_id] = user_id
+
+                cfg = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])
+                texto_dup = (
+                    f"⛔ *CLASE DUPLICADA — NO SE PERMITE REGISTRAR DOS VECES LA MISMA CLASE*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👤 *Alumno:* {nombre_final} (CC: `{id_alumno_final}`)\n"
+                    f"🏷 *Categoría:* {cfg['nombre_corto']}\n"
+                    f"⚠️ *Clase(s) que intentaste registrar:* `{clases_texto}`\n"
+                    f"🚨 *Motivo del bloqueo:* La(s) clase(s) `{duplicado['clases_duplicadas']}` **YA FUE(RON) REGISTRADA(S)** para este alumno el `{duplicado['fecha_previa']}` a las `{duplicado['hora_previa']}` por *{duplicado['instructor_previo']}*.\n\n"
+                    f"📚 *Clases ya registradas a este alumno:* `{duplicado['todas_registradas_txt']}`\n"
+                    f"💡 *Siguiente clase disponible:* `{duplicado['sugerencia_siguiente']}`\n\n"
+                    f"👇 *Selecciona qué deseas hacer:*"
+                )
+                botones_dup = [
                     [
                         InlineKeyboardButton(
                             f"📚 Cambiar Número de Clase (Sugerida: {duplicado['sugerencia_siguiente']})",
                             callback_data=f"cat|{categoria}|{user_id}",
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Registrar como Clase de Refuerzo Adicional",
+                            callback_data=f"confirmar_refuerzo|{user_id}",
                         )
                     ],
                     [
@@ -3011,13 +3211,14 @@ async def guardar_en_sheets_y_confirmar(
                         )
                     ],
                 ]
-            )
-            await mensaje_respuesta.edit_text(
-                texto_dup, reply_markup=teclado_dup, parse_mode="Markdown"
-            )
-            PROPIETARIO_MENSAJE_BOT[mensaje_respuesta.message_id] = user_id
-            sesion["menu_msg_id"] = mensaje_respuesta.message_id
-            return
+                await _editar_mensaje_seguro(
+                    mensaje_respuesta,
+                    texto_dup,
+                    reply_markup=InlineKeyboardMarkup(botones_dup),
+                )
+                PROPIETARIO_MENSAJE_BOT[mensaje_respuesta.message_id] = user_id
+                sesion["menu_msg_id"] = mensaje_respuesta.message_id
+                return
 
         # 3. Validar el minuto de envío según cantidad de clases (2 clases: 40-50 | 1 clase: 18-28)
         en_tiempo, estado_horario_sheets, alerta_horario_txt = validar_minuto_envio(
@@ -3035,6 +3236,9 @@ async def guardar_en_sheets_y_confirmar(
             fallback_url=sesion.get("file_url", ""),
         )
 
+        clases_guardar = f"{clases_texto} (Refuerzo)" if es_refuerzo else clases_texto
+        tema_guardar = f"[CLASE DE REFUERZO] {tema_oficial}" if es_refuerzo else tema_oficial
+
         # 5. Guardar en 'Registro_Clases'
         sheets_service.registrar_clase(
             timestamp=sesion["timestamp"],
@@ -3044,27 +3248,48 @@ async def guardar_en_sheets_y_confirmar(
             id_alumno=id_alumno_final,
             nombre_alumno=nombre_final,
             categoria=categoria,
-            clases_reportadas=clases_texto,
-            tema_registrado=tema_oficial,
+            clases_reportadas=clases_guardar,
+            tema_registrado=tema_guardar,
             url_foto_drive=url_foto_drive,
             validacion_horario=estado_horario_sheets,
         )
 
+        # 5.5 Verificar progreso total del alumno y si acaba de cumplir el mínimo de clases requeridas
         cfg = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])
+        total_requerido = cfg.get("total_clases", 20)
+        resultado_alu = sheets_service.obtener_clases_alumno(id_alumno_final)
+        registros_alu = resultado_alu.get("registros", [])
+        mapa_clases_alu = mapear_clases_registradas(registros_alu)
+        clases_completadas = len({c for c in mapa_clases_alu.keys() if 1 <= c <= total_requerido})
+        curso_completado = clases_completadas >= total_requerido
+
+        if curso_completado:
+            sheets_service.actualizar_estado_alumno(id_alumno_final, "Finalizado")
+
         doc_inst_txt = f" (CC: `{doc_instructor}`)" if doc_instructor else ""
+        etiqueta_ref = " 🔄 *(CLASE DE REFUERZO)*" if es_refuerzo else ""
+        aviso_graduacion = (
+            f"\n🎓 *¡CURSO PRÁCTICO COMPLETADO ({clases_completadas}/{total_requerido} CLASES)!*\n"
+            f"El alumno ya cumplió el mínimo de horas reglamentarias y fue archivado como *Finalizado* "
+            f"(se oculta del listado diario y se envía el PDF oficial para impresión y firmas de Alumno e Instructor)."
+            if curso_completado
+            else ""
+        )
         texto_exito = (
-            f"✅ *CLASE REGISTRADA EXITOSAMENTE*\n"
+            f"✅ *CLASE REGISTRADA EXITOSAMENTE*{etiqueta_ref}\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 *Alumno:* {nombre_final}\n"
             f"🪪 *Documento (CC/TI):* `{id_alumno_final}`\n"
             f"🏷 *Categoría:* {cfg['nombre_corto']}\n"
-            f"📚 *Clase(s) registrada(s):* `{clases_texto}`\n"
-            f"📝 *Tema Oficial:* {tema_oficial}\n"
+            f"📚 *Clase(s) registrada(s):* `{clases_guardar}`\n"
+            f"📊 *Progreso del curso:* `{clases_completadas}/{total_requerido}` clases\n"
+            f"📝 *Tema Oficial:* {tema_guardar}\n"
             f"👨‍🏫 *Instructor:* {instructor}{doc_inst_txt}\n"
             f"🕒 *Fecha y Hora de envío:* {sesion['fecha_reporte']} {sesion['hora_reporte']}\n"
+            f"{aviso_graduacion}"
             f"{alerta_horario_txt}"
         )
-        await mensaje_respuesta.edit_text(texto_exito, parse_mode="Markdown")
+        await _editar_mensaje_seguro(mensaje_respuesta, texto_exito)
 
         # Si el menú original citando la foto del instructor era otro mensaje distinto, actualizarlo también
         if menu_msg_id and getattr(mensaje_respuesta, "message_id", None) != menu_msg_id:
@@ -3078,6 +3303,67 @@ async def guardar_en_sheets_y_confirmar(
                 await mensaje_respuesta.delete()
             except Exception:
                 pass
+
+        # 5.8 SI EL ALUMNO CUMPLIÓ EL MÍNIMO DE CLASES (O RECIBIÓ REFUERZO POST-CURSO):
+        # Generar y enviar automáticamente el PDF Oficial al Administrador y al Instructor para imprimir y firmar
+        if curso_completado:
+            try:
+                datos_alumno_pdf = resultado_alu.get("alumno") or {
+                    "ID_Matricula": id_alumno_final,
+                    "Documento": id_alumno_final,
+                    "Nombre_Completo": nombre_final,
+                    "Categoria": categoria,
+                    "Estado": "Finalizado",
+                }
+                datos_alumno_pdf["Categoria"] = categoria
+                pdf_bytes = generar_pdf_seguimiento(datos_alumno_pdf, registros_alu).getvalue()
+                codigo_fmt = cfg["codigo_formato"].replace(" ", "")
+                nombre_arch = nombre_final.replace(" ", "_")
+                filename_pdf = f"{codigo_fmt}_{categoria}_{nombre_arch}_FINALIZADO.pdf"
+                caption_pdf = (
+                    f"🎓 FORMATO OFICIAL LISTO PARA IMPRIMIR Y FIRMAR ({codigo_fmt})\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"👤 Alumno: {nombre_final} (CC: {id_alumno_final})\n"
+                    f"🏷 Categoría: {cfg['nombre_corto']} ({clases_completadas}/{total_requerido} clases completadas)\n"
+                    f"👨‍🏫 Último Instructor: {instructor}{f' (CC: {doc_instructor})' if doc_instructor else ''}\n"
+                    f"✍️ Incluye casillas de firma del Alumno, del Instructor y Recibido de Archivo."
+                )
+
+                # Enviar el PDF en el chat donde el instructor registró la última clase
+                await context.bot.send_document(
+                    chat_id=chat_id,
+                    document=io.BytesIO(pdf_bytes),
+                    filename=filename_pdf,
+                    caption=caption_pdf,
+                )
+
+                # Enviar también al chat privado del Instructor (si el registro fue en grupo)
+                if chat_id != user_id:
+                    try:
+                        await context.bot.send_document(
+                            chat_id=user_id,
+                            document=io.BytesIO(pdf_bytes),
+                            filename=filename_pdf,
+                            caption=caption_pdf,
+                        )
+                    except Exception:
+                        pass
+
+                # Enviar copia automática al chat privado de todos los Administradores
+                destinos_admin = set(ADMIN_USER_IDS) | set(ADMIN_CHATS_ALERTA)
+                for adm_id in destinos_admin:
+                    if adm_id > 0 and adm_id not in (chat_id, user_id):
+                        try:
+                            await context.bot.send_document(
+                                chat_id=adm_id,
+                                document=io.BytesIO(pdf_bytes),
+                                filename=filename_pdf,
+                                caption=caption_pdf,
+                            )
+                        except Exception:
+                            pass
+            except Exception as exc_pdf:
+                logger.warning("No se pudo enviar automáticamente el PDF de curso completado: %s", exc_pdf)
 
         # 6. Si el envío fue fuera de los minutos estipulados, notificar en PRIVADO a los administradores
         if not en_tiempo and ADMIN_CHATS_ALERTA:
@@ -4033,41 +4319,58 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
             )
         return
 
+    if accion_limpia == "confirmar_refuerzo":
+        sesion["es_refuerzo"] = True
+        sesion["esperando_nombre_texto"] = False
+        await guardar_en_sheets_y_confirmar(chat_id, sesion_uid, context, query.message)
+        return
+
     if accion_limpia.startswith("cambiar_alu_dup|"):
         cat_key = accion_limpia.split("|", 1)[1]
         sesion["nombre_alumno_limpio"] = None
         sesion["documento_detectado"] = None
+        sesion["es_refuerzo"] = False
         sesion["esperando_nombre_texto"] = True
         clases_txt = sesion.get("clases_texto") or "1-2"
         tema_txt = sesion.get("tema_oficial") or ""
-        await query.message.edit_text(
+        await _editar_mensaje_seguro(
+            query.message,
             mensaje_indicaciones_alumno(sesion, cat_key, clases_txt, tema_txt),
             reply_markup=teclado_seleccion_alumno(cat_key, sesion_uid, pagina=0),
-            parse_mode="Markdown",
         )
         return
 
     if accion_limpia.startswith("alu_pag|"):
         _, filtro_cat, pag_str = accion_limpia.split("|", 2)
-        cat_key = sesion.get("categoria") or (filtro_cat if filtro_cat != "TODAS" else "B1")
+        cat_key = sesion.get("categoria") or (
+            filtro_cat if filtro_cat not in ("TODAS", "REFUERZO") else "B1"
+        )
         clases_txt = sesion.get("clases_texto") or "1-2"
         tema_txt = sesion.get("tema_oficial") or ""
         sesion["esperando_nombre_texto"] = True
-        await query.message.edit_text(
-            mensaje_indicaciones_alumno(sesion, cat_key, clases_txt, tema_txt),
+        sesion["es_refuerzo"] = filtro_cat == "REFUERZO"
+        encabezado_extra = (
+            "\n🔄 *MODO CLASE DE REFUERZO:* Mostrando alumnos que ya cumplieron el mínimo de horas para asignarles clase de refuerzo adicional."
+            if filtro_cat == "REFUERZO"
+            else ""
+        )
+        await _editar_mensaje_seguro(
+            query.message,
+            mensaje_indicaciones_alumno(sesion, cat_key, clases_txt, tema_txt) + encabezado_extra,
             reply_markup=teclado_seleccion_alumno(
                 cat_key, sesion_uid, pagina=int(pag_str), filtro_cat=filtro_cat
             ),
-            parse_mode="Markdown",
         )
         return
 
     if accion_limpia.startswith("nuevo_alu|"):
         cat_key = accion_limpia.split("|", 1)[1]
         sesion["esperando_nombre_texto"] = True
+        sesion["es_refuerzo"] = False
         clases_txt = sesion.get("clases_texto") or "1-2"
         cfg = FORMATOS_OFICIALES.get(cat_key, FORMATOS_OFICIALES["B1"])
-        await query.message.edit_text(
+        await _editar_mensaje_seguro(
+            query.message,
             f"{_encabezado_instructor(sesion)}"
             f"✅ *Categoría:* {cfg['nombre_corto']} | *Clase(s):* `{clases_txt}`\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -4091,11 +4394,11 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
                     ],
                 ]
             ),
-            parse_mode="Markdown",
         )
         return
 
-    if accion_limpia.startswith("alu|"):
+    if accion_limpia.startswith("alu_ref|") or accion_limpia.startswith("alu|"):
+        es_ref_btn = accion_limpia.startswith("alu_ref|")
         doc_alu = accion_limpia.split("|", 1)[1]
         ficha = sheets_service.buscar_alumno(doc_alu)
         if ficha:
@@ -4105,6 +4408,7 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
             sesion["nombre_alumno_limpio"] = doc_alu
             sesion["documento_detectado"] = doc_alu
 
+        sesion["es_refuerzo"] = es_ref_btn
         sesion["esperando_nombre_texto"] = False
         await guardar_en_sheets_y_confirmar(chat_id, sesion_uid, context, query.message)
         return
