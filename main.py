@@ -968,6 +968,7 @@ HEADERS_REGISTRO = [
     "Tema_Registrado",
     "URL_Foto_Drive",
     "Validacion_Horario",
+    "Observaciones_Instructor",
 ]
 HEADERS_CIERRES = [
     "Timestamp",
@@ -1104,10 +1105,21 @@ class SheetsService:
                         ws_reg.update_cell(idx_fila, 6, limpio)
                         corregidos += 1
 
-            # Eliminar registros de clases duplicadas para el mismo alumno, categoría y número de clase
+            # Corregir categoría en Registro_Clases si el tema registrado pertenece inequívocamente a Moto (A2)
+            # pero quedó guardado por error como carro (B1/C1), y eliminar duplicados exactos por (alumno, categoría, clase)
             filas_reg_act = ws_reg.get_all_values()
             clases_vistas_por_alumno: set = set()
             filas_a_eliminar: List[int] = []
+            frases_exclusivas_moto_a2 = (
+                "postura en el manillar",
+                "maniobra cero cale",
+                "franja de anchura limitada",
+                "control de la motocicleta",
+                "desplazamientos en ocho",
+                "con y sin acompañante",
+                "pruebas cale",
+                "conducción de motocicleta",
+            )
             for idx_fila in range(2, len(filas_reg_act) + 1):
                 fila = filas_reg_act[idx_fila - 1]
                 if not any(str(c).strip() for c in fila):
@@ -1116,9 +1128,18 @@ class SheetsService:
                 nom_alu = _normalizar_texto(str(fila[5]).strip()) if len(fila) > 5 else ""
                 cat_alu = normalizar_categoria(str(fila[6]).strip()) if len(fila) > 6 else "B1"
                 clases_rep = str(fila[7]).strip() if len(fila) > 7 else ""
+                tema_rep_low = (str(fila[8]).strip().lower() if len(fila) > 8 else "")
+                if cat_alu in ("B1", "C1") and any(fr in tema_rep_low for fr in frases_exclusivas_moto_a2):
+                    try:
+                        ws_reg.update_cell(idx_fila, 7, "A2")
+                        cat_alu = "A2"
+                        corregidos += 1
+                    except Exception:
+                        pass
+                es_ref_fila = "refuerzo" in clases_rep.lower() or "adicional" in clases_rep.lower()
                 nums_cl = tuple(sorted(extraer_numeros_clase(clases_rep)))
                 clave_alu = id_alu or nom_alu
-                if clave_alu and nums_cl:
+                if clave_alu and nums_cl and not es_ref_fila:
                     clave_unica = (clave_alu, cat_alu, nums_cl)
                     if clave_unica in clases_vistas_por_alumno:
                         filas_a_eliminar.append(idx_fila)
@@ -1138,20 +1159,35 @@ class SheetsService:
                 nombre_completo="Juan Manuel Melo Hortua",
                 categoria="B1",
             )
+            # Asegurar que Jeridson Gonzalez (1098826670) tenga sus dos matrículas activas (A2 Moto y C1 Carro)
+            self.registrar_o_actualizar_alumno(
+                documento="1098826670",
+                nombre_completo="Jeridson Gonzalez",
+                categoria="A2",
+            )
+            self.registrar_o_actualizar_alumno(
+                documento="1098826670",
+                nombre_completo="Jeridson Gonzalez",
+                categoria="C1",
+            )
 
-            # Sincronizar Estado = 'Finalizado' para todos los alumnos que ya cumplieron el mínimo de clases de su categoría
+            # Sincronizar Estado = 'Finalizado' / 'En curso' separando estrictamente por categoría
             self.sincronizar_estados_alumnos_finalizados()
         except Exception as exc:
             logger.warning("No se pudo ejecutar limpieza automática de nombres: %s", exc)
         return corregidos
 
-    def _calcular_mapa_clases_por_alumno(self) -> Tuple[Dict[str, set], Dict[str, set]]:
+    def _calcular_mapa_clases_por_alumno(
+        self,
+    ) -> Tuple[Dict[Tuple[str, str], set], Dict[Tuple[str, str], set]]:
         """
-        Recorre 'Registro_Clases' y devuelve (clases_por_doc, clases_por_nombre)
-        con el conjunto de números de clase únicos ya dictados a cada alumno.
+        Recorre 'Registro_Clases' y devuelve (clases_por_doc_cat, clases_por_nombre_cat)
+        con el conjunto de números de clase únicos ya dictados a cada alumno POR CATEGORÍA.
+        Así, cuando un mismo alumno cursa simultáneamente Moto (A2) y Carro (B1/C1),
+        el avance y bloqueo de clases de Moto es 100% independiente del de Carro.
         """
-        por_doc: Dict[str, set] = {}
-        por_nom: Dict[str, set] = {}
+        por_doc: Dict[Tuple[str, str], set] = {}
+        por_nom: Dict[Tuple[str, str], set] = {}
         try:
             ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
             filas_reg = self._leer_filas_diccionario(ws_reg, HEADERS_REGISTRO)
@@ -1161,21 +1197,24 @@ class SheetsService:
                     limpiar_solo_nombre_persona(str(r.get("Nombre_Alumno", "")))
                     or str(r.get("Nombre_Alumno", ""))
                 )
+                cat_r = normalizar_categoria(str(r.get("Categoria", "B1")))
                 nums = extraer_numeros_clase(str(r.get("Clases_Reportadas", "")))
                 if not nums:
                     continue
                 if doc_r and doc_r not in ("pendiente", "desconocido", "s/n"):
-                    por_doc.setdefault(doc_r, set()).update(nums)
+                    por_doc.setdefault((doc_r, cat_r), set()).update(nums)
                 if nom_r:
-                    por_nom.setdefault(nom_r, set()).update(nums)
+                    por_nom.setdefault((nom_r, cat_r), set()).update(nums)
         except Exception as exc:
             logger.warning("No se pudo calcular mapa de clases por alumno: %s", exc)
         return por_doc, por_nom
 
     def sincronizar_estados_alumnos_finalizados(self) -> int:
         """
-        Verifica en la hoja 'Alumnos' quiénes ya cumplieron el total mínimo de clases de su categoría
-        (15 en A1/A2, 20 en B1, 30 en C1, 10 en RECAT_C1) y actualiza su Estado a 'Finalizado'.
+        Verifica en la hoja 'Alumnos' quiénes ya cumplieron el total mínimo de clases de SU CATEGORÍA
+        (8 en A1, 15 en A2, 20 en B1, 30 en C1, 10 en RECAT_C1) y actualiza su Estado a 'Finalizado'.
+        Si un alumno con múltiples cursos fue marcado 'Finalizado' por error antes de cumplir las horas
+        de esa categoría específica, lo reactiva a 'En curso'.
         """
         actualizados = 0
         try:
@@ -1194,30 +1233,45 @@ class SheetsService:
                 cfg = FORMATOS_OFICIALES.get(cat_a, FORMATOS_OFICIALES["B1"])
                 total_req = cfg.get("total_clases", 20)
                 clases_alu = set()
-                if doc_a and doc_a in por_doc:
-                    clases_alu.update(por_doc[doc_a])
-                if nom_a and nom_a in por_nom:
-                    clases_alu.update(por_nom[nom_a])
+                if doc_a and (doc_a, cat_a) in por_doc:
+                    clases_alu.update(por_doc[(doc_a, cat_a)])
+                if nom_a and (nom_a, cat_a) in por_nom:
+                    clases_alu.update(por_nom[(nom_a, cat_a)])
 
                 clases_validas = {c for c in clases_alu if 1 <= c <= total_req}
                 if len(clases_validas) >= total_req and "finalizado" not in est_a.lower():
                     ws_alu.update_cell(idx_fila, 5, "Finalizado")
                     actualizados += 1
+                elif len(clases_validas) < total_req and "finalizado" in est_a.lower():
+                    ws_alu.update_cell(idx_fila, 5, "En curso")
+                    actualizados += 1
         except Exception as exc:
             logger.warning("Error sincronizando estados de alumnos finalizados: %s", exc)
         return actualizados
 
-    def actualizar_estado_alumno(self, documento_o_nombre: str, nuevo_estado: str) -> None:
-        """Actualiza la columna Estado ('En curso' / 'Finalizado') de un alumno en la hoja Alumnos."""
+    def actualizar_estado_alumno(
+        self,
+        documento_o_nombre: str,
+        nuevo_estado: str,
+        categoria: Optional[str] = None,
+    ) -> None:
+        """
+        Actualiza la columna Estado ('En curso' / 'Finalizado') de un alumno en la hoja Alumnos
+        únicamente para la fila que coincida con la categoría indicada (si se especifica).
+        """
         try:
             ws_alu = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
             filas_alu = ws_alu.get_all_values()
             crit_norm = _normalizar_texto(documento_o_nombre)
+            cat_buscada = normalizar_categoria(categoria) if categoria else None
             for idx_fila in range(2, len(filas_alu) + 1):
                 fila = filas_alu[idx_fila - 1]
                 doc_a = _normalizar_texto(str(fila[1]).strip()) if len(fila) > 1 else ""
                 nom_a = _normalizar_texto(str(fila[2]).strip()) if len(fila) > 2 else ""
+                cat_a = normalizar_categoria(str(fila[3]).strip()) if len(fila) > 3 else "B1"
                 if crit_norm and crit_norm in (doc_a, nom_a):
+                    if cat_buscada and cat_a != cat_buscada:
+                        continue
                     ws_alu.update_cell(idx_fila, 5, nuevo_estado)
                     break
         except Exception as exc:
@@ -1279,19 +1333,24 @@ class SheetsService:
                 doc_norm = _normalizar_texto(doc)
                 nom_norm = _normalizar_texto(nombre)
                 clases_vistas: set = set()
-                if doc_norm and doc_norm in por_doc:
-                    clases_vistas.update(por_doc[doc_norm])
-                if nom_norm and nom_norm in por_nom:
-                    clases_vistas.update(por_nom[nom_norm])
+                if doc_norm and (doc_norm, cat_alumno) in por_doc:
+                    clases_vistas.update(por_doc[(doc_norm, cat_alumno)])
+                if nom_norm and (nom_norm, cat_alumno) in por_nom:
+                    clases_vistas.update(por_nom[(nom_norm, cat_alumno)])
 
                 clases_validas = {c for c in clases_vistas if 1 <= c <= total_req}
                 cant_completadas = len(clases_validas)
-                ya_cumplio_minimo = cant_completadas >= total_req or ("finalizado" in estado)
+                ya_cumplio_minimo = cant_completadas >= total_req
 
-                # Si ya cumplió el mínimo de clases y seguía figurando 'En curso', actualizarlo a 'Finalizado'
+                # Sincronizar el estado en Sheets de acuerdo exclusivamente a las clases de ESTA categoría
                 if cant_completadas >= total_req and "finalizado" not in estado:
                     try:
                         ws.update_cell(idx_r, 5, "Finalizado")
+                    except Exception:
+                        pass
+                elif cant_completadas < total_req and "finalizado" in estado:
+                    try:
+                        ws.update_cell(idx_r, 5, "En curso")
                     except Exception:
                         pass
 
@@ -1492,19 +1551,47 @@ class SheetsService:
     def registrar_o_actualizar_alumno(
         self, documento: str, nombre_completo: str, categoria: str
     ) -> Dict[str, Any]:
+        """
+        Registra o recupera la matrícula de un alumno para la CATEGORÍA indicada.
+        - Si el alumno ya está matriculado en esa misma categoría, devuelve esa matrícula.
+        - Si el alumno ya existe en otra categoría (ej. A2 Moto) y ahora inicia un segundo curso
+          (ej. C1 Carro), crea automáticamente una nueva fila de matrícula (MAT-XXX) para la
+          nueva categoría sin sobrescribir ni bloquear el otro curso.
+        """
+        cat_norm = normalizar_categoria(categoria)
         nombre_depurado = limpiar_solo_nombre_persona(nombre_completo) or nombre_completo.strip().title()
-        existente = self.buscar_alumno(documento) or self.buscar_alumno(nombre_depurado)
-        if existente:
-            nom_actual = str(existente.get("Nombre_Completo", "")).strip()
+
+        # 1. Buscar si ya tiene matrícula en ESTA MISMA categoría
+        existente_misma_cat = (
+            self.buscar_alumno(documento, categoria=cat_norm, solo_misma_categoria=True)
+            or self.buscar_alumno(nombre_depurado, categoria=cat_norm, solo_misma_categoria=True)
+        )
+        if existente_misma_cat:
+            nom_actual = str(existente_misma_cat.get("Nombre_Completo", "")).strip()
             nom_limpio = limpiar_solo_nombre_persona(nom_actual) or nom_actual
-            existente["Nombre_Completo"] = nom_limpio
-            return existente
+            existente_misma_cat["Nombre_Completo"] = nom_limpio
+            existente_misma_cat["Categoria"] = cat_norm
+            return existente_misma_cat
+
+        # 2. Si está en otra categoría, recuperar su nombre/cédula oficial para crearle la matrícula en la nueva categoría
+        existente_otra_cat = self.buscar_alumno(documento) or self.buscar_alumno(nombre_depurado)
+        if existente_otra_cat:
+            doc_prev = str(existente_otra_cat.get("Documento", "")).strip()
+            nom_prev = str(existente_otra_cat.get("Nombre_Completo", "")).strip()
+            if (not documento or documento in ("Pendiente", "Desconocido")) and doc_prev:
+                documento = doc_prev
+            if (not nombre_depurado or nombre_depurado == "Desconocido") and nom_prev:
+                nombre_depurado = limpiar_solo_nombre_persona(nom_prev) or nom_prev
 
         try:
             ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
             filas = self._leer_filas_diccionario(ws, HEADERS_ALUMNOS)
-            nuevo_id = f"MAT-{len(filas) + 1:03d}"
-            cat_norm = normalizar_categoria(categoria)
+            max_num = len(filas)
+            for f in filas:
+                m_id = re.search(r"(\d+)", str(f.get("ID_Matricula", "")))
+                if m_id:
+                    max_num = max(max_num, int(m_id.group(1)))
+            nuevo_id = f"MAT-{max_num + 1:03d}"
             nueva_fila = [nuevo_id, documento, nombre_depurado, cat_norm, "En curso"]
             self._agregar_fila_al_final(ws, nueva_fila)
             return {
@@ -1520,12 +1607,81 @@ class SheetsService:
                 "ID_Matricula": documento,
                 "Documento": documento,
                 "Nombre_Completo": nombre_depurado,
-                "Categoria": normalizar_categoria(categoria),
+                "Categoria": cat_norm,
                 "Estado": "En curso",
             }
 
-    def buscar_alumno(self, criterio: str) -> Optional[Dict[str, Any]]:
-        if not criterio or criterio == "Desconocido":
+    def buscar_matriculas_alumno(self, criterio: str) -> List[Dict[str, Any]]:
+        """
+        Devuelve TODAS las filas de matrícula que tenga un mismo alumno en la hoja 'Alumnos'
+        (por ejemplo, cuando cursa simultáneamente A2 Moto y C1 Carro).
+        """
+        if not criterio or criterio in ("Desconocido", "Pendiente"):
+            return []
+        try:
+            ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
+            registros = self._leer_filas_diccionario(ws, HEADERS_ALUMNOS)
+        except Exception as exc:
+            logger.error("Error leyendo hoja Alumnos: %s", exc)
+            return []
+
+        criterio_limpio = _normalizar_texto(criterio)
+        if not criterio_limpio:
+            return []
+
+        coincidencias: List[Dict[str, Any]] = []
+        doc_encontrado = ""
+        nom_encontrado = ""
+
+        for fila in registros:
+            id_mat = _normalizar_texto(str(fila.get("ID_Matricula", "")).strip())
+            doc = _normalizar_texto(str(fila.get("Documento", "")).strip())
+            nombre_norm = _normalizar_texto(str(fila.get("Nombre_Completo", "")).strip())
+
+            es_match = False
+            if criterio_limpio in (id_mat, doc) and criterio_limpio:
+                es_match = True
+            elif nombre_norm and (
+                criterio_limpio == nombre_norm
+                or (len(criterio_limpio.split()) >= 2 and criterio_limpio in nombre_norm)
+            ):
+                es_match = True
+
+            if es_match:
+                coincidencias.append(fila)
+                if doc:
+                    doc_encontrado = doc
+                if nombre_norm:
+                    nom_encontrado = nombre_norm
+
+        # Si coincidió por ID_Matricula en una fila, traer también las demás matrículas con la misma cédula o nombre
+        if coincidencias and (doc_encontrado or nom_encontrado):
+            ids_vistos = {id(f) for f in coincidencias}
+            for fila in registros:
+                if id(fila) in ids_vistos:
+                    continue
+                doc = _normalizar_texto(str(fila.get("Documento", "")).strip())
+                nombre_norm = _normalizar_texto(str(fila.get("Nombre_Completo", "")).strip())
+                if (doc_encontrado and doc == doc_encontrado) or (
+                    nom_encontrado and nombre_norm == nom_encontrado
+                ):
+                    coincidencias.append(fila)
+                    ids_vistos.add(id(fila))
+
+        return coincidencias
+
+    def buscar_alumno(
+        self,
+        criterio: str,
+        categoria: Optional[str] = None,
+        solo_misma_categoria: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Busca un alumno en la hoja 'Alumnos'.
+        - Si se especifica 'categoria' (ej. 'C1'), prioriza la matrícula de ese alumno en esa categoría.
+        - Si 'solo_misma_categoria=True', solo devuelve resultado si existe en esa categoría exacta.
+        """
+        if not criterio or criterio in ("Desconocido", "Pendiente"):
             return None
         try:
             ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
@@ -1535,31 +1691,102 @@ class SheetsService:
             return None
 
         criterio_limpio = _normalizar_texto(criterio)
-        mapa_nombres: Dict[str, Dict[str, Any]] = {}
+        if not criterio_limpio:
+            return None
+
+        cat_buscada = normalizar_categoria(categoria) if categoria else None
+        mapa_nombres_cat: Dict[str, Dict[str, Any]] = {}
+        mapa_nombres_general: Dict[str, Dict[str, Any]] = {}
+        candidato_otra_cat: Optional[Dict[str, Any]] = None
 
         for fila in registros:
             id_mat = str(fila.get("ID_Matricula", "")).strip()
             doc = str(fila.get("Documento", "")).strip()
             nombre = str(fila.get("Nombre_Completo", "")).strip()
+            cat_fila = normalizar_categoria(str(fila.get("Categoria", "B1")))
+            misma_cat = (cat_buscada is None) or (cat_fila == cat_buscada)
 
-            if criterio_limpio in (_normalizar_texto(id_mat), _normalizar_texto(doc)) and criterio_limpio:
-                return fila
+            if criterio_limpio in (_normalizar_texto(id_mat), _normalizar_texto(doc)):
+                if misma_cat:
+                    return fila
+                if candidato_otra_cat is None:
+                    candidato_otra_cat = fila
 
             nombre_norm = _normalizar_texto(nombre)
             if nombre_norm:
                 if criterio_limpio == nombre_norm or (
                     len(criterio_limpio.split()) >= 2 and criterio_limpio in nombre_norm
                 ):
-                    return fila
-                mapa_nombres[nombre_norm] = fila
+                    if misma_cat:
+                        return fila
+                    if candidato_otra_cat is None:
+                        candidato_otra_cat = fila
+                if misma_cat:
+                    mapa_nombres_cat[nombre_norm] = fila
+                mapa_nombres_general[nombre_norm] = fila
 
-        if mapa_nombres and len(criterio_limpio.split()) >= 2:
+        if mapa_nombres_cat and len(criterio_limpio.split()) >= 2:
             coincidencias = difflib.get_close_matches(
-                criterio_limpio, list(mapa_nombres.keys()), n=1, cutoff=0.72
+                criterio_limpio, list(mapa_nombres_cat.keys()), n=1, cutoff=0.72
             )
             if coincidencias:
-                return mapa_nombres[coincidencias[0]]
+                return mapa_nombres_cat[coincidencias[0]]
+
+        if solo_misma_categoria:
+            return None
+
+        if candidato_otra_cat is not None:
+            return candidato_otra_cat
+
+        if mapa_nombres_general and len(criterio_limpio.split()) >= 2:
+            coincidencias = difflib.get_close_matches(
+                criterio_limpio, list(mapa_nombres_general.keys()), n=1, cutoff=0.72
+            )
+            if coincidencias:
+                return mapa_nombres_general[coincidencias[0]]
         return None
+
+    def reclasificar_clases_alumno(
+        self,
+        id_alumno: str,
+        nombre_alumno: str,
+        cat_origen: str,
+        cat_destino: str,
+    ) -> int:
+        """
+        Mueve en la hoja 'Registro_Clases' los registros previos de un alumno que estaban
+        en 'cat_origen' (ej. C1 por error) hacia 'cat_destino' (ej. A2 Moto), liberando
+        la categoría de origen para registrar las clases del segundo curso.
+        """
+        modificados = 0
+        id_norm = _normalizar_texto(id_alumno)
+        nom_norm = _normalizar_texto(nombre_alumno)
+        orig_norm = normalizar_categoria(cat_origen)
+        dest_norm = normalizar_categoria(cat_destino)
+        try:
+            ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
+            filas = ws_reg.get_all_values()
+            for idx_fila in range(2, len(filas) + 1):
+                fila = filas[idx_fila - 1]
+                if not any(str(c).strip() for c in fila):
+                    continue
+                id_f = _normalizar_texto(str(fila[4]).strip()) if len(fila) > 4 else ""
+                nom_f = _normalizar_texto(
+                    limpiar_solo_nombre_persona(str(fila[5]).strip() if len(fila) > 5 else "")
+                    or (str(fila[5]).strip() if len(fila) > 5 else "")
+                )
+                cat_f = normalizar_categoria(str(fila[6]).strip()) if len(fila) > 6 else "B1"
+                mismo_id = bool(
+                    id_norm and id_f and id_norm not in ("pendiente", "desconocido") and id_f == id_norm
+                )
+                mismo_nom = bool(nom_norm and nom_f and nom_f == nom_norm)
+                if (mismo_id or mismo_nom) and cat_f == orig_norm:
+                    ws_reg.update_cell(idx_fila, 7, dest_norm)
+                    modificados += 1
+            self.sincronizar_estados_alumnos_finalizados()
+        except Exception as exc:
+            logger.warning("No se pudo reclasificar clases del alumno %s: %s", nombre_alumno, exc)
+        return modificados
 
     def verificar_clase_duplicada(
         self,
@@ -1570,8 +1797,9 @@ class SheetsService:
     ) -> Optional[Dict[str, Any]]:
         """
         Verifica si alguna de las clases que el instructor intenta registrar (ej. '1-2')
-        YA FUE REGISTRADA anteriormente para ese mismo alumno en esa categoría.
-        Si encuentra duplicado, devuelve el detalle del registro previo y la sugerencia de la siguiente clase.
+        YA FUE REGISTRADA anteriormente para ese mismo alumno EN ESA MISMA CATEGORÍA.
+        Si encuentra duplicado, devuelve el detalle del registro previo, la sugerencia de la siguiente clase
+        y las demás categorías activas del alumno (por si realiza 2 cursos a la vez como A2 y C1).
         """
         nums_nuevos = set(extraer_numeros_clase(clases_reportadas))
         if not nums_nuevos:
@@ -1589,6 +1817,7 @@ class SheetsService:
         cat_norm = normalizar_categoria(categoria)
 
         todas_clases_alumno: set = set()
+        clases_por_otra_cat: Dict[str, set] = {}
         conflicto_info: Optional[Dict[str, Any]] = None
 
         for fila in todas_filas:
@@ -1608,10 +1837,13 @@ class SheetsService:
             mismo_nom = bool(nom_norm and nom_f and nom_f == nom_norm)
             if not (mismo_id or mismo_nom):
                 continue
-            if cat_f != cat_norm:
-                continue
 
             nums_fila = set(extraer_numeros_clase(str(fila.get("Clases_Reportadas", ""))))
+            if cat_f != cat_norm:
+                if nums_fila:
+                    clases_por_otra_cat.setdefault(cat_f, set()).update(nums_fila)
+                continue
+
             todas_clases_alumno.update(nums_fila)
 
             repetidas = sorted(nums_nuevos & nums_fila)
@@ -1632,6 +1864,32 @@ class SheetsService:
         conflicto_info["todas_registradas_txt"] = (
             ", ".join(str(c) for c in ordenadas_vistas) if ordenadas_vistas else "Ninguna"
         )
+
+        # Detectar otras categorías matriculadas para este mismo alumno (ej. A2 y C1)
+        matriculas = self.buscar_matriculas_alumno(id_alumno) or self.buscar_matriculas_alumno(nombre_alumno)
+        otras_cats: List[str] = []
+        for m in matriculas:
+            c_m = normalizar_categoria(str(m.get("Categoria", "")))
+            if c_m and c_m != cat_norm and c_m not in otras_cats:
+                otras_cats.append(c_m)
+        for c_o in clases_por_otra_cat.keys():
+            if c_o != cat_norm and c_o not in otras_cats:
+                otras_cats.append(c_o)
+
+        # Si el alumno no tenía segunda fila en Alumnos pero las clases son 1..15 y está en C1/B1, sugerir también A2
+        if not otras_cats and cat_norm in ("C1", "B1"):
+            otras_cats.append("A2")
+        elif not otras_cats and cat_norm in ("A1", "A2"):
+            otras_cats.append("C1")
+
+        conflicto_info["otras_categorias"] = otras_cats
+        resumen_otras: List[str] = []
+        for c_o in otras_cats:
+            vistas_o = sorted(clases_por_otra_cat.get(c_o, set()))
+            txt_o = ", ".join(str(x) for x in vistas_o) if vistas_o else "Ninguna aún"
+            nom_corto_o = FORMATOS_OFICIALES.get(c_o, FORMATOS_OFICIALES["B1"])["nombre_corto"]
+            resumen_otras.append(f"• *{nom_corto_o}:* `{txt_o}`")
+        conflicto_info["resumen_otras_txt"] = "\n".join(resumen_otras)
 
         # Calcular cuál es la siguiente clase disponible para sugerirla al instructor
         disponibles = [c for c in range(1, total_cat + 1) if c not in todas_clases_alumno]
@@ -1657,9 +1915,10 @@ class SheetsService:
         tema_registrado: str,
         url_foto_drive: str,
         validacion_horario: str = "EN TIEMPO",
-    ) -> None:
+        observacion_instructor: str = "",
+    ) -> int:
         ws = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
-        self._agregar_fila_al_final(
+        return self._agregar_fila_al_final(
             ws,
             [
                 timestamp,
@@ -1673,8 +1932,27 @@ class SheetsService:
                 tema_registrado,
                 url_foto_drive,
                 validacion_horario,
+                observacion_instructor,
             ],
         )
+
+    def guardar_observacion_en_fila(
+        self,
+        fila_idx: int,
+        observacion_formateada: str,
+    ) -> None:
+        """Guarda o agrega una observación del instructor en la columna L (Observaciones_Instructor) de Registro_Clases."""
+        try:
+            ws = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
+            valor_actual = str(ws.cell(fila_idx, 12).value or "").strip()
+            nuevo_valor = (
+                f"{valor_actual} | {observacion_formateada}"
+                if valor_actual
+                else observacion_formateada
+            )
+            ws.update_cell(fila_idx, 12, nuevo_valor)
+        except Exception as exc:
+            logger.warning("No se pudo guardar observación en fila %s: %s", fila_idx, exc)
 
     def registrar_cierre_jornada(
         self,
@@ -1706,8 +1984,21 @@ class SheetsService:
             ],
         )
 
-    def obtener_clases_alumno(self, criterio_alumno: str) -> Dict[str, Any]:
-        info_alumno = self.buscar_alumno(criterio_alumno)
+    def obtener_clases_alumno(
+        self,
+        criterio_alumno: str,
+        categoria: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Obtiene los datos del alumno y las filas de 'Registro_Clases'.
+        - Si se especifica 'categoria', filtra estrictamente los registros de esa categoría
+          para no mezclar las clases de Moto (A2) con las de Carro (B1/C1).
+        - También devuelve 'categorias_detectadas' con todas las categorías en las que el alumno
+          tiene matrícula o registros de clases.
+        """
+        cat_filtro = normalizar_categoria(categoria) if categoria else None
+        info_alumno = self.buscar_alumno(criterio_alumno, categoria=cat_filtro)
+        matriculas = self.buscar_matriculas_alumno(criterio_alumno)
         ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
         todas_filas = self._leer_filas_diccionario(ws_reg, HEADERS_REGISTRO)
 
@@ -1717,11 +2008,13 @@ class SheetsService:
             if info_alumno
             else criterio_norm
         )
-        id_oficial_norm = (
-            _normalizar_texto(str(info_alumno.get("ID_Matricula", "")))
-            if info_alumno
-            else ""
-        )
+        ids_oficiales_norm = {
+            _normalizar_texto(str(m.get("ID_Matricula", "")))
+            for m in matriculas
+            if str(m.get("ID_Matricula", "")).strip()
+        }
+        if info_alumno and str(info_alumno.get("ID_Matricula", "")).strip():
+            ids_oficiales_norm.add(_normalizar_texto(str(info_alumno.get("ID_Matricula", ""))))
         doc_oficial_norm = (
             _normalizar_texto(str(info_alumno.get("Documento", "")))
             if info_alumno
@@ -1729,18 +2022,33 @@ class SheetsService:
         )
 
         clases_filtradas = []
+        categorias_en_registros: List[str] = []
+        for m in matriculas:
+            c_mat = normalizar_categoria(str(m.get("Categoria", "")))
+            if c_mat and c_mat not in categorias_en_registros:
+                categorias_en_registros.append(c_mat)
+
         for fila in todas_filas:
             id_fila = _normalizar_texto(str(fila.get("ID_Alumno", "")))
             nom_fila = _normalizar_texto(str(fila.get("Nombre_Alumno", "")))
+            cat_fila = normalizar_categoria(str(fila.get("Categoria", "B1")))
 
-            coincide_id = id_fila and id_fila in (id_oficial_norm, doc_oficial_norm, criterio_norm)
-            coincide_nombre = nom_fila and (
-                criterio_norm in nom_fila
-                or (nombre_oficial_norm and nombre_oficial_norm in nom_fila)
-                or (nombre_oficial_norm and nom_fila in nombre_oficial_norm)
+            coincide_id = bool(
+                id_fila and (id_fila in ids_oficiales_norm or id_fila in (doc_oficial_norm, criterio_norm))
+            )
+            coincide_nombre = bool(
+                nom_fila
+                and (
+                    criterio_norm in nom_fila
+                    or (nombre_oficial_norm and nombre_oficial_norm in nom_fila)
+                    or (nombre_oficial_norm and nom_fila in nombre_oficial_norm)
+                )
             )
             if coincide_id or coincide_nombre:
-                clases_filtradas.append(fila)
+                if cat_fila not in categorias_en_registros:
+                    categorias_en_registros.append(cat_fila)
+                if cat_filtro is None or cat_fila == cat_filtro:
+                    clases_filtradas.append(fila)
 
         if not info_alumno and clases_filtradas:
             ultima = clases_filtradas[-1]
@@ -1748,11 +2056,18 @@ class SheetsService:
                 "ID_Matricula": ultima.get("ID_Alumno") or "S/N",
                 "Documento": ultima.get("ID_Alumno") or "Pendiente",
                 "Nombre_Completo": ultima.get("Nombre_Alumno") or criterio_alumno,
-                "Categoria": normalizar_categoria(str(ultima.get("Categoria", "B1"))),
+                "Categoria": cat_filtro or normalizar_categoria(str(ultima.get("Categoria", "B1"))),
                 "Estado": "En curso",
             }
+        elif info_alumno and cat_filtro:
+            info_alumno = dict(info_alumno)
+            info_alumno["Categoria"] = cat_filtro
 
-        return {"alumno": info_alumno, "registros": clases_filtradas}
+        return {
+            "alumno": info_alumno,
+            "registros": clases_filtradas,
+            "categorias_detectadas": categorias_en_registros,
+        }
 
     def listar_instructores_registrados(self) -> List[Dict[str, str]]:
         """
@@ -1897,9 +2212,13 @@ class SheetsService:
             )
             cat_f = normalizar_categoria(str(fila.get("Categoria", "B1")))
             raw_clases_f = str(fila.get("Clases_Reportadas", "")).strip()
+            es_ref_o_adic = (
+                "refuerzo" in raw_clases_f.lower()
+                or "adicional" in raw_clases_f.lower()
+            )
             nums_f = tuple(sorted(extraer_numeros_clase(raw_clases_f)))
             clave_alu_f = id_alu_f or nom_alu_f
-            if clave_alu_f and nums_f:
+            if clave_alu_f and nums_f and not es_ref_o_adic:
                 clave_dup = (clave_alu_f, cat_f, nums_f)
                 if clave_dup in clases_unicas_vistas:
                     # Omitir registro duplicado de la misma clase para el mismo alumno
@@ -1925,8 +2244,12 @@ class SheetsService:
                     continue
 
             raw_clases = str(fila.get("Clases_Reportadas", "")).strip()
-            nums = extraer_numeros_clase(raw_clases)
-            cant = len(nums) if nums else 1
+            m_adic = re.search(r"adicional\s*\((\d+)\s*cl", raw_clases, flags=re.IGNORECASE)
+            if m_adic:
+                cant = int(m_adic.group(1))
+            else:
+                nums = extraer_numeros_clase(raw_clases)
+                cant = len(nums) if nums else 1
             cat = normalizar_categoria(str(fila.get("Categoria", "B1")))
             val_hor = str(fila.get("Validacion_Horario", "EN TIEMPO")).strip()
 
@@ -2219,6 +2542,28 @@ def generar_pdf_seguimiento(
     if len(indices_via) > 1:
         estilos_tabla.append(("SPAN", (0, indices_via[0]), (0, indices_via[-1])))
 
+    # Agregar filas de Clases Adicionales / de Refuerzo al final de la tabla si existen
+    for fila_r in registros:
+        cl_raw = str(fila_r.get("Clases_Reportadas", "")).strip()
+        tm_raw = str(fila_r.get("Tema_Registrado", "")).strip()
+        if "refuerzo" in cl_raw.lower() or "adicional" in cl_raw.lower() or "refuerzo" in tm_raw.lower():
+            inst_r = str(fila_r.get("Instructor", "")).strip()
+            fech_r = str(fila_r.get("Fecha_Reporte", "")).strip()
+            hor_r = str(fila_r.get("Hora_Reporte", "")).strip()
+            etiqueta_adic = cl_raw.replace("(Refuerzo)", "").replace("Adicional", "Adic.").strip() or "Adic."
+            filas_tabla.append(
+                [
+                    Paragraph("<b>Clase Adicional /<br/>Refuerzo</b>", estilo_celda_centro),
+                    Paragraph(f"<b>{etiqueta_adic}</b>", estilo_celda_centro),
+                    Paragraph(tm_raw.replace("\n", "<br/>"), estilo_celda),
+                    Paragraph(
+                        f"<b>{inst_r}</b><br/><font size=6>{fech_r} {hor_r}</font>",
+                        estilo_celda_centro,
+                    ),
+                    Paragraph(f"{nombre_alumno}", estilo_celda_centro),
+                ]
+            )
+
     tabla_clases = Table(
         filas_tabla,
         colWidths=[2.3 * cm, 1.3 * cm, 9.5 * cm, 3.2 * cm, 3.2 * cm],
@@ -2228,13 +2573,31 @@ def generar_pdf_seguimiento(
     elementos.append(tabla_clases)
     elementos.append(Spacer(1, 0.15 * cm))
 
+    # Recopilar todas las observaciones realizadas por los instructores por clase dictada
+    lineas_observaciones: List[str] = []
+    for fila_r in registros:
+        obs_txt = str(fila_r.get("Observaciones_Instructor", "")).strip()
+        if obs_txt:
+            cl_r = str(fila_r.get("Clases_Reportadas", "")).strip()
+            fech_r = str(fila_r.get("Fecha_Reporte", "")).strip()
+            hor_r = str(fila_r.get("Hora_Reporte", "")).strip()
+            inst_r = str(fila_r.get("Instructor", "")).strip()
+            lineas_observaciones.append(
+                f"• <b>Clase {cl_r} ({fech_r} {hor_r}):</b> {obs_txt} "
+                f"— <i>Observación realizada por Instructor: <b>{inst_r}</b></i>"
+            )
+
+    contenido_observaciones = (
+        "<br/>".join(lineas_observaciones) if lineas_observaciones else "&nbsp;"
+    )
+
     # Determinar el último instructor que dictó la clase final del curso (y su cédula oficial)
     ultimo_instructor = ""
-    if mapa_clases:
+    if registros:
+        ultimo_instructor = str(registros[-1].get("Instructor", "")).strip()
+    if not ultimo_instructor and mapa_clases:
         max_clase_num = max(mapa_clases.keys())
         ultimo_instructor = str(mapa_clases[max_clase_num].get("instructor", "")).strip()
-    if not ultimo_instructor and registros:
-        ultimo_instructor = str(registros[-1].get("Instructor", "")).strip()
     doc_ultimo_instructor = (
         sheets_service.obtener_documento_por_nombre_instructor(ultimo_instructor)
         if ultimo_instructor
@@ -2243,7 +2606,7 @@ def generar_pdf_seguimiento(
 
     filas_pie = [
         [Paragraph("<b>OBSERVACIONES AL PROCESO DE APRENDIZAJE:</b>", estilo_celda), "", ""],
-        [Paragraph("&nbsp;", estilo_celda), "", ""],
+        [Paragraph(contenido_observaciones, estilo_celda), "", ""],
         [
             Paragraph(
                 "Concluida las clases se realizara evaluación práctica, calificada y aprobada por SICOV.",
@@ -3179,43 +3542,71 @@ async def guardar_en_sheets_y_confirmar(
                     PROPIETARIO_MENSAJE_BOT[menu_msg_id] = user_id
 
                 cfg = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])
+                bloque_otras_cats = (
+                    f"\n🔀 *Progreso en otros cursos del mismo alumno:*\n{duplicado['resumen_otras_txt']}\n"
+                    if duplicado.get("resumen_otras_txt")
+                    else ""
+                )
                 texto_dup = (
                     f"⛔ *CLASE DUPLICADA — NO SE PERMITE REGISTRAR DOS VECES LA MISMA CLASE*\n"
                     f"━━━━━━━━━━━━━━━━━━━━━━\n"
                     f"👤 *Alumno:* {nombre_final} (CC: `{id_alumno_final}`)\n"
                     f"🏷 *Categoría:* {cfg['nombre_corto']}\n"
                     f"⚠️ *Clase(s) que intentaste registrar:* `{clases_texto}`\n"
-                    f"🚨 *Motivo del bloqueo:* La(s) clase(s) `{duplicado['clases_duplicadas']}` **YA FUE(RON) REGISTRADA(S)** para este alumno el `{duplicado['fecha_previa']}` a las `{duplicado['hora_previa']}` por *{duplicado['instructor_previo']}*.\n\n"
-                    f"📚 *Clases ya registradas a este alumno:* `{duplicado['todas_registradas_txt']}`\n"
-                    f"💡 *Siguiente clase disponible:* `{duplicado['sugerencia_siguiente']}`\n\n"
+                    f"🚨 *Motivo del bloqueo:* La(s) clase(s) `{duplicado['clases_duplicadas']}` **YA FUE(RON) REGISTRADA(S)** para este alumno en *{cfg['nombre_corto']}* el `{duplicado['fecha_previa']}` a las `{duplicado['hora_previa']}` por *{duplicado['instructor_previo']}*.\n\n"
+                    f"📚 *Clases ya registradas en {categoria}:* `{duplicado['todas_registradas_txt']}`\n"
+                    f"💡 *Siguiente clase disponible en {categoria}:* `{duplicado['sugerencia_siguiente']}`\n"
+                    f"{bloque_otras_cats}\n"
                     f"👇 *Selecciona qué deseas hacer:*"
                 )
                 botones_dup = [
                     [
                         InlineKeyboardButton(
-                            f"📚 Cambiar Número de Clase (Sugerida: {duplicado['sugerencia_siguiente']})",
+                            f"📚 Cambiar Número de Clase en {categoria} (Sugerida: {duplicado['sugerencia_siguiente']})",
                             callback_data=f"cat|{categoria}|{user_id}",
                         )
                     ],
-                    [
-                        InlineKeyboardButton(
-                            "🔄 Registrar como Clase de Refuerzo Adicional",
-                            callback_data=f"confirmar_refuerzo|{user_id}",
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "👤 Cambiar de Alumno",
-                            callback_data=f"cambiar_alu_dup|{categoria}|{user_id}",
-                        )
-                    ],
-                    [
-                        InlineKeyboardButton(
-                            "✅ Finalizar / Cancelar registro duplicado",
-                            callback_data=f"cancelar|{user_id}",
-                        )
-                    ],
                 ]
+                for otra_cat in duplicado.get("otras_categorias", [])[:2]:
+                    nom_otra = FORMATOS_OFICIALES.get(otra_cat, FORMATOS_OFICIALES["B1"])["nombre_corto"]
+                    botones_dup.append(
+                        [
+                            InlineKeyboardButton(
+                                f"🔀 Pasar clases previas a {nom_otra} y guardar esta en {categoria}",
+                                callback_data=f"reclasificar_dup|{categoria}|{otra_cat}|{user_id}",
+                            )
+                        ]
+                    )
+                    botones_dup.append(
+                        [
+                            InlineKeyboardButton(
+                                f"🏷 Registrar esta foto en {nom_otra} (Clase {clases_texto})",
+                                callback_data=f"cambiar_cat_dup|{otra_cat}|{user_id}",
+                            )
+                        ]
+                    )
+                botones_dup.extend(
+                    [
+                        [
+                            InlineKeyboardButton(
+                                "🔄 Registrar como Clase de Refuerzo Adicional",
+                                callback_data=f"confirmar_refuerzo|{user_id}",
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "👤 Cambiar de Alumno",
+                                callback_data=f"cambiar_alu_dup|{categoria}|{user_id}",
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                "✅ Finalizar / Cancelar registro duplicado",
+                                callback_data=f"cancelar|{user_id}",
+                            )
+                        ],
+                    ]
+                )
                 await _editar_mensaje_seguro(
                     mensaje_respuesta,
                     texto_dup,
@@ -3259,17 +3650,21 @@ async def guardar_en_sheets_y_confirmar(
             validacion_horario=estado_horario_sheets,
         )
 
-        # 5.5 Verificar progreso total del alumno y si acaba de cumplir el mínimo de clases requeridas
+        # 5.5 Verificar progreso total del alumno EN ESTA CATEGORÍA y si acaba de cumplir el mínimo requerido
         cfg = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])
         total_requerido = cfg.get("total_clases", 20)
-        resultado_alu = sheets_service.obtener_clases_alumno(id_alumno_final)
+        resultado_alu = sheets_service.obtener_clases_alumno(
+            id_alumno_final, categoria=categoria
+        )
         registros_alu = resultado_alu.get("registros", [])
         mapa_clases_alu = mapear_clases_registradas(registros_alu)
         clases_completadas = len({c for c in mapa_clases_alu.keys() if 1 <= c <= total_requerido})
         curso_completado = clases_completadas >= total_requerido
 
         if curso_completado:
-            sheets_service.actualizar_estado_alumno(id_alumno_final, "Finalizado")
+            sheets_service.actualizar_estado_alumno(
+                id_alumno_final, "Finalizado", categoria=categoria
+            )
 
         doc_inst_txt = f" (CC: `{doc_instructor}`)" if doc_instructor else ""
         etiqueta_ref = " 🔄 *(CLASE DE REFUERZO)*" if es_refuerzo else ""
@@ -4330,6 +4725,44 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         await guardar_en_sheets_y_confirmar(chat_id, sesion_uid, context, query.message)
         return
 
+    if accion_limpia.startswith("reclasificar_dup|"):
+        _, cat_origen, cat_destino = accion_limpia.split("|", 2)
+        id_alu = sesion.get("documento_detectado") or ""
+        nom_alu = sesion.get("nombre_alumno_limpio") or ""
+        # Asegurar que el alumno tenga matrícula en ambas categorías (ej. A2 y C1)
+        if id_alu and nom_alu:
+            sheets_service.registrar_o_actualizar_alumno(id_alu, nom_alu, cat_destino)
+            sheets_service.registrar_o_actualizar_alumno(id_alu, nom_alu, cat_origen)
+        sheets_service.reclasificar_clases_alumno(
+            id_alumno=id_alu,
+            nombre_alumno=nom_alu,
+            cat_origen=cat_origen,
+            cat_destino=cat_destino,
+        )
+        sesion["categoria"] = cat_origen
+        sesion["es_refuerzo"] = False
+        sesion["esperando_nombre_texto"] = False
+        await guardar_en_sheets_y_confirmar(chat_id, sesion_uid, context, query.message)
+        return
+
+    if accion_limpia.startswith("cambiar_cat_dup|"):
+        otra_cat = normalizar_categoria(accion_limpia.split("|", 1)[1])
+        sesion["categoria"] = otra_cat
+        nums_actuales = extraer_numeros_clase(sesion.get("clases_texto") or "")
+        cfg_otra = FORMATOS_OFICIALES.get(otra_cat, FORMATOS_OFICIALES["B1"])
+        temas_nuevos: List[str] = []
+        for fila_f in cfg_otra["filas"]:
+            if any(c in nums_actuales for c in fila_f["clases"]):
+                t_limp = fila_f["tema"].replace("\n", " ")
+                if t_limp not in temas_nuevos:
+                    temas_nuevos.append(t_limp)
+        if temas_nuevos:
+            sesion["tema_oficial"] = " / ".join(temas_nuevos)
+        sesion["es_refuerzo"] = False
+        sesion["esperando_nombre_texto"] = False
+        await guardar_en_sheets_y_confirmar(chat_id, sesion_uid, context, query.message)
+        return
+
     if accion_limpia.startswith("cambiar_alu_dup|"):
         cat_key = accion_limpia.split("|", 1)[1]
         sesion["nombre_alumno_limpio"] = None
@@ -4405,7 +4838,9 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
     if accion_limpia.startswith("alu_ref|") or accion_limpia.startswith("alu|"):
         es_ref_btn = accion_limpia.startswith("alu_ref|")
         doc_alu = accion_limpia.split("|", 1)[1]
-        ficha = sheets_service.buscar_alumno(doc_alu)
+        ficha = sheets_service.buscar_alumno(
+            doc_alu, categoria=sesion.get("categoria")
+        )
         if ficha:
             sesion["nombre_alumno_limpio"] = str(ficha.get("Nombre_Completo", "")).strip()
             sesion["documento_detectado"] = str(ficha.get("Documento", doc_alu)).strip()
@@ -4425,18 +4860,38 @@ async def _generar_y_enviar_pdf_alumno(
     user_id: int,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> bool:
-    """Busca un alumno por cédula o nombre y envía su formato PDF oficial al chat indicado."""
+    """
+    Busca un alumno por cédula o nombre y envía su(s) formato(s) PDF oficial(es) al chat indicado.
+    Si el alumno está realizando más de un curso (ej. A2 Moto y C1 Carro), genera y envía
+    automáticamente el PDF independiente de cada categoría.
+    """
     aviso = await _enviar_mensaje_seguro(
         context.bot,
         chat_id=destino_chat_id,
         text=f"⏳ Consultando y generando formato PDF para *{criterio}*...",
     )
     try:
-        resultado = sheets_service.obtener_clases_alumno(criterio)
-        datos_alumno = resultado["alumno"]
-        registros = resultado["registros"]
+        # Detectar si el criterio incluye explícitamente una categoría (ej. '1098826670 C1' o 'Jeridson Gonzalez A2')
+        m_cat_exp = re.search(r"\b(A1|A2|B1|C1|RC1|RECAT_C1)\b", criterio, flags=re.IGNORECASE)
+        cat_explicita = normalizar_categoria(m_cat_exp.group(1)) if m_cat_exp else None
+        criterio_limpio = (
+            re.sub(r"\b(A1|A2|B1|C1|RC1|RECAT_C1)\b", "", criterio, flags=re.IGNORECASE).strip()
+            if cat_explicita
+            else criterio.strip()
+        )
 
-        if not datos_alumno and not registros:
+        resultado_general = sheets_service.obtener_clases_alumno(
+            criterio_limpio, categoria=cat_explicita
+        )
+        datos_base = resultado_general["alumno"]
+        registros_base = resultado_general["registros"]
+        cats_detectadas = (
+            [cat_explicita]
+            if cat_explicita
+            else (resultado_general.get("categorias_detectadas") or [])
+        )
+
+        if not datos_base and not registros_base:
             await _editar_mensaje_seguro(
                 aviso,
                 f"❌ No se encontraron registros de alumno para: *{criterio}*.",
@@ -4444,33 +4899,51 @@ async def _generar_y_enviar_pdf_alumno(
             )
             return False
 
-        pdf_buffer = generar_pdf_seguimiento(datos_alumno, registros)
-        categoria = normalizar_categoria(str(datos_alumno.get("Categoria", "B1")))
-        codigo_fmt = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])[
-            "codigo_formato"
-        ].replace(" ", "")
-        nombre_limpio = (
-            str(datos_alumno.get("Nombre_Completo", criterio)).strip().replace(" ", "_")
-        )
-        filename = f"{codigo_fmt}_{categoria}_{nombre_limpio}.pdf"
+        if not cats_detectadas:
+            cats_detectadas = [
+                normalizar_categoria(str((datos_base or {}).get("Categoria", "B1")))
+            ]
 
-        await context.bot.send_document(
-            chat_id=destino_chat_id,
-            document=pdf_buffer,
-            filename=filename,
-            caption=(
-                f"📄 Formato Oficial {codigo_fmt}\n"
-                f"👤 Alumno: {datos_alumno.get('Nombre_Completo')}\n"
-                f"🪪 Documento: {datos_alumno.get('Documento')}\n"
-                f"🏷 Categoría: {categoria}\n"
-                f"📊 Reportes registrados: {len(registros)}"
-            ),
-        )
+        enviados = 0
+        for cat_item in cats_detectadas:
+            res_cat = sheets_service.obtener_clases_alumno(
+                criterio_limpio, categoria=cat_item
+            )
+            alu_cat = res_cat["alumno"] or dict(datos_base or {})
+            alu_cat["Categoria"] = cat_item
+            regs_cat = res_cat["registros"]
+
+            # Si tiene múltiples matrículas y una aún no tiene clases ni fue pedida explícitamente, igual enviar su formato o priorizar las activas
+            pdf_buffer = generar_pdf_seguimiento(alu_cat, regs_cat)
+            codigo_fmt = FORMATOS_OFICIALES.get(cat_item, FORMATOS_OFICIALES["B1"])[
+                "codigo_formato"
+            ].replace(" ", "")
+            nombre_limpio = (
+                str(alu_cat.get("Nombre_Completo", criterio_limpio))
+                .strip()
+                .replace(" ", "_")
+            )
+            filename = f"{codigo_fmt}_{cat_item}_{nombre_limpio}.pdf"
+
+            await context.bot.send_document(
+                chat_id=destino_chat_id,
+                document=pdf_buffer,
+                filename=filename,
+                caption=(
+                    f"📄 Formato Oficial {codigo_fmt}\n"
+                    f"👤 Alumno: {alu_cat.get('Nombre_Completo')}\n"
+                    f"🪪 Documento: {alu_cat.get('Documento')}\n"
+                    f"🏷 Categoría: {cat_item}\n"
+                    f"📊 Reportes registrados en {cat_item}: {len(regs_cat)}"
+                ),
+            )
+            enviados += 1
+
         try:
             await aviso.delete()
         except Exception:
             pass
-        return True
+        return enviados > 0
     except Exception as exc:
         logger.exception("Error generando reporte PDF: %s", exc)
         await _editar_mensaje_seguro(aviso, f"⚠️ Error al generar el PDF: {exc}")
