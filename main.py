@@ -4729,6 +4729,50 @@ def _recuperar_sesion_desde_texto_mensaje(sesion: Dict[str, Any], texto_msg: str
                     " / ".join(temas_rec) if temas_rec else "Práctica de conducción"
                 )
 
+    # Recuperar datos del formulario de Mantenimiento de Vehículos si están visibles en el mensaje
+    m_pl = re.search(
+        r"(?:Placa Seleccionada:|SE REALIZÓ EN)\s*([A-Z0-9]{5,7})\b",
+        texto_msg,
+        flags=re.IGNORECASE,
+    )
+    if m_pl:
+        sesion["mant_placa"] = m_pl.group(1).strip().upper()
+        sesion["modo_mantenimiento_activo"] = True
+
+    m_tip = re.search(
+        r"Tipo de Mantenimiento:\s*(Preventivo|Correctivo)",
+        texto_msg,
+        flags=re.IGNORECASE,
+    )
+    if m_tip:
+        sesion["mant_tipo"] = m_tip.group(1).strip().title()
+
+    m_rol = re.search(
+        r"Rol del Técnico:\s*(MECANICO|ELECTRICO|PINTOR)",
+        texto_msg,
+        flags=re.IGNORECASE,
+    )
+    if m_rol:
+        sesion["mant_rol"] = m_rol.group(1).strip().upper()
+
+    m_tal = re.search(
+        r"(?:Establecimiento / Taller|Taller):\s*([^\n(]+?)\s*\(NIT:\s*([0-9]+)\)",
+        texto_msg,
+        flags=re.IGNORECASE,
+    )
+    if m_tal:
+        t_nom = m_tal.group(1).replace("*", "").strip()
+        t_nit = m_tal.group(2).strip()
+        if t_nom:
+            sesion["mant_establecimiento"] = t_nom
+            sesion["mant_tecnico"] = t_nom
+        if t_nit:
+            sesion["mant_nit"] = t_nit
+
+    if "QUÉ MANTENIMIENTO / OBSERVACIÓN SE REALIZÓ" in texto_msg.upper():
+        sesion["esperando_obs_mantenimiento"] = True
+        sesion["modo_mantenimiento_activo"] = True
+
 
 def construir_vista_cierre_jornada(
     sesion: Dict[str, Any], owner_id: int
@@ -5871,8 +5915,9 @@ def _formatear_texto_inasistencias(datos: Dict[str, Any]) -> str:
     if not registros:
         lineas.append("ℹ️ _No hay inasistencias registradas con este filtro en este período._")
     else:
-        lineas.append(f"📋 *Últimos registros ({len(registros)} total):*")
-        for r in list(reversed(registros))[:18]:
+        ultimos_ina = list(reversed(registros))[:3]
+        lineas.append(f"📋 *Últimas {len(ultimos_ina)} inasistencias registradas (de {len(registros)} en total):*")
+        for r in ultimos_ina:
             cons = str(r.get("Consecutivo", "")).strip()
             fech = str(r.get("Fecha", "")).strip()
             alu = str(r.get("Nombre_Alumno", "")).strip()
@@ -5886,9 +5931,9 @@ def _formatear_texto_inasistencias(datos: Dict[str, Any]) -> str:
             lineas.append(
                 f"`#{cons}` `{fech}` — *{alu}*{cl_tag} ({hrs}h = `${sub:,}`) {icono_est} _{est}_ | 👨‍🏫 {inst[:18]}"
             )
-        if len(registros) > 18:
+        if len(registros) > 3:
             lineas.append(
-                f"_...y {len(registros) - 18} registro(s) más (pulsa Descargar PDF para ver el informe completo)._"
+                f"_...y {len(registros) - 3} registro(s) más (pulsa Descargar PDF para ver el informe completo)._"
             )
     return "\n".join(lineas)
 
@@ -5974,19 +6019,20 @@ def _formatear_texto_mantenimientos(datos: Dict[str, Any]) -> str:
     if not registros:
         lineas.append("ℹ️ _No hay mantenimientos registrados en este período/placa._")
     else:
-        lineas.append(f"📋 *Relación de Mantenimientos ({len(registros)} registro(s)):*")
-        for idx, r in enumerate(list(reversed(registros))[:18], start=1):
+        ultimos_mant = list(reversed(registros))[:3]
+        lineas.append(f"📋 *Últimos {len(ultimos_mant)} mantenimientos registrados (de {len(registros)} en total):*")
+        for idx, r in enumerate(ultimos_mant, start=1):
             fech = str(r.get("Fecha", "")).strip()
             pl = str(r.get("Placa", "")).strip().upper()
             tip = str(r.get("Tipo_Mantenimiento", "Preventivo")).strip()
             estab = str(r.get("Establecimiento", "")).strip()
             obs = str(r.get("Observaciones", "")).strip()
             lineas.append(
-                f"`{idx:02d}.` `{fech}` — *{pl}* ({tip}) | 🏪 *{estab}*: _{obs[:45]}_"
+                f"`{idx:02d}.` `{fech}` — *{pl}* ({tip}) | 🏪 *{estab}*: _{obs[:55]}_"
             )
-        if len(registros) > 18:
+        if len(registros) > 3:
             lineas.append(
-                f"_...y {len(registros) - 18} registro(s) más (descarga el PDF Oficial SISI-F2-08 para ver la tabla completa)._"
+                f"_...y {len(registros) - 3} mantenimiento(s) más (descarga el PDF Oficial SISI-F2-08 para ver la tabla completa)._"
             )
     return "\n".join(lineas)
 
@@ -6682,6 +6728,7 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         sesion["mant_actividad"] = sesion.get("mant_actividad") or "Mantenimiento"
         sesion["mant_tecnico"] = sesion.get("mant_tecnico") or "Motollantas Richard"
         sesion["esperando_obs_mantenimiento"] = False
+        sesion["modo_mantenimiento_activo"] = True
         sesion["menu_msg_id"] = msg_id
         PROPIETARIO_MENSAJE_BOT[msg_id] = sesion_uid
         await _editar_mensaje_seguro(
@@ -6706,6 +6753,9 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
                 sesion["mant_establecimiento"] = t_info["nombre"]
                 sesion["mant_tecnico"] = t_info["nombre"]
                 sesion["mant_nit"] = t_info["nit"]
+        sesion["modo_mantenimiento_activo"] = True
+        sesion["menu_msg_id"] = msg_id
+        PROPIETARIO_MENSAJE_BOT[msg_id] = sesion_uid
         await _editar_mensaje_seguro(
             query.message,
             _texto_config_mantenimiento(sesion),
@@ -6739,6 +6789,8 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
 
     if accion_limpia == "mant_escribir_taller":
         sesion["esperando_taller_mantenimiento"] = True
+        sesion["menu_msg_id"] = msg_id
+        PROPIETARIO_MENSAJE_BOT[msg_id] = sesion_uid
         await _editar_mensaje_seguro(
             query.message,
             "✍️ *ESCRIBIR ESTABLECIMIENTO Y NIT / CC*\n"
@@ -6753,20 +6805,23 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
 
     if accion_limpia == "mant_paso_obs":
         sesion["esperando_obs_mantenimiento"] = True
+        sesion["modo_mantenimiento_activo"] = True
+        sesion["menu_msg_id"] = msg_id
+        PROPIETARIO_MENSAJE_BOT[msg_id] = sesion_uid
         pl_m = sesion.get("mant_placa", "UDT984")
         estab_m = sesion.get("mant_establecimiento", "Motollantas Richard")
         botones_obs_rapidas = [
             [
-                InlineKeyboardButton("🛢️ Cambio de aceite", callback_data=f"mant_guardar_rap|Cambio de aceite|{sesion_uid}"),
-                InlineKeyboardButton("⛓️ Aceite y tensión cadena", callback_data=f"mant_guardar_rap|Cambio de aceite y tensión de cadena|{sesion_uid}"),
+                InlineKeyboardButton("🛢️ Cambio de aceite", callback_data=f"mant_rap|0|{sesion_uid}"),
+                InlineKeyboardButton("⛓️ Aceite y tensión cadena", callback_data=f"mant_rap|1|{sesion_uid}"),
             ],
             [
-                InlineKeyboardButton("🛑 Mantenimiento frenos", callback_data=f"mant_guardar_rap|Mantenimiento de frenos y cambio de pastillas|{sesion_uid}"),
-                InlineKeyboardButton("🛞 Cambio/Calibración llantas", callback_data=f"mant_guardar_rap|Cambio y calibración de llantas|{sesion_uid}"),
+                InlineKeyboardButton("🛑 Mantenimiento frenos", callback_data=f"mant_rap|2|{sesion_uid}"),
+                InlineKeyboardButton("🛞 Cambio/Calibración llantas", callback_data=f"mant_rap|3|{sesion_uid}"),
             ],
             [
-                InlineKeyboardButton("🔋 Cambio de Batería", callback_data=f"mant_guardar_rap|Cambio Batería|{sesion_uid}"),
-                InlineKeyboardButton("⚖️ Balanceo y Alineación", callback_data=f"mant_guardar_rap|Balanceo y alineación|{sesion_uid}"),
+                InlineKeyboardButton("🔋 Cambio de Batería", callback_data=f"mant_rap|4|{sesion_uid}"),
+                InlineKeyboardButton("⚖️ Balanceo y Alineación", callback_data=f"mant_rap|5|{sesion_uid}"),
             ],
             [
                 InlineKeyboardButton("⬅️ Volver a Configurar Placa/Taller", callback_data=f"mant_nuevo_ini|{sesion_uid}"),
@@ -6786,8 +6841,20 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    if accion_limpia.startswith("mant_guardar_rap|"):
-        obs_rap = accion_limpia.split("|", 1)[1]
+    if accion_limpia.startswith("mant_rap|") or accion_limpia.startswith("mant_guardar_rap|"):
+        val_rap = accion_limpia.split("|", 1)[1]
+        opciones_rapidas_mant = [
+            "Cambio de aceite",
+            "Cambio de aceite y tensión de cadena",
+            "Mantenimiento de frenos y cambio de pastillas",
+            "Cambio y calibración de llantas",
+            "Cambio Batería",
+            "Balanceo y alineación",
+        ]
+        if val_rap.isdigit() and 0 <= int(val_rap) < len(opciones_rapidas_mant):
+            obs_rap = opciones_rapidas_mant[int(val_rap)]
+        else:
+            obs_rap = val_rap
         await _finalizar_registro_mantenimiento_en_bot(
             chat_id=chat_id,
             user_id=sesion_uid,
@@ -7159,10 +7226,11 @@ def _texto_config_mantenimiento(sesion: Dict[str, Any]) -> str:
         f"{_encabezado_instructor(sesion)}"
         f"🚗 *Placa Seleccionada:* `{pl}`\n"
         f"🛠️ *Tipo de Mantenimiento:* `{tip}`\n"
-        f"🏪 *Establecimiento / Taller:* *{estab}* *(NIT: `{nit}`)*\n"
+        f"🏪 *Establecimiento / Taller:* *{estab}* (NIT: `{nit}`)\n"
         f"👨‍🔧 *Rol del Técnico:* `{rol}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👇 *Selecciona la Placa, Tipo, Rol o Taller y luego toca* **`📝 PASO FINAL: Actividad / Observaciones ➡️`**:"
+        f"👇 *Selecciona la Placa, Tipo, Rol o Taller y luego toca* **`📝 PASO FINAL: Actividad / Observaciones ➡️`** "
+        f"*(o escribe directamente en el chat la observación del mantenimiento realizado)*:"
     )
 
 
@@ -7469,15 +7537,24 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
                 sesion = SESIONES_REPORTE.get((msg.chat_id, sesion_uid))
 
         if not sesion:
-            nom_prueba, doc_prueba = extraer_nombre_y_cedula(texto)
-            if nom_prueba and len(nom_prueba.split()) >= 2 and doc_prueba:
-                # Buscar la sesión activa más reciente en este chat que esté esperando el nombre del alumno
-                for (c_id, u_id), ses_cand in reversed(list(SESIONES_REPORTE.items())):
-                    if c_id == msg.chat_id and ses_cand.get("esperando_nombre_texto"):
-                        if es_admin or u_id == user.id:
-                            sesion_uid = u_id
-                            sesion = ses_cand
-                            break
+            # Buscar cualquier sesión activa en este chat del mismo usuario (o de admin) esperando datos de mantenimiento, inasistencia o alumno
+            for (c_id, u_id), ses_cand in reversed(list(SESIONES_REPORTE.items())):
+                if c_id == msg.chat_id and (u_id == user.id or es_admin):
+                    if any(
+                        ses_cand.get(flag)
+                        for flag in (
+                            "esperando_obs_mantenimiento",
+                            "modo_mantenimiento_activo",
+                            "esperando_taller_mantenimiento",
+                            "esperando_alumno_inasistencia",
+                            "esperando_alu_pdf_inasistencia",
+                            "esperando_consecutivo_estado_ina",
+                            "esperando_nombre_texto",
+                        )
+                    ):
+                        sesion_uid = u_id
+                        sesion = ses_cand
+                        break
 
     # SI ESTÁ EN EL CHAT PRIVADO CON EL BOT Y NO TIENE UNA FOTO ABIERTA:
     # Permitir consultas directas de Administrador o Instructor sin quedarse en silencio jamás
@@ -7499,7 +7576,7 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
             if t_low in ("inasistencia", "inasistencias", "falla", "fallas", "no asistio"):
                 await cmd_inasistencias(update, context)
                 return
-            if t_low in ("mantenimiento", "mantenimientos", "taller", "pesv", "carros", "vehiculos"):
+            if t_low in ("mantenimiento", "mantenimientos", "manteniminto", "mantenimintos", "taller", "pesv", "carros", "vehiculos"):
                 await cmd_mantenimientos(update, context)
                 return
             if t_low in ("clases", "mis clases"):
@@ -7620,8 +7697,14 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     # CASO ESPECIAL 4: El instructor/admin está escribiendo las observaciones/actividad del Mantenimiento
-    if sesion.get("esperando_obs_mantenimiento"):
+    if sesion.get("esperando_obs_mantenimiento") or (
+        sesion.get("modo_mantenimiento_activo")
+        and not sesion.get("esperando_taller_mantenimiento")
+        and not sesion.get("esperando_nombre_texto")
+        and not sesion.get("esperando_alumno_inasistencia")
+    ):
         sesion["esperando_obs_mantenimiento"] = False
+        sesion["modo_mantenimiento_activo"] = False
         await _finalizar_registro_mantenimiento_en_bot(
             chat_id=msg.chat_id,
             user_id=sesion_uid,
@@ -8346,7 +8429,7 @@ def main() -> None:
     app.add_handler(CommandHandler("alertas", cmd_alertas_admin))
     app.add_handler(CommandHandler("supervisar", cmd_supervisar_admin))
     app.add_handler(CommandHandler(["inasistencia", "inasistencias", "falla", "fallas"], cmd_inasistencias))
-    app.add_handler(CommandHandler(["mantenimiento", "mantenimientos", "taller", "pesv"], cmd_mantenimientos))
+    app.add_handler(CommandHandler(["mantenimiento", "mantenimientos", "manteniminto", "mantenimintos", "taller", "pesv"], cmd_mantenimientos))
     app.add_handler(CommandHandler("inicializar", cmd_inicializar))
     app.add_handler(CommandHandler("reporte", cmd_reporte))
 
