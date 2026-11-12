@@ -94,6 +94,7 @@ SHEET_REGISTRO = "Registro_Clases"
 SHEET_CIERRES = "Cierres_Jornada"
 SHEET_INASISTENCIAS = "Inasistencias"
 SHEET_MANTENIMIENTOS = "Mantenimientos"
+SHEET_VEHICULOS = "Vehiculos_PESV"
 TZ_COLOMBIA = timezone(timedelta(hours=-5))
 
 logging.basicConfig(
@@ -1017,6 +1018,12 @@ HEADERS_MANTENIMIENTOS = [
     "Costo",
     "Proximo_Cambio",
 ]
+HEADERS_VEHICULOS = [
+    "Placa",
+    "Tipo_Vehiculo",
+    "Estado",
+    "Fecha_Registro",
+]
 
 PLACAS_VEHICULOS_OFICIALES: List[Dict[str, str]] = [
     {"placa": "UDT984", "tipo": "🚗 Carro", "etiqueta": "🚗 UDT984"},
@@ -1026,6 +1033,41 @@ PLACAS_VEHICULOS_OFICIALES: List[Dict[str, str]] = [
     {"placa": "YNE30F", "tipo": "🏍️ Moto", "etiqueta": "🏍️ YNE30F"},
     {"placa": "AZA25G", "tipo": "🏍️ Moto", "etiqueta": "🏍️ AZA25G"},
 ]
+
+
+def _texto_indica_inasistencia(texto: str) -> bool:
+    """Detecta si un texto, observación o pie de foto reporta que el alumno NO asistió a la clase."""
+    if not texto:
+        return False
+    t = _normalizar_texto(texto)
+    patrones = (
+        r"\bno\s+asisti[oó]?\b",
+        r"\binasistencia\b",
+        r"\bfalt[oó]\s+a\b",
+        r"\bno\s+se\s+present[oó]?\b",
+        r"\bperdi[oó]\s+(?:la\s+)?clase\b",
+        r"\bno\s+lleg[oó]\b",
+    )
+    return any(re.search(p, t) for p in patrones)
+
+
+def _es_registro_inasistencia(fila: Dict[str, Any]) -> bool:
+    """
+    Indica si una fila de Registro_Clases corresponde a una INASISTENCIA (el alumno no asistió).
+    Las inasistencias NUNCA deben llenar las casillas de la tabla de control de clases dictadas,
+    sino registrarse únicamente en el cuadro de OBSERVACIONES AL PROCESO DE APRENDIZAJE.
+    """
+    cl_rep = str(fila.get("Clases_Reportadas", ""))
+    tema_reg = str(fila.get("Tema_Registrado", ""))
+    obs_inst = str(fila.get("Observaciones_Instructor", ""))
+    val_hor = str(fila.get("Validacion_Horario", ""))
+    return (
+        _texto_indica_inasistencia(cl_rep)
+        or _texto_indica_inasistencia(tema_reg)
+        or _texto_indica_inasistencia(obs_inst)
+        or "inasistencia" in val_hor.lower()
+        or "no asisti" in val_hor.lower()
+    )
 
 TALLERES_FRECUENTES_PESV: List[Dict[str, str]] = [
     {"nombre": "Motollantas Richard", "nit": "13721566"},
@@ -1280,6 +1322,8 @@ class SheetsService:
             ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
             filas_reg = self._leer_filas_diccionario(ws_reg, HEADERS_REGISTRO)
             for r in filas_reg:
+                if _es_registro_inasistencia(r):
+                    continue
                 doc_r = _normalizar_texto(str(r.get("ID_Alumno", "")))
                 nom_r = _normalizar_texto(
                     limpiar_solo_nombre_persona(str(r.get("Nombre_Alumno", "")))
@@ -1389,14 +1433,38 @@ class SheetsService:
         self.obtener_o_crear_hoja(SHEET_CIERRES, HEADERS_CIERRES)
         self.obtener_o_crear_hoja(SHEET_INASISTENCIAS, HEADERS_INASISTENCIAS)
         self.obtener_o_crear_hoja(SHEET_MANTENIMIENTOS, HEADERS_MANTENIMIENTOS)
+        self.obtener_o_crear_hoja(SHEET_VEHICULOS, HEADERS_VEHICULOS)
         self.sembrar_datos_historicos_appsheet()
         self.limpiar_nombres_contaminados()
 
     def sembrar_datos_historicos_appsheet(self) -> None:
         """
-        Si las hojas 'Inasistencias' o 'Mantenimientos' están recién creadas (sin datos),
+        Si las hojas 'Inasistencias', 'Mantenimientos' o 'Vehiculos_PESV' están recién creadas (sin datos),
         carga automáticamente el historial proveniente de la base de datos de AppSheet.
         """
+        try:
+            ws_veh = self.obtener_o_crear_hoja(SHEET_VEHICULOS, HEADERS_VEHICULOS)
+            filas_veh = ws_veh.get_all_values()
+            datos_veh = [f for f in filas_veh[1:] if any(str(c).strip() for c in f)]
+            if not datos_veh and PLACAS_VEHICULOS_OFICIALES:
+                fecha_semilla = datetime.now(TZ_COLOMBIA).strftime("%Y-%m-%d")
+                filas_semilla_veh = [
+                    [
+                        v["placa"].upper(),
+                        "Moto" if "moto" in v["tipo"].lower() else "Carro",
+                        "Activo",
+                        fecha_semilla,
+                    ]
+                    for v in PLACAS_VEHICULOS_OFICIALES
+                ]
+                ws_veh.update(
+                    values=filas_semilla_veh,
+                    range_name="A2",
+                    value_input_option="USER_ENTERED",
+                )
+                logger.info("✅ Sembrados %d vehículos iniciales en Vehiculos_PESV.", len(filas_semilla_veh))
+        except Exception as exc_v:
+            logger.warning("No se pudo sembrar vehículos iniciales en Vehiculos_PESV: %s", exc_v)
         try:
             ws_ina = self.obtener_o_crear_hoja(SHEET_INASISTENCIAS, HEADERS_INASISTENCIAS)
             filas_ina = ws_ina.get_all_values()
@@ -1949,6 +2017,8 @@ class SheetsService:
         conflicto_info: Optional[Dict[str, Any]] = None
 
         for fila in todas_filas:
+            if _es_registro_inasistencia(fila):
+                continue
             id_f = _normalizar_texto(str(fila.get("ID_Alumno", "")))
             nom_f = _normalizar_texto(
                 limpiar_solo_nombre_persona(str(fila.get("Nombre_Alumno", "")))
@@ -2966,6 +3036,123 @@ class SheetsService:
             "registros": registros_filtrados,
         }
 
+    def listar_vehiculos_activos(self, forzar_recarga: bool = False) -> List[Dict[str, str]]:
+        """
+        Devuelve el listado dinámico de vehículos activos (Carros y Motos) desde la hoja 'Vehiculos_PESV'.
+        Si la hoja aún no tiene vehículos registrados, siembra los 6 vehículos iniciales.
+        """
+        ahora_ts = time.time()
+        cache_veh = getattr(self, "_cache_vehiculos", None)
+        cache_ts = getattr(self, "_cache_vehiculos_ts", 0.0)
+        if not forzar_recarga and cache_veh and (ahora_ts - cache_ts < 120):
+            return list(cache_veh)
+
+        try:
+            self.sembrar_datos_historicos_appsheet()
+            ws = self.obtener_o_crear_hoja(SHEET_VEHICULOS, HEADERS_VEHICULOS)
+            filas = self._leer_filas_diccionario(ws, HEADERS_VEHICULOS)
+            activos: List[Dict[str, str]] = []
+            placas_vistas = set()
+            for f in filas:
+                pl = re.sub(r"[^A-Z0-9]", "", str(f.get("Placa", "")).strip().upper())
+                if not pl or pl in placas_vistas:
+                    continue
+                est = str(f.get("Estado", "Activo")).strip().lower()
+                if est in ("retirado", "eliminado", "inactivo", "baja"):
+                    placas_vistas.add(pl)
+                    continue
+                tip_raw = str(f.get("Tipo_Vehiculo", "")).strip().lower()
+                # Si la placa termina en letra (ej. YNE31F, AZA25G) o dice moto, es moto
+                es_moto = "moto" in tip_raw or (not tip_raw and len(pl) == 6 and pl[-1].isalpha())
+                icono = "🏍️" if es_moto else "🚗"
+                tipo_lbl = f"{icono} {'Moto' if es_moto else 'Carro'}"
+                activos.append(
+                    {
+                        "placa": pl,
+                        "tipo": tipo_lbl,
+                        "etiqueta": f"{icono} {pl}",
+                    }
+                )
+                placas_vistas.add(pl)
+
+            if activos:
+                self._cache_vehiculos = activos
+                self._cache_vehiculos_ts = ahora_ts
+                return list(activos)
+        except Exception as exc:
+            logger.warning("No se pudo leer Vehiculos_PESV, usando lista por defecto: %s", exc)
+
+        return list(PLACAS_VEHICULOS_OFICIALES)
+
+    def agregar_vehiculo_flota(self, placa: str, tipo_vehiculo: str = "Carro") -> Dict[str, str]:
+        """
+        Registra un vehículo nuevo (o reactiva uno previamente retirado) en la hoja 'Vehiculos_PESV'.
+        """
+        pl_clean = re.sub(r"[^A-Z0-9]", "", (placa or "").strip().upper())
+        es_moto = "moto" in (tipo_vehiculo or "").lower() or (
+            not tipo_vehiculo and len(pl_clean) == 6 and pl_clean[-1].isalpha()
+        )
+        tipo_guardar = "Moto" if es_moto else "Carro"
+        icono = "🏍️" if es_moto else "🚗"
+        fecha_hoy = datetime.now(TZ_COLOMBIA).strftime("%Y-%m-%d")
+
+        try:
+            self.sembrar_datos_historicos_appsheet()
+            ws = self.obtener_o_crear_hoja(SHEET_VEHICULOS, HEADERS_VEHICULOS)
+            todas_filas = ws.get_all_values()
+            fila_existente = None
+            for idx_f in range(2, len(todas_filas) + 1):
+                fila = todas_filas[idx_f - 1]
+                pl_f = re.sub(r"[^A-Z0-9]", "", str(fila[0]).strip().upper()) if fila else ""
+                if pl_f == pl_clean:
+                    fila_existente = idx_f
+                    break
+
+            if fila_existente is not None:
+                ws.update(
+                    values=[[pl_clean, tipo_guardar, "Activo", fecha_hoy]],
+                    range_name=f"A{fila_existente}:D{fila_existente}",
+                    value_input_option="USER_ENTERED",
+                )
+            else:
+                self._agregar_fila_al_final(ws, [pl_clean, tipo_guardar, "Activo", fecha_hoy])
+        except Exception as exc:
+            logger.warning("Error registrando vehículo %s en Vehiculos_PESV: %s", pl_clean, exc)
+
+        self._cache_vehiculos = None
+        self.listar_vehiculos_activos(forzar_recarga=True)
+        return {
+            "placa": pl_clean,
+            "tipo": f"{icono} {tipo_guardar}",
+            "etiqueta": f"{icono} {pl_clean}",
+        }
+
+    def eliminar_vehiculo_flota(self, placa: str) -> bool:
+        """
+        Retira / elimina un vehículo de la flota activa en la hoja 'Vehiculos_PESV'
+        marcando su Estado como 'Retirado' para que no aparezca en los botones de placas activas.
+        """
+        pl_clean = re.sub(r"[^A-Z0-9]", "", (placa or "").strip().upper())
+        if not pl_clean:
+            return False
+        modificado = False
+        try:
+            self.sembrar_datos_historicos_appsheet()
+            ws = self.obtener_o_crear_hoja(SHEET_VEHICULOS, HEADERS_VEHICULOS)
+            todas_filas = ws.get_all_values()
+            for idx_f in range(2, len(todas_filas) + 1):
+                fila = todas_filas[idx_f - 1]
+                pl_f = re.sub(r"[^A-Z0-9]", "", str(fila[0]).strip().upper()) if fila else ""
+                if pl_f == pl_clean:
+                    ws.update_cell(idx_f, 3, "Retirado")
+                    modificado = True
+        except Exception as exc:
+            logger.warning("Error retirando vehículo %s de Vehiculos_PESV: %s", pl_clean, exc)
+
+        self._cache_vehiculos = None
+        self.listar_vehiculos_activos(forzar_recarga=True)
+        return modificado
+
 
 sheets_service = SheetsService()
 
@@ -3012,6 +3199,8 @@ def subir_foto_evidencia(
 def mapear_clases_registradas(registros: List[Dict[str, Any]]) -> Dict[int, Dict[str, str]]:
     mapa: Dict[int, Dict[str, str]] = {}
     for fila in registros:
+        if _es_registro_inasistencia(fila):
+            continue
         raw_clases = str(fila.get("Clases_Reportadas", ""))
         nums = extraer_numeros_clase(raw_clases)
         fecha = str(fila.get("Fecha_Reporte", "")).strip()
@@ -3201,10 +3390,19 @@ def generar_pdf_seguimiento(
         estilos_tabla.append(("SPAN", (0, indices_via[0]), (0, indices_via[-1])))
 
     # Agregar filas de Clases Adicionales / de Refuerzo al final de la tabla si existen
+    # (Cuidando de no confundir el tema oficial de la clase 14 'Refuerzo de pruebas CALE' con una clase de refuerzo adicional,
+    #  y excluyendo cualquier reporte de inasistencia).
     for fila_r in registros:
+        if _es_registro_inasistencia(fila_r):
+            continue
         cl_raw = str(fila_r.get("Clases_Reportadas", "")).strip()
         tm_raw = str(fila_r.get("Tema_Registrado", "")).strip()
-        if "refuerzo" in cl_raw.lower() or "adicional" in cl_raw.lower() or "refuerzo" in tm_raw.lower():
+        es_fila_refuerzo = (
+            "(refuerzo)" in cl_raw.lower()
+            or "adicional" in cl_raw.lower()
+            or tm_raw.upper().startswith("[CLASE DE REFUERZO]")
+        )
+        if es_fila_refuerzo:
             inst_r = str(fila_r.get("Instructor", "")).strip()
             fech_r = str(fila_r.get("Fecha_Reporte", "")).strip()
             hor_r = str(fila_r.get("Hora_Reporte", "")).strip()
@@ -3233,7 +3431,11 @@ def generar_pdf_seguimiento(
 
     # Recopilar todas las observaciones realizadas por los instructores por clase dictada
     lineas_observaciones: List[str] = []
+    inasistencias_vistas_clave = set()
+
     for fila_r in registros:
+        if _es_registro_inasistencia(fila_r):
+            continue
         obs_txt = str(fila_r.get("Observaciones_Instructor", "")).strip()
         if obs_txt:
             cl_r = str(fila_r.get("Clases_Reportadas", "")).strip()
@@ -3245,33 +3447,47 @@ def generar_pdf_seguimiento(
                 f"— <i>Observación realizada por Instructor: <b>{inst_r}</b></i>"
             )
 
-    # Incluir automáticamente en OBSERVACIONES cuando el alumno no asiste y pierde la clase
+    # Incluir en OBSERVACIONES únicamente: Nombre del profesor, fecha y hora y qué clase faltó
+    # (Sin registrar la clase en el cuadro de control de clases dictadas).
+    for fila_r in registros:
+        if not _es_registro_inasistencia(fila_r):
+            continue
+        nums_f = extraer_numeros_clase(str(fila_r.get("Clases_Reportadas", "")))
+        cl_falt_r = formatear_clases(nums_f) if nums_f else str(fila_r.get("Clases_Reportadas", "")).strip()
+        cl_falt_r = re.sub(r"\(?no\s+asisti[oó]?\)?", "", cl_falt_r, flags=re.IGNORECASE).strip() or "programada"
+        fech_r = str(fila_r.get("Fecha_Reporte", "")).strip()
+        hor_r = str(fila_r.get("Hora_Reporte", "")).strip()
+        inst_r = str(fila_r.get("Instructor", "")).strip()
+        clave_ina = (fech_r, cl_falt_r)
+        if clave_ina not in inasistencias_vistas_clave:
+            inasistencias_vistas_clave.add(clave_ina)
+            lineas_observaciones.append(
+                f"• El alumno no asistió a la clase número <b>{cl_falt_r}</b> — "
+                f"<b>Profesor:</b> {inst_r} | <b>Fecha y Hora:</b> {fech_r} {hor_r}"
+            )
+
     inasistencias_alu = sheets_service.obtener_inasistencias_alumno(
         criterio_alumno=documento_alumno or nombre_alumno,
         nombre_alternativo=nombre_alumno,
         categoria=categoria_key,
     )
     if inasistencias_alu:
-        total_veces_falto = len(inasistencias_alu)
-        total_horas_perdidas = sum(int(x.get("No_Horas_Int", 1)) for x in inasistencias_alu)
-        lineas_observaciones.append(
-            f"<b>⚠️ CONTROL DE INASISTENCIAS (CLASES PERDIDAS):</b> El alumno no asistió en "
-            f"<b>{total_veces_falto} ocasión(es)</b> (Total: <b>{total_horas_perdidas} hora(s) perdida(s)</b>):"
-        )
-        for idx_ina, ina in enumerate(inasistencias_alu, start=1):
+        for ina in inasistencias_alu:
             fech_i = str(ina.get("Fecha", "")).strip()
             hor_i = str(ina.get("Hora", "")).strip()
             cl_falt = str(ina.get("Clases_Faltadas", "")).strip()
             if not cl_falt or cl_falt.lower() in ("no especificada", "s/n", "ninguna"):
-                cl_falt_txt = f"{ina.get('No_Horas_Int', 1)} hora(s) práctica(s)"
+                cl_falt_limpia = "programada"
             else:
-                cl_falt_txt = f"Clase(s) {cl_falt} ({ina.get('No_Horas_Int', 1)} h)"
+                cl_falt_limpia = cl_falt
             inst_i = str(ina.get("Nombre_Instructor", "")).strip()
-            est_i = str(ina.get("Estado", "Pendiente Pago")).strip()
-            lineas_observaciones.append(
-                f"  {idx_ina}. <b>Fecha {fech_i} ({hor_i}):</b> Faltó a <b>{cl_falt_txt}</b> "
-                f"— Instructor programado: <b>{inst_i}</b> | Estado: <i>{est_i}</i>"
-            )
+            clave_ina = (fech_i, cl_falt_limpia)
+            if clave_ina not in inasistencias_vistas_clave:
+                inasistencias_vistas_clave.add(clave_ina)
+                lineas_observaciones.append(
+                    f"• El alumno no asistió a la clase número <b>{cl_falt_limpia}</b> — "
+                    f"<b>Profesor:</b> {inst_i} | <b>Fecha y Hora:</b> {fech_i} {hor_i}"
+                )
 
     contenido_observaciones = (
         "<br/>".join(lineas_observaciones) if lineas_observaciones else "&nbsp;"
@@ -3279,8 +3495,9 @@ def generar_pdf_seguimiento(
 
     # Determinar el último instructor que dictó la clase final del curso (y su cédula oficial)
     ultimo_instructor = ""
-    if registros:
-        ultimo_instructor = str(registros[-1].get("Instructor", "")).strip()
+    registros_asistidos = [r for r in registros if not _es_registro_inasistencia(r)]
+    if registros_asistidos:
+        ultimo_instructor = str(registros_asistidos[-1].get("Instructor", "")).strip()
     if not ultimo_instructor and mapa_clases:
         max_clase_num = max(mapa_clases.keys())
         ultimo_instructor = str(mapa_clases[max_clase_num].get("instructor", "")).strip()
@@ -4508,6 +4725,14 @@ def teclado_clases_por_categoria(
                 )
             ]
         )
+        botones.append(
+            [
+                InlineKeyboardButton(
+                    f"🚫 EL ALUMNO NO ASISTIÓ A CLASE {clases_txt} ➡️",
+                    callback_data=f"confirmar_no_asistio|{owner_id}",
+                )
+            ]
+        )
 
     for idx, fila in enumerate(cfg["filas"]):
         etiqueta = fila["etiqueta"].replace(".0", "")
@@ -4528,6 +4753,14 @@ def teclado_clases_por_categoria(
                 )
             ]
         )
+        botones.append(
+            [
+                InlineKeyboardButton(
+                    f"🚫 EL ALUMNO NO ASISTIÓ A CLASE {clases_txt} ➡️",
+                    callback_data=f"confirmar_no_asistio|{owner_id}",
+                )
+            ]
+        )
 
     botones.append(
         [
@@ -4542,7 +4775,11 @@ def teclado_clases_por_categoria(
 
 
 def teclado_seleccion_alumno(
-    categoria: str, owner_id: int, pagina: int = 0, filtro_cat: Optional[str] = None
+    categoria: str,
+    owner_id: int,
+    pagina: int = 0,
+    filtro_cat: Optional[str] = None,
+    es_no_asistio: bool = False,
 ) -> InlineKeyboardMarkup:
     cat_consulta = filtro_cat or categoria
     es_modo_refuerzo = cat_consulta == "REFUERZO"
@@ -4568,7 +4805,15 @@ def teclado_seleccion_alumno(
                 "➕ Alumno Nuevo (Escribir Nombre y Cédula)",
                 callback_data=f"nuevo_alu|{categoria}|{owner_id}",
             )
-        ]
+        ],
+        [
+            InlineKeyboardButton(
+                "✅ MODO: EL ALUMNO NO ASISTIÓ (Solo en Observaciones)"
+                if es_no_asistio
+                else "🚫 ¿El alumno NO asistió a esta clase? (Toca aquí)",
+                callback_data=f"modo_no_asistio|{'0' if es_no_asistio else '1'}|{categoria}|{owner_id}",
+            )
+        ],
     ]
 
     for f in alumnos_pagina:
@@ -5030,6 +5275,7 @@ async def guardar_en_sheets_y_confirmar(
         minuto_envio = sesion.get("minuto_envio", 45)
         doc_instructor = sesion.get("instructor_documento", "")
         es_refuerzo = bool(sesion.get("es_refuerzo", False))
+        es_no_asistio = bool(sesion.get("es_no_asistio", False))
 
         # 1. Auto-registrar o actualizar al Instructor en la hoja 'Instructores'
         instructor = sheets_service.registrar_o_actualizar_instructor(
@@ -5047,6 +5293,75 @@ async def guardar_en_sheets_y_confirmar(
         )
         id_alumno_final = str(ficha.get("Documento") or documento_alumno).strip()
         nombre_final = str(ficha.get("Nombre_Completo") or nombre_alumno).strip()
+
+        # 2.1 SI EL ALUMNO NO ASISTIÓ A LA CLASE:
+        # Registrar únicamente en el cuadro de OBSERVACIONES (Nombre del profesor, fecha, hora y qué clase faltó)
+        # y en la hoja 'Inasistencias', SIN llenar la casilla en el cuadro de control de clases dictadas.
+        if es_no_asistio:
+            cfg = FORMATOS_OFICIALES.get(categoria, FORMATOS_OFICIALES["B1"])
+            url_foto_drive = subir_foto_evidencia(
+                imagen_bytes=sesion.get("foto_bytes"),
+                documento_alumno=id_alumno_final,
+                nombre_alumno=nombre_final,
+                clases_texto=f"NoAsistio_{clases_texto}",
+                fecha_reporte=sesion["fecha_reporte"],
+                fallback_file_id=sesion.get("file_id", ""),
+                fallback_url=sesion.get("file_url", ""),
+            )
+            sheets_service.registrar_inasistencia(
+                documento_alumno=id_alumno_final,
+                nombre_alumno=nombre_final,
+                categoria=categoria,
+                clases_faltadas=clases_texto,
+                nombre_instructor=instructor,
+                no_horas=cantidad_clases,
+                valor_hora=25000,
+                estado="Pendiente Pago",
+                fecha=sesion["fecha_reporte"],
+                hora=sesion["hora_reporte"],
+            )
+            sheets_service.registrar_clase(
+                timestamp=sesion["timestamp"],
+                fecha_reporte=sesion["fecha_reporte"],
+                hora_reporte=sesion["hora_reporte"],
+                instructor=instructor,
+                id_alumno=id_alumno_final,
+                nombre_alumno=nombre_final,
+                categoria=categoria,
+                clases_reportadas=f"{clases_texto} (No asistió)",
+                tema_registrado=f"[NO ASISTIÓ A LA CLASE {clases_texto}]",
+                url_foto_drive=url_foto_drive,
+                validacion_horario="INASISTENCIA",
+                observacion_instructor=(
+                    f"El alumno no asistió a la clase número {clases_texto} — "
+                    f"Profesor: {instructor} | Fecha y Hora: {sesion['fecha_reporte']} {sesion['hora_reporte']}"
+                ),
+            )
+            doc_inst_txt = f" (CC: `{doc_instructor}`)" if doc_instructor else ""
+            texto_ina_ok = (
+                f"🚫 *INASISTENCIA A CLASE {clases_texto} REGISTRADA EN OBSERVACIONES*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 *Alumno:* {nombre_final} (CC: `{id_alumno_final}`)\n"
+                f"🏷 *Categoría:* {cfg['nombre_corto']}\n"
+                f"📚 *Clase a la que faltó:* `Clase {clases_texto}`\n"
+                f"👨‍🏫 *Profesor:* {instructor}{doc_inst_txt}\n"
+                f"🕒 *Fecha y Hora:* `{sesion['fecha_reporte']} {sesion['hora_reporte']}`\n\n"
+                f"✅ *Nota en el Formato PDF Oficial:* La clase `{clases_texto}` **NO** se marca en el cuadro de control de clases dictadas; "
+                f"queda registrada únicamente en el cuadro de **OBSERVACIONES AL PROCESO DE APRENDIZAJE** con el Nombre del profesor, Fecha, Hora y la Clase a la que faltó."
+            )
+            await _editar_mensaje_seguro(mensaje_respuesta, texto_ina_ok)
+            if menu_msg_id and getattr(mensaje_respuesta, "message_id", None) != menu_msg_id:
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=menu_msg_id,
+                        text=texto_ina_ok,
+                        parse_mode="Markdown",
+                    )
+                    await mensaje_respuesta.delete()
+                except Exception:
+                    pass
+            return
 
         # 2.5 VALIDACIÓN ANTI-DUPLICADOS: No permitir registrar la misma clase dos veces salvo que sea Clase de Refuerzo
         if not es_refuerzo:
@@ -5159,7 +5474,7 @@ async def guardar_en_sheets_y_confirmar(
         tema_guardar = f"[CLASE DE REFUERZO] {tema_oficial}" if es_refuerzo else tema_oficial
 
         # 5. Guardar en 'Registro_Clases'
-        sheets_service.registrar_clase(
+        fila_reg_idx = sheets_service.registrar_clase(
             timestamp=sesion["timestamp"],
             fecha_reporte=sesion["fecha_reporte"],
             hora_reporte=sesion["hora_reporte"],
@@ -5171,6 +5486,7 @@ async def guardar_en_sheets_y_confirmar(
             tema_registrado=tema_guardar,
             url_foto_drive=url_foto_drive,
             validacion_horario=estado_horario_sheets,
+            observacion_instructor=sesion.get("observacion_instructor", ""),
         )
 
         # 5.5 Verificar progreso total del alumno EN ESTA CATEGORÍA y si acaba de cumplir el mínimo requerido
@@ -5212,7 +5528,20 @@ async def guardar_en_sheets_y_confirmar(
             f"{aviso_graduacion}"
             f"{alerta_horario_txt}"
         )
-        await _editar_mensaje_seguro(mensaje_respuesta, texto_exito)
+        teclado_post_clase = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "📝 Agregar Observación a esta Clase (Opcional)",
+                        callback_data=f"obs_clase_ini|{fila_reg_idx}|{clases_guardar}|{user_id}",
+                    )
+                ]
+            ]
+        )
+        await _editar_mensaje_seguro(
+            mensaje_respuesta, texto_exito, reply_markup=teclado_post_clase
+        )
+        PROPIETARIO_MENSAJE_BOT[mensaje_respuesta.message_id] = user_id
 
         # Si el menú original citando la foto del instructor era otro mensaje distinto, actualizarlo también
         if menu_msg_id and getattr(mensaje_respuesta, "message_id", None) != menu_msg_id:
@@ -5221,8 +5550,10 @@ async def guardar_en_sheets_y_confirmar(
                     chat_id=chat_id,
                     message_id=menu_msg_id,
                     text=texto_exito,
+                    reply_markup=teclado_post_clase,
                     parse_mode="Markdown",
                 )
+                PROPIETARIO_MENSAJE_BOT[menu_msg_id] = user_id
                 await mensaje_respuesta.delete()
             except Exception:
                 pass
@@ -5423,6 +5754,7 @@ async def procesar_mensaje_imagen(update: Update, context: ContextTypes.DEFAULT_
         "clases_texto": None,
         "cantidad_clases": 2,
         "tema_oficial": None,
+        "es_no_asistio": _texto_indica_inasistencia(caption),
         "esperando_registro_instructor": not bool(perfil_inst),
         "esperando_nombre_texto": False,
     }
@@ -5553,6 +5885,7 @@ async def cmd_menu_clase(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "clases_texto": None,
         "cantidad_clases": 2,
         "tema_oficial": None,
+        "es_no_asistio": _texto_indica_inasistencia(caption),
         "esperando_registro_instructor": not bool(perfil_inst),
         "esperando_nombre_texto": False,
     }
@@ -6047,52 +6380,75 @@ def teclado_consulta_mantenimientos(
         return f"🔘 {t}" if placa_actual.upper() == pl.upper() else t
 
     pl_s = placa_actual.upper()[:10].replace("|", "")
-    return InlineKeyboardMarkup(
+    vehiculos_activos = sheets_service.listar_vehiculos_activos()
+
+    filas_placas: List[List[InlineKeyboardButton]] = []
+    fila_actual: List[InlineKeyboardButton] = [
+        InlineKeyboardButton(
+            _mp("TODAS", "🚘 Todas"),
+            callback_data=f"mant_ver|{periodo_actual}|TODAS|{owner_id}",
+        )
+    ]
+    for v in vehiculos_activos:
+        pl_v = v["placa"]
+        etq_v = v["etiqueta"]
+        fila_actual.append(
+            InlineKeyboardButton(
+                _mp(pl_v, etq_v),
+                callback_data=f"mant_ver|{periodo_actual}|{pl_v}|{owner_id}",
+            )
+        )
+        if len(fila_actual) == 4:
+            filas_placas.append(fila_actual)
+            fila_actual = []
+    if fila_actual:
+        filas_placas.append(fila_actual)
+
+    botones = [
         [
-            [
-                InlineKeyboardButton(_m("semana", "📆 Esta Semana"), callback_data=f"mant_ver|semana|{pl_s}|{owner_id}"),
-                InlineKeyboardButton(_m("mes", "🗓️ Este Mes"), callback_data=f"mant_ver|mes|{pl_s}|{owner_id}"),
-                InlineKeyboardButton(_m("mes_ant", "🗓️ Mes Ant."), callback_data=f"mant_ver|mes_ant|{pl_s}|{owner_id}"),
-            ],
-            [
-                InlineKeyboardButton(_m("julio", "🗓️ Julio"), callback_data=f"mant_ver|julio|{pl_s}|{owner_id}"),
-                InlineKeyboardButton(_m("agosto", "🗓️ Agosto"), callback_data=f"mant_ver|agosto|{pl_s}|{owner_id}"),
-                InlineKeyboardButton(_m("septiembre", "🗓️ Septiembre"), callback_data=f"mant_ver|septiembre|{pl_s}|{owner_id}"),
-            ],
-            [
-                InlineKeyboardButton(_m("2026", "📅 Año 2026"), callback_data=f"mant_ver|2026|{pl_s}|{owner_id}"),
-                InlineKeyboardButton(_m("2025", "📅 Año 2025"), callback_data=f"mant_ver|2025|{pl_s}|{owner_id}"),
-                InlineKeyboardButton(_m("todo", "📚 Todo Histórico"), callback_data=f"mant_ver|todo|{pl_s}|{owner_id}"),
-            ],
-            [
-                InlineKeyboardButton(_mp("TODAS", "🚘 Todas"), callback_data=f"mant_ver|{periodo_actual}|TODAS|{owner_id}"),
-                InlineKeyboardButton(_mp("UDT984", "🚗 UDT984"), callback_data=f"mant_ver|{periodo_actual}|UDT984|{owner_id}"),
-                InlineKeyboardButton(_mp("FSP335", "🚗 FSP335"), callback_data=f"mant_ver|{periodo_actual}|FSP335|{owner_id}"),
-                InlineKeyboardButton(_mp("DUX342", "🚗 DUX342"), callback_data=f"mant_ver|{periodo_actual}|DUX342|{owner_id}"),
-            ],
-            [
-                InlineKeyboardButton(_mp("YNE31F", "🏍️ YNE31F"), callback_data=f"mant_ver|{periodo_actual}|YNE31F|{owner_id}"),
-                InlineKeyboardButton(_mp("YNE30F", "🏍️ YNE30F"), callback_data=f"mant_ver|{periodo_actual}|YNE30F|{owner_id}"),
-                InlineKeyboardButton(_mp("AZA25G", "🏍️ AZA25G"), callback_data=f"mant_ver|{periodo_actual}|AZA25G|{owner_id}"),
-            ],
-            [
-                InlineKeyboardButton(
-                    "📄 Descargar PDF Oficial SISI-F2-08 (PESV)",
-                    callback_data=f"mant_pdf|{periodo_actual}|{pl_s}|{owner_id}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "🔧 Registrar Nuevo Mantenimiento",
-                    callback_data=f"mant_nuevo_ini|{owner_id}",
-                )
-            ],
-            [
-                InlineKeyboardButton("👑 Volver al Panel Admin", callback_data=f"panel_admin|{owner_id}"),
-                InlineKeyboardButton("✅ Cerrar", callback_data=f"cerrar_consulta|{owner_id}"),
-            ],
-        ]
-    )
+            InlineKeyboardButton(_m("semana", "📆 Esta Semana"), callback_data=f"mant_ver|semana|{pl_s}|{owner_id}"),
+            InlineKeyboardButton(_m("mes", "🗓️ Este Mes"), callback_data=f"mant_ver|mes|{pl_s}|{owner_id}"),
+            InlineKeyboardButton(_m("mes_ant", "🗓️ Mes Ant."), callback_data=f"mant_ver|mes_ant|{pl_s}|{owner_id}"),
+        ],
+        [
+            InlineKeyboardButton(_m("julio", "🗓️ Julio"), callback_data=f"mant_ver|julio|{pl_s}|{owner_id}"),
+            InlineKeyboardButton(_m("agosto", "🗓️ Agosto"), callback_data=f"mant_ver|agosto|{pl_s}|{owner_id}"),
+            InlineKeyboardButton(_m("septiembre", "🗓️ Septiembre"), callback_data=f"mant_ver|septiembre|{pl_s}|{owner_id}"),
+        ],
+        [
+            InlineKeyboardButton(_m("2026", "📅 Año 2026"), callback_data=f"mant_ver|2026|{pl_s}|{owner_id}"),
+            InlineKeyboardButton(_m("2025", "📅 Año 2025"), callback_data=f"mant_ver|2025|{pl_s}|{owner_id}"),
+            InlineKeyboardButton(_m("todo", "📚 Todo Histórico"), callback_data=f"mant_ver|todo|{pl_s}|{owner_id}"),
+        ],
+        *filas_placas,
+        [
+            InlineKeyboardButton(
+                "➕ Agregar Vehículo (Placa)",
+                callback_data=f"veh_nuevo_ini|{owner_id}",
+            ),
+            InlineKeyboardButton(
+                "🗑️ Eliminar Vehículo",
+                callback_data=f"veh_baja_menu|{owner_id}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "📄 Descargar PDF Oficial SISI-F2-08 (PESV)",
+                callback_data=f"mant_pdf|{periodo_actual}|{pl_s}|{owner_id}",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                "🔧 Registrar Nuevo Mantenimiento",
+                callback_data=f"mant_nuevo_ini|{owner_id}",
+            )
+        ],
+        [
+            InlineKeyboardButton("👑 Volver al Panel Admin", callback_data=f"panel_admin|{owner_id}"),
+            InlineKeyboardButton("✅ Cerrar", callback_data=f"cerrar_consulta|{owner_id}"),
+        ],
+    ]
+    return InlineKeyboardMarkup(botones)
 
 
 def teclado_config_nueva_inasistencia(sesion: Dict[str, Any], owner_id: int) -> InlineKeyboardMarkup:
@@ -6718,9 +7074,132 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
+    # FLUJO DE GESTIÓN DE FLOTA DE VEHÍCULOS (AGREGAR / ELIMINAR PLACAS)
+    if accion_limpia == "veh_nuevo_ini":
+        sesion["nuevo_vehiculo_tipo"] = sesion.get("nuevo_vehiculo_tipo") or "Carro"
+        sesion["esperando_nueva_placa_vehiculo"] = True
+        sesion["menu_msg_id"] = msg_id
+        PROPIETARIO_MENSAJE_BOT[msg_id] = sesion_uid
+        tip_act = sesion["nuevo_vehiculo_tipo"]
+        await _editar_mensaje_seguro(
+            query.message,
+            f"➕ *REGISTRAR VEHÍCULO NUEVO EN LA EMPRESA (CEA AUTO ORIENTE)*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏷 *Tipo seleccionado:* `{'🏍️ Moto' if tip_act == 'Moto' else '🚗 Carro'}`\n\n"
+            f"1️⃣ Si deseas cambiar entre **🚗 Carro** o **🏍️ Moto**, toca el botón de abajo.\n"
+            f"2️⃣ **Escribe ahora mismo en el chat la PLACA del vehículo nuevo** y envíala:\n\n"
+            f"📌 *Ejemplo:*\n"
+            f"`KLM456` *(o `XYZ98G Moto`)*\n\n"
+            f"*(Apenas envíes la placa, quedará guardada en Google Sheets y aparecerá de inmediato en los botones de vehículos).* 👇",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            f"{'✅ ' if tip_act == 'Carro' else ''}🚗 Es un Carro",
+                            callback_data=f"veh_tipo_nuevo|Carro|{sesion_uid}",
+                        ),
+                        InlineKeyboardButton(
+                            f"{'✅ ' if tip_act == 'Moto' else ''}🏍️ Es una Moto",
+                            callback_data=f"veh_tipo_nuevo|Moto|{sesion_uid}",
+                        ),
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "⬅️ Volver al Panel de Mantenimientos",
+                            callback_data=f"mant_ver|todo|TODAS|{sesion_uid}",
+                        )
+                    ],
+                ]
+            ),
+        )
+        return
+
+    if accion_limpia.startswith("veh_tipo_nuevo|"):
+        tip_n = accion_limpia.split("|", 1)[1]
+        sesion["nuevo_vehiculo_tipo"] = "Moto" if "moto" in tip_n.lower() else "Carro"
+        sesion["esperando_nueva_placa_vehiculo"] = True
+        sesion["menu_msg_id"] = msg_id
+        PROPIETARIO_MENSAJE_BOT[msg_id] = sesion_uid
+        tip_act = sesion["nuevo_vehiculo_tipo"]
+        await _editar_mensaje_seguro(
+            query.message,
+            f"➕ *REGISTRAR VEHÍCULO NUEVO EN LA EMPRESA (CEA AUTO ORIENTE)*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏷 *Tipo seleccionado:* `{'🏍️ Moto' if tip_act == 'Moto' else '🚗 Carro'}`\n\n"
+            f"✍️ **Escribe ahora mismo en el chat la PLACA del vehículo nuevo** (ej. `KLM456`):",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            f"{'✅ ' if tip_act == 'Carro' else ''}🚗 Es un Carro",
+                            callback_data=f"veh_tipo_nuevo|Carro|{sesion_uid}",
+                        ),
+                        InlineKeyboardButton(
+                            f"{'✅ ' if tip_act == 'Moto' else ''}🏍️ Es una Moto",
+                            callback_data=f"veh_tipo_nuevo|Moto|{sesion_uid}",
+                        ),
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "⬅️ Volver al Panel de Mantenimientos",
+                            callback_data=f"mant_ver|todo|TODAS|{sesion_uid}",
+                        )
+                    ],
+                ]
+            ),
+        )
+        return
+
+    if accion_limpia == "veh_baja_menu":
+        vehiculos_act = sheets_service.listar_vehiculos_activos(forzar_recarga=True)
+        botones_baja = []
+        for v in vehiculos_act:
+            pl_v = v["placa"]
+            etq_v = v["etiqueta"]
+            botones_baja.append(
+                [
+                    InlineKeyboardButton(
+                        f"🗑️ Eliminar / Dar de Baja {etq_v}",
+                        callback_data=f"veh_baja_conf|{pl_v}|{sesion_uid}",
+                    )
+                ]
+            )
+        botones_baja.append(
+            [
+                InlineKeyboardButton(
+                    "⬅️ Volver al Panel de Mantenimientos",
+                    callback_data=f"mant_ver|todo|TODAS|{sesion_uid}",
+                )
+            ]
+        )
+        await _editar_mensaje_seguro(
+            query.message,
+            "🗑️ *ELIMINAR / DAR DE BAJA VEHÍCULO QUE SALIÓ DE LA EMPRESA*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Toca la placa del vehículo que salió de la empresa para retirarlo del listado activo de botones:\n"
+            "*(Su historial de mantenimientos anteriores se conserva intacto en el archivo)*.",
+            reply_markup=InlineKeyboardMarkup(botones_baja),
+        )
+        return
+
+    if accion_limpia.startswith("veh_baja_conf|"):
+        pl_baja = accion_limpia.split("|", 1)[1].strip().upper()
+        sheets_service.eliminar_vehiculo_flota(pl_baja)
+        datos_m = sheets_service.consultar_mantenimientos_periodo(periodo="todo", placa="TODAS")
+        await _editar_mensaje_seguro(
+            query.message,
+            f"✅ *El vehículo de placa `{pl_baja}` fue retirado/eliminado de la flota activa.*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{_formatear_texto_mantenimientos(datos_m)}",
+            reply_markup=teclado_consulta_mantenimientos("todo", "TODAS", user_id),
+        )
+        return
+
     # FLUJO DE REGISTRO DE MANTENIMIENTO DE VEHÍCULO (PESV / APPSHEET)
     if accion_limpia == "mant_nuevo_ini":
-        sesion["mant_placa"] = sesion.get("mant_placa") or "UDT984"
+        veh_act = sheets_service.listar_vehiculos_activos()
+        placa_def = veh_act[0]["placa"] if veh_act else "UDT984"
+        sesion["mant_placa"] = sesion.get("mant_placa") or placa_def
         sesion["mant_tipo"] = sesion.get("mant_tipo") or "Preventivo"
         sesion["mant_rol"] = sesion.get("mant_rol") or "MECANICO"
         sesion["mant_establecimiento"] = sesion.get("mant_establecimiento") or "Motollantas Richard"
@@ -6961,7 +7440,8 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         )
         return
 
-    if accion_limpia == "confirmar_clases":
+    if accion_limpia == "confirmar_clases" or accion_limpia == "confirmar_no_asistio":
+        es_modo_ina_btn = accion_limpia == "confirmar_no_asistio"
         cat_key = sesion.get("categoria") or "B1"
         indices = sesion.get("indices_clases", [])
         if not indices:
@@ -6971,16 +7451,72 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
         sesion["clases_texto"] = clases_txt
         sesion["tema_oficial"] = tema_txt
         sesion["cantidad_clases"] = cant_clases
+        if es_modo_ina_btn:
+            sesion["es_no_asistio"] = True
 
         if sesion.get("nombre_alumno_limpio") and sesion.get("documento_detectado"):
             await guardar_en_sheets_y_confirmar(chat_id, sesion_uid, context, query.message)
         else:
             sesion["esperando_nombre_texto"] = True
+            aviso_ina = (
+                f"\n🚫 *MODO ACTIVO: EL ALUMNO NO ASISTIÓ A LA CLASE {clases_txt}*\n"
+                f"*(Al escoger al alumno, NO se llenará la casilla de control de clase; se registrará únicamente en OBSERVACIONES con tu nombre, fecha, hora y la clase a la que faltó)*."
+                if sesion.get("es_no_asistio")
+                else ""
+            )
             await query.message.edit_text(
-                mensaje_indicaciones_alumno(sesion, cat_key, clases_txt, tema_txt),
-                reply_markup=teclado_seleccion_alumno(cat_key, sesion_uid, pagina=0),
+                mensaje_indicaciones_alumno(sesion, cat_key, clases_txt, tema_txt) + aviso_ina,
+                reply_markup=teclado_seleccion_alumno(
+                    cat_key,
+                    sesion_uid,
+                    pagina=0,
+                    es_no_asistio=bool(sesion.get("es_no_asistio")),
+                ),
                 parse_mode="Markdown",
             )
+        return
+
+    if accion_limpia.startswith("modo_no_asistio|"):
+        _, flag_str, cat_key = accion_limpia.split("|", 2)
+        sesion["es_no_asistio"] = flag_str == "1"
+        sesion["esperando_nombre_texto"] = True
+        clases_txt = sesion.get("clases_texto") or "1-2"
+        tema_txt = sesion.get("tema_oficial") or ""
+        aviso_ina = (
+            f"\n🚫 *MODO ACTIVO: EL ALUMNO NO ASISTIÓ A LA CLASE {clases_txt}*\n"
+            f"*(Al escoger al alumno, NO se llenará la casilla de control de clase; se registrará únicamente en OBSERVACIONES con tu nombre, fecha, hora y la clase a la que faltó)*."
+            if sesion.get("es_no_asistio")
+            else ""
+        )
+        await _editar_mensaje_seguro(
+            query.message,
+            mensaje_indicaciones_alumno(sesion, cat_key, clases_txt, tema_txt) + aviso_ina,
+            reply_markup=teclado_seleccion_alumno(
+                cat_key,
+                sesion_uid,
+                pagina=0,
+                es_no_asistio=bool(sesion.get("es_no_asistio")),
+            ),
+        )
+        return
+
+    if accion_limpia.startswith("obs_clase_ini|"):
+        _, fila_str, cl_obs = accion_limpia.split("|", 2)
+        sesion["esperando_obs_clase_fila"] = int(fila_str) if fila_str.isdigit() else 0
+        sesion["esperando_obs_clase_num"] = cl_obs
+        sesion["menu_msg_id"] = msg_id
+        PROPIETARIO_MENSAJE_BOT[msg_id] = sesion_uid
+        await _editar_mensaje_seguro(
+            query.message,
+            f"📝 *AGREGAR OBSERVACIÓN DEL INSTRUCTOR — CLASE {cl_obs}*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{_encabezado_instructor(sesion)}"
+            f"Escribe ahora en el chat la observación para esta clase de conducción:\n"
+            f"*(Quedará registrada en el cuadro de OBSERVACIONES AL PROCESO DE APRENDIZAJE del formato PDF con tu nombre)* 👇",
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton("❌ Cancelar", callback_data=f"cerrar_consulta|{sesion_uid}")]]
+            ),
+        )
         return
 
     if accion_limpia == "confirmar_refuerzo":
@@ -7060,7 +7596,11 @@ async def manejar_botones_callback(update: Update, context: ContextTypes.DEFAULT
             query.message,
             mensaje_indicaciones_alumno(sesion, cat_key, clases_txt, tema_txt) + encabezado_extra,
             reply_markup=teclado_seleccion_alumno(
-                cat_key, sesion_uid, pagina=int(pag_str), filtro_cat=filtro_cat
+                cat_key,
+                sesion_uid,
+                pagina=int(pag_str),
+                filtro_cat=filtro_cat,
+                es_no_asistio=bool(sesion.get("es_no_asistio")),
             ),
         )
         return
@@ -7235,7 +7775,9 @@ def _texto_config_mantenimiento(sesion: Dict[str, Any]) -> str:
 
 
 def teclado_config_mantenimiento(sesion: Dict[str, Any], owner_id: int) -> InlineKeyboardMarkup:
-    pl_sel = (sesion.get("mant_placa") or "UDT984").upper()
+    vehiculos_activos = sheets_service.listar_vehiculos_activos()
+    placa_def = vehiculos_activos[0]["placa"] if vehiculos_activos else "UDT984"
+    pl_sel = (sesion.get("mant_placa") or placa_def).upper()
     tip_sel = sesion.get("mant_tipo") or "Preventivo"
     rol_sel = (sesion.get("mant_rol") or "MECANICO").upper()
     estab_sel = sesion.get("mant_establecimiento") or "Motollantas Richard"
@@ -7249,17 +7791,35 @@ def teclado_config_mantenimiento(sesion: Dict[str, Any], owner_id: int) -> Inlin
     def _mr(r: str) -> str:
         return f"✅ {r}" if rol_sel == r else r
 
+    filas_placas: List[List[InlineKeyboardButton]] = []
+    fila_act: List[InlineKeyboardButton] = []
+    for v in vehiculos_activos:
+        pl_v = v["placa"]
+        etq_v = v["etiqueta"]
+        fila_act.append(
+            InlineKeyboardButton(
+                _mp(pl_v, etq_v),
+                callback_data=f"mant_cfg|pl|{pl_v}|{owner_id}",
+            )
+        )
+        if len(fila_act) == 3:
+            filas_placas.append(fila_act)
+            fila_act = []
+    if fila_act:
+        filas_placas.append(fila_act)
+
     return InlineKeyboardMarkup(
         [
+            *filas_placas,
             [
-                InlineKeyboardButton(_mp("UDT984", "🚗 UDT984"), callback_data=f"mant_cfg|pl|UDT984|{owner_id}"),
-                InlineKeyboardButton(_mp("FSP335", "🚗 FSP335"), callback_data=f"mant_cfg|pl|FSP335|{owner_id}"),
-                InlineKeyboardButton(_mp("DUX342", "🚗 DUX342"), callback_data=f"mant_cfg|pl|DUX342|{owner_id}"),
-            ],
-            [
-                InlineKeyboardButton(_mp("YNE31F", "🏍️ YNE31F"), callback_data=f"mant_cfg|pl|YNE31F|{owner_id}"),
-                InlineKeyboardButton(_mp("YNE30F", "🏍️ YNE30F"), callback_data=f"mant_cfg|pl|YNE30F|{owner_id}"),
-                InlineKeyboardButton(_mp("AZA25G", "🏍️ AZA25G"), callback_data=f"mant_cfg|pl|AZA25G|{owner_id}"),
+                InlineKeyboardButton(
+                    "➕ Agregar Vehículo (Placa)",
+                    callback_data=f"veh_nuevo_ini|{owner_id}",
+                ),
+                InlineKeyboardButton(
+                    "🗑️ Eliminar Vehículo",
+                    callback_data=f"veh_baja_menu|{owner_id}",
+                ),
             ],
             [
                 InlineKeyboardButton(_mt("Preventivo"), callback_data=f"mant_cfg|tip|Preventivo|{owner_id}"),
@@ -7543,6 +8103,8 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
                     if any(
                         ses_cand.get(flag)
                         for flag in (
+                            "esperando_nueva_placa_vehiculo",
+                            "esperando_obs_clase_fila",
                             "esperando_obs_mantenimiento",
                             "modo_mantenimiento_activo",
                             "esperando_taller_mantenimiento",
@@ -7633,6 +8195,70 @@ async def procesar_texto_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
                 reply_to_message_id=msg.message_id,
             )
             PROPIETARIO_MENSAJE_BOT[msg_panel.message_id] = user.id
+        return
+
+    # CASO ESPECIAL 0A: El usuario está agregando un vehículo nuevo (Placa) a la flota activa
+    if sesion.get("esperando_nueva_placa_vehiculo"):
+        sesion["esperando_nueva_placa_vehiculo"] = False
+        t_up = texto.strip().upper()
+        m_pl = re.search(r"\b([A-Z]{3}\d{2}[A-Z0-9])\b", t_up) or re.search(
+            r"\b([A-Z0-9]{5,7})\b", t_up
+        )
+        placa_nueva = m_pl.group(1) if m_pl else re.sub(r"[^A-Z0-9]", "", t_up)[:7]
+        if not placa_nueva or len(placa_nueva) < 5:
+            sesion["esperando_nueva_placa_vehiculo"] = True
+            await _enviar_mensaje_seguro(
+                context.bot,
+                chat_id=msg.chat_id,
+                text="⚠️ Escribe una placa válida (por ejemplo: `KLM456` o `XYZ98F`).",
+                reply_to_message_id=msg.message_id,
+            )
+            return
+        if "moto" in texto.lower():
+            tipo_veh = "Moto"
+        elif "carro" in texto.lower() or "auto" in texto.lower():
+            tipo_veh = "Carro"
+        else:
+            tipo_veh = sesion.get("nuevo_vehiculo_tipo") or (
+                "Moto" if (len(placa_nueva) == 6 and placa_nueva[-1].isalpha()) else "Carro"
+            )
+        info_v = sheets_service.agregar_vehiculo_flota(placa_nueva, tipo_veh)
+        sesion["mant_placa"] = info_v["placa"]
+        datos_m = sheets_service.consultar_mantenimientos_periodo(periodo="todo", placa="TODAS")
+        await _enviar_mensaje_seguro(
+            context.bot,
+            chat_id=msg.chat_id,
+            text=(
+                f"✅ *VEHÍCULO NUEVO REGISTRADO EXITOSAMENTE EN LA FLOTA*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"🚗 *Placa:* `{info_v['placa']}` ({info_v['tipo']})\n\n"
+                f"Ya aparece activo en los botones de Mantenimientos PESV:\n\n"
+                f"{_formatear_texto_mantenimientos(datos_m)}"
+            ),
+            reply_markup=teclado_consulta_mantenimientos("todo", info_v["placa"], user.id),
+            reply_to_message_id=msg.message_id,
+        )
+        return
+
+    # CASO ESPECIAL 0B: El instructor está dejando una observación académica para una clase recién dictada
+    if sesion.get("esperando_obs_clase_fila"):
+        fila_obs = int(sesion.pop("esperando_obs_clase_fila", 0) or 0)
+        cl_obs = sesion.pop("esperando_obs_clase_num", "") or ""
+        SESIONES_REPORTE.pop((msg.chat_id, sesion_uid), None)
+        if fila_obs > 0:
+            sheets_service.guardar_observacion_en_fila(fila_obs, texto.strip())
+        await _enviar_mensaje_seguro(
+            context.bot,
+            chat_id=msg.chat_id,
+            text=(
+                f"✅ *OBSERVACIÓN REGISTRADA EN LA CLASE {cl_obs}*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👨‍🏫 *Instructor:* {sesion.get('instructor_nombre', user.full_name)}\n"
+                f"📝 *Observación:* _{texto.strip()}_\n\n"
+                f"Quedó guardada en Google Sheets y saldrá en el cuadro de **OBSERVACIONES AL PROCESO DE APRENDIZAJE** del PDF oficial del alumno."
+            ),
+            reply_to_message_id=msg.message_id,
+        )
         return
 
     # CASO ESPECIAL 1: El usuario está consultando el PDF individual de inasistencias de un alumno
@@ -8203,7 +8829,8 @@ async def cmd_mantenimientos(update: Update, context: ContextTypes.DEFAULT_TYPE)
     periodo_arg = "todo"
     if context.args:
         arg0 = context.args[0].strip().upper()
-        if any(p["placa"] == arg0 for p in PLACAS_VEHICULOS_OFICIALES):
+        placas_act = sheets_service.listar_vehiculos_activos()
+        if any(p["placa"] == arg0 for p in placas_act) or re.match(r"^[A-Z]{3}\d{2}[A-Z0-9]$", arg0):
             placa_arg = arg0
         else:
             periodo_arg = context.args[0].strip().lower()
