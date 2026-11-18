@@ -140,7 +140,7 @@ def _usuarios_por_defecto() -> Dict[str, Dict[str, Any]]:
     # Por seguridad: Recepcionistas y Empleados NO ven mod_cartera (Finanzas privadas $1.334M) ni mod_robot/mod_agenda/mod_whatsapp
     mods_recepcion = ["mod_clases", "mod_nomina", "mod_inasistencias", "mod_pesv"]
     mods_profesores = ["mod_clases", "mod_nomina", "mod_inasistencias"]
-    mods_pesv = ["mod_pesv", "mod_inasistencias", "mod_clases"]
+    mods_pesv = ["mod_pesv"]
     return {
         AUDITOR_USER.lower(): {
             "username": AUDITOR_USER,
@@ -174,7 +174,7 @@ def _usuarios_por_defecto() -> Dict[str, Dict[str, Any]]:
             "password": os.getenv("PESV_PASSWORD", "Pesv2026*").strip(),
             "nombre": "Marly Alfonso (Representante PESV)",
             "rol": "PESV",
-            "cargo": "Coordinadora PESV, Mantenimientos e Inasistencias",
+            "cargo": "Representante PESV (Exclusivo Módulo 5: Mantenimientos y Flota)",
             "modulos": mods_pesv,
             "activo": True,
         },
@@ -192,13 +192,18 @@ def _cargar_usuarios_empleados() -> Dict[str, Dict[str, Any]]:
                         base[k.lower().strip()] = v
         except Exception:
             pass
-    # Asegurar siempre que el admin principal tenga todos los módulos
+    # Asegurar siempre que el admin principal tenga todos los módulos y pesv solo mod_pesv por defecto si tenía los 3 anteriores
     adm_key = AUDITOR_USER.lower()
     if adm_key in base:
         base[adm_key]["password"] = base[adm_key].get("password") or AUDITOR_PASSWORD
         base[adm_key]["rol"] = "ADMIN_TOTAL"
         base[adm_key]["modulos"] = [m["id"] for m in MODULOS_CATALOGO]
         base[adm_key]["activo"] = True
+    if "pesv" in base and set(base["pesv"].get("modulos") or []) in (
+        {"mod_cartera", "mod_clases", "mod_nomina", "mod_inasistencias", "mod_pesv"},
+        {"mod_pesv", "mod_inasistencias", "mod_clases"},
+    ):
+        base["pesv"]["modulos"] = ["mod_pesv"]
     return base
 
 
@@ -1756,7 +1761,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         </div>
 
         <div class="table-toolbar">
-          <input type="text" id="searchPesvInput" placeholder="🔎 Filtrar por placa, taller, mecánico, actividad o tipo..." oninput="renderizarModuloPesv()" style="max-width: 440px;" />
+          <input type="search" id="searchPesvInput" autocomplete="off" placeholder="🔎 Filtrar por placa, taller, mecánico, actividad o tipo..." oninput="renderizarModuloPesv()" style="max-width: 440px;" />
           <span id="pesvCountInfo" style="font-size:12.5px; color:var(--muted);">Firmado digitalmente por SEGUNDO MURILLO (Rep. Legal) y MARLY ALFONSO (Líder PESV)</span>
         </div>
 
@@ -3426,7 +3431,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         </span>
       `).join('');
 
-      const q = (document.getElementById('searchPesvInput').value || '').trim().toLowerCase();
+      const inpPesv = document.getElementById('searchPesvInput');
+      let q = (inpPesv.value || '').trim().toLowerCase();
+      if (['pesv', 'recepcion', 'profesores', 'admin'].includes(q)) {
+        inpPesv.value = '';
+        q = '';
+      }
       const rows = (BOT_DATA.mantenimientos.registros || []).filter(r => {
         if (!q) return true;
         return `${r.id} ${r.fecha} ${r.placa} ${r.tipo_mantenimiento} ${r.actividad} ${r.taller} ${r.mecanico}`.toLowerCase().includes(q);
@@ -4420,7 +4430,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       } else if (rol === 'COORDINACION') {
         marcarModulosEmpleado(['mod_clases','mod_nomina','mod_inasistencias']);
       } else if (rol === 'PESV') {
-        marcarModulosEmpleado(['mod_pesv','mod_inasistencias','mod_clases']);
+        marcarModulosEmpleado(['mod_pesv']);
       } else if (rol === 'SOLO_CLASES') {
         marcarModulosEmpleado(['mod_clases','mod_nomina']);
       } else if (rol === 'ADMIN_TOTAL') {
