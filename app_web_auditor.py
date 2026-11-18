@@ -137,8 +137,10 @@ MODULOS_CATALOGO = [
 
 def _usuarios_por_defecto() -> Dict[str, Dict[str, Any]]:
     todos_mods = [m["id"] for m in MODULOS_CATALOGO]
-    mods_1_a_5 = ["mod_cartera", "mod_clases", "mod_nomina", "mod_inasistencias", "mod_pesv"]
-    mods_2_a_5 = ["mod_clases", "mod_nomina", "mod_inasistencias", "mod_pesv"]
+    # Por seguridad: Recepcionistas y Empleados NO ven mod_cartera (Finanzas privadas $1.334M) ni mod_robot/mod_agenda/mod_whatsapp
+    mods_recepcion = ["mod_clases", "mod_nomina", "mod_inasistencias", "mod_pesv"]
+    mods_profesores = ["mod_clases", "mod_nomina", "mod_inasistencias"]
+    mods_pesv = ["mod_pesv", "mod_inasistencias", "mod_clases"]
     return {
         AUDITOR_USER.lower(): {
             "username": AUDITOR_USER,
@@ -154,8 +156,8 @@ def _usuarios_por_defecto() -> Dict[str, Dict[str, Any]]:
             "password": os.getenv("RECEPCION_PASSWORD", "Recepcion2026*").strip(),
             "nombre": "Recepción Principal CEA",
             "rol": "RECEPCIONISTA",
-            "cargo": "Recepcionista (Módulos 1, 2, 3, 4 y 5)",
-            "modulos": mods_1_a_5,
+            "cargo": "Recepcionista (Clases, Profesores, Inasistencias y PESV)",
+            "modulos": mods_recepcion,
             "activo": True,
         },
         "profesores": {
@@ -163,8 +165,8 @@ def _usuarios_por_defecto() -> Dict[str, Dict[str, Any]]:
             "password": os.getenv("PROFESORES_PASSWORD", "Profesores2026*").strip(),
             "nombre": "Coordinación de Profesores y Clases",
             "rol": "COORDINACION",
-            "cargo": "Auxiliar Gestión de Profesores (Módulos 2, 3, 4 y 5)",
-            "modulos": mods_2_a_5,
+            "cargo": "Gestión de Profesores, Clases e Inasistencias",
+            "modulos": mods_profesores,
             "activo": True,
         },
         "pesv": {
@@ -172,8 +174,8 @@ def _usuarios_por_defecto() -> Dict[str, Dict[str, Any]]:
             "password": os.getenv("PESV_PASSWORD", "Pesv2026*").strip(),
             "nombre": "Marly Alfonso (Representante PESV)",
             "rol": "PESV",
-            "cargo": "Coordinadora PESV e Inasistencias (Módulos 1 al 5)",
-            "modulos": mods_1_a_5,
+            "cargo": "Coordinadora PESV, Mantenimientos e Inasistencias",
+            "modulos": mods_pesv,
             "activo": True,
         },
     }
@@ -2320,7 +2322,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               </div>
             </div>
             <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap:8px; font-size:12.5px;">
-              <label style="display:flex; align-items:center; gap:7px; cursor:pointer;"><input type="checkbox" class="emp-mod-chk" value="mod_cartera" checked style="width:auto;" /> 💰 1. Cartera y Convenios</label>
+              <label style="display:flex; align-items:center; gap:7px; cursor:pointer;"><input type="checkbox" class="emp-mod-chk" value="mod_cartera" style="width:auto;" /> 💰 1. Cartera Financiera (Privado Gerencia)</label>
               <label style="display:flex; align-items:center; gap:7px; cursor:pointer;"><input type="checkbox" class="emp-mod-chk" value="mod_clases" checked style="width:auto;" /> 🎓 2. Seguimiento Clases y Alumnos</label>
               <label style="display:flex; align-items:center; gap:7px; cursor:pointer;"><input type="checkbox" class="emp-mod-chk" value="mod_nomina" checked style="width:auto;" /> 👨‍🏫 3. Nómina y Horarios Profesores</label>
               <label style="display:flex; align-items:center; gap:7px; cursor:pointer;"><input type="checkbox" class="emp-mod-chk" value="mod_inasistencias" checked style="width:auto;" /> 🚫 4. Control de Inasistencias</label>
@@ -2447,9 +2449,22 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     }
 
     async function cargarDatos() {
+      if (window.__INITIAL_USER__ && window.__INITIAL_USER__.rol !== 'ADMIN_TOTAL') {
+        const mods = window.__INITIAL_USER__.modulos || [];
+        if (!mods.includes('mod_cartera')) {
+          const hm = document.getElementById('headerMeta');
+          if (hm) {
+            hm.textContent = `CEA Auto Oriente • Panel Operativo (${window.__INITIAL_USER__.nombre} — ${window.__INITIAL_USER__.cargo || window.__INITIAL_USER__.rol})`;
+          }
+          return;
+        }
+      }
       const res = await fetch('/api/data');
+      if (!res.ok) return;
       AUDIT_DATA = await res.json();
-      actualizarVista();
+      if (AUDIT_DATA && AUDIT_DATA.ok) {
+        actualizarVista();
+      }
     }
 
     function actualizarVista() {
@@ -4400,10 +4415,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     }
 
     function aplicarPlantillaRolEmpleado(rol) {
-      if (rol === 'RECEPCIONISTA' || rol === 'PESV') {
-        marcarModulosEmpleado(['mod_cartera','mod_clases','mod_nomina','mod_inasistencias','mod_pesv']);
-      } else if (rol === 'COORDINACION') {
+      if (rol === 'RECEPCIONISTA') {
         marcarModulosEmpleado(['mod_clases','mod_nomina','mod_inasistencias','mod_pesv']);
+      } else if (rol === 'COORDINACION') {
+        marcarModulosEmpleado(['mod_clases','mod_nomina','mod_inasistencias']);
+      } else if (rol === 'PESV') {
+        marcarModulosEmpleado(['mod_pesv','mod_inasistencias','mod_clases']);
       } else if (rol === 'SOLO_CLASES') {
         marcarModulosEmpleado(['mod_clases','mod_nomina']);
       } else if (rol === 'ADMIN_TOTAL') {
@@ -4618,7 +4635,64 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
             return
 
         if self.path in ("/", "/index.html"):
-            raw = HTML_DASHBOARD.encode("utf-8")
+            u_curr = self._get_current_user() or {
+                "username": "recepcion",
+                "nombre": "Recepción",
+                "rol": "RECEPCIONISTA",
+                "modulos": ["mod_clases", "mod_nomina", "mod_inasistencias", "mod_pesv"],
+            }
+            es_admin_total = u_curr.get("rol") == "ADMIN_TOTAL"
+            mods_permitidos = u_curr.get("modulos") or ["mod_clases", "mod_nomina", "mod_inasistencias", "mod_pesv"]
+            todos_ids = [m["id"] for m in MODULOS_CATALOGO]
+            mods_ocultos = [] if es_admin_total else [m for m in todos_ids if m not in mods_permitidos]
+
+            reglas_css = []
+            for m_hide in mods_ocultos:
+                reglas_css.append(f'#{m_hide}, .mod-btn[data-mod="{m_hide}"] {{ display: none !important; }}')
+            if not es_admin_total:
+                reglas_css.append('.admin-only-btn, #sheetsDrawer, #tarifasDrawer { display: none !important; }')
+            if not es_admin_total and "mod_cartera" not in mods_permitidos:
+                reglas_css.append('.cartera-only-btn { display: none !important; }')
+
+            u_safe = {k: v for k, v in u_curr.items() if k != "password"}
+            primer_mod = "mod_cartera" if (es_admin_total or "mod_cartera" in mods_permitidos) else (mods_permitidos[0] if mods_permitidos else "mod_clases")
+
+            html_custom = HTML_DASHBOARD
+            # Si el usuario no tiene permiso para mod_cartera, activar desde el servidor su primer módulo permitido
+            if primer_mod != "mod_cartera":
+                html_custom = html_custom.replace(
+                    '<button type="button" class="mod-btn active" data-mod="mod_cartera"',
+                    '<button type="button" class="mod-btn" data-mod="mod_cartera"',
+                    1,
+                )
+                html_custom = html_custom.replace(
+                    f'<button type="button" class="mod-btn" data-mod="{primer_mod}"',
+                    f'<button type="button" class="mod-btn active" data-mod="{primer_mod}"',
+                    1,
+                )
+                html_custom = html_custom.replace(
+                    '<div id="mod_cartera" class="mod-section active">',
+                    '<div id="mod_cartera" class="mod-section">',
+                    1,
+                )
+                html_custom = html_custom.replace(
+                    f'<div id="{primer_mod}" class="mod-section">',
+                    f'<div id="{primer_mod}" class="mod-section active">',
+                    1,
+                )
+                html_custom = html_custom.replace(
+                    "let ACTIVE_MODULE = 'mod_cartera';",
+                    f"let ACTIVE_MODULE = '{primer_mod}';",
+                    1,
+                )
+
+            inject_head = (
+                f"<style id='server-role-lock'>{' '.join(reglas_css)}</style>"
+                f"<script>window.__INITIAL_USER__ = {json.dumps(u_safe, ensure_ascii=False)};</script>"
+            )
+            html_custom = html_custom.replace("</head>", inject_head + "</head>", 1)
+
+            raw = html_custom.encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(raw)))
@@ -4656,6 +4730,10 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
             return
 
         if self.path == "/api/data":
+            u_curr = self._get_current_user() or {}
+            if u_curr.get("rol") != "ADMIN_TOTAL" and "mod_cartera" not in (u_curr.get("modulos") or []):
+                self._send_json({"ok": False, "restricted": True, "error": "Módulo financiero restringido a Gerencia."}, 403)
+                return
             self._send_json({
                 "ok": True,
                 "filename": STATE["filename"],
@@ -4668,6 +4746,10 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
             return
 
         if self.path.startswith("/api/download/excel"):
+            u_curr = self._get_current_user() or {}
+            if u_curr.get("rol") != "ADMIN_TOTAL" and "mod_cartera" not in (u_curr.get("modulos") or []):
+                self._send_json({"ok": False, "error": "Descarga financiera restringida a Gerencia."}, 403)
+                return
             excel_bytes = STATE.get("excel_bytes") or b""
             fecha_str = datetime.date.today().strftime("%Y%m%d")
             fname = f"Auditoria_CEA_{STATE['periodicidad']}_{fecha_str}.xlsx"
@@ -4680,6 +4762,10 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
             return
 
         if self.path.startswith("/api/download/pdf"):
+            u_curr = self._get_current_user() or {}
+            if u_curr.get("rol") != "ADMIN_TOTAL" and "mod_cartera" not in (u_curr.get("modulos") or []):
+                self._send_json({"ok": False, "error": "Descarga financiera restringida a Gerencia."}, 403)
+                return
             pdf_bytes = STATE.get("pdf_bytes") or b""
             fecha_str = datetime.date.today().strftime("%Y%m%d")
             fname = f"Resumen_Ejecutivo_CEA_{STATE['periodicidad']}_{fecha_str}.pdf"
@@ -4708,7 +4794,7 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                 estado_inasistencias=est_inas,
                 periodo_mantenimientos=p_mant,
                 placa_mantenimientos=placa_mant,
-                hallazgos_cartera=STATE.get("hallazgos"),
+                hallazgos_cartera=STATE.get("hallazgos") if ((self._get_current_user() or {}).get("rol") == "ADMIN_TOTAL" or "mod_cartera" in ((self._get_current_user() or {}).get("modulos") or [])) else None,
             )
             self._send_json(panorama)
             return
