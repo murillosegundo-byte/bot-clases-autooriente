@@ -739,7 +739,7 @@ def _clasificar_y_respaldar_archivo(
 
 def procesar_y_actualizar_estado(
     origen: Any,
-    filename: str = "matriculas11112026.xlsx",
+    filename: str = "matriculas18112026.xlsx",
     periodicidad: str = "ANUAL",
     origen_ingresos: Any = None,
     ingresos_filename: str = "",
@@ -793,11 +793,17 @@ def procesar_y_actualizar_estado(
     return hallazgos
 
 
-if DEFAULT_EXCEL_PATH.exists():
-    try:
-        procesar_y_actualizar_estado(DEFAULT_EXCEL_PATH, filename="matriculas11112026.xlsx", periodicidad="ANUAL")
-    except Exception as exc:
-        logger.warning("No se pudo precargar matriculas11112026.xlsx: %s", exc)
+_CANDIDATOS_MATRICULAS = [
+    BASE_DIR / "matriculas18112026.xlsx",
+    DEFAULT_EXCEL_PATH,
+]
+for _cand_excel in _CANDIDATOS_MATRICULAS:
+    if _cand_excel.exists():
+        try:
+            procesar_y_actualizar_estado(_cand_excel, filename=_cand_excel.name, periodicidad="ANUAL")
+            break
+        except Exception as exc:
+            logger.warning("No se pudo precargar %s: %s", _cand_excel.name, exc)
 
 
 HTML_DASHBOARD = r"""<!DOCTYPE html>
@@ -901,7 +907,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     @media (max-width: 768px) { .upload-grid { grid-template-columns: 1fr; } }
     .field-label { font-size: 11.5px; color: var(--muted); margin-bottom: 4px; display: block; font-weight: 600; }
     .upload-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-    input[type="file"], select, input[type="text"], input[type="email"], input[type="number"] {
+    input[type="file"], select, input[type="text"], input[type="search"], input[type="email"], input[type="number"] {
       background: #09101d; border: 1px solid #283a5e; color: var(--text);
       padding: 8px 11px; border-radius: 8px; font-size: 12.5px; width: 100%;
     }
@@ -1092,6 +1098,11 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   </style>
 </head>
 <body>
+  <!-- Señuelo invisible para evitar que el gestor de contraseñas del navegador escriba 'admin' o 'pesv' en los buscadores -->
+  <div style="position:absolute; left:-9999px; top:-9999px; width:1px; height:1px; overflow:hidden;" aria-hidden="true">
+    <input type="text" name="fake_username_trap" tabindex="-1" autocomplete="username" />
+    <input type="password" name="fake_password_trap" tabindex="-1" autocomplete="current-password" />
+  </div>
 
   <header>
     <div class="brand">
@@ -1303,7 +1314,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
 
       <div class="table-toolbar">
-        <input type="text" id="searchInput" placeholder="🔎 Buscar en vivo por cédula, nombre, matrícula, categoría o convenio..." oninput="renderizarTablaActiva()" style="max-width: 460px;" />
+        <input type="search" id="searchInput" autocomplete="off" placeholder="🔎 Buscar en vivo por cédula, nombre, matrícula, categoría o convenio..." oninput="renderizarTablaActiva()" style="max-width: 460px;" />
         <span id="tableCountInfo" style="font-size: 12.5px; color: var(--muted);">💡 Haz clic sobre cualquier alumno para desplegar sus cursos hermanos y recibos de caja</span>
       </div>
 
@@ -1323,19 +1334,26 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       <div class="kpi-grid" id="kpiClasesGrid"></div>
 
       <div class="control-bar">
+        <datalist id="dlAlumnosGlobal"></datalist>
+        <datalist id="dlCedulasGlobal"></datalist>
+        <datalist id="dlInstructoresGlobal"></datalist>
+
         <div class="panel">
           <div class="panel-title">
-            <span>➕ Registrar o Actualizar Alumno en Google Sheets (Sincronizado con el Bot)</span>
+            <span>➕ Registrar, Buscar o Actualizar Alumno en Google Sheets (Sincronizado con el Bot)</span>
             <span class="badge badge-info">Hoja: Alumnos</span>
           </div>
+          <p style="font-size:11.5px; color:#93c5fd; margin-bottom:8px;">
+            💡 Escribe la <b>Cédula</b> o el <b>Nombre</b> para autocompletar sus datos actuales, o haz clic en el botón <b>✏️ Editar</b> de cualquier alumno en la tabla inferior.
+          </p>
           <div class="form-grid-4">
             <div>
               <label class="field-label">Cédula / Documento *</label>
-              <input type="text" id="al_cedula" placeholder="Ej: 1094950123" />
+              <input type="text" id="al_cedula" list="dlCedulasGlobal" autocomplete="off" placeholder="Ej: 1094950123 (Escribe para buscar)" oninput="autocompletarFormularioAlumno('cedula')" />
             </div>
             <div>
               <label class="field-label">Nombre Completo del Alumno *</label>
-              <input type="text" id="al_nombre" placeholder="Ej: JUAN PEREZ GOMEZ" />
+              <input type="text" id="al_nombre" list="dlAlumnosGlobal" autocomplete="off" placeholder="Ej: JUAN PEREZ GOMEZ (Escribe para buscar)" oninput="autocompletarFormularioAlumno('nombre')" />
             </div>
             <div>
               <label class="field-label">Categoría *</label>
@@ -1349,10 +1367,11 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             </div>
             <div>
               <label class="field-label">Teléfono / Celular</label>
-              <input type="text" id="al_tel" placeholder="Ej: 3101234567" />
+              <input type="text" id="al_tel" autocomplete="off" placeholder="Ej: 3101234567" />
             </div>
-            <div>
-              <button type="button" class="btn btn-primary" style="width:100%; justify-content:center;" onclick="registrarAlumnoWeb()">💾 Guardar Alumno</button>
+            <div style="display:flex; gap:6px;">
+              <button type="button" class="btn btn-primary" style="flex:1; justify-content:center;" onclick="registrarAlumnoWeb()">💾 Guardar / Actualizar</button>
+              <button type="button" class="btn btn-outline" title="Buscar en la tabla" onclick="buscarAlumnoDesdeFormulario()">🔎</button>
             </div>
           </div>
           <div id="alumnoToast" class="status-toast"></div>
@@ -1363,14 +1382,17 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             <span>📝 Registrar Clase Práctica Manualmente</span>
             <span class="badge badge-success">Hoja: Registro_Clases</span>
           </div>
+          <p style="font-size:11.5px; color:#6ee7b7; margin-bottom:8px;">
+            💡 Selecciona o escribe la <b>Cédula</b> o <b>Nombre</b> del alumno y se cargará su categoría y su siguiente clase pendiente automáticamente.
+          </p>
           <div class="form-grid-4">
             <div>
               <label class="field-label">Cédula Alumno *</label>
-              <input type="text" id="cl_cedula" placeholder="Cédula" />
+              <input type="text" id="cl_cedula" list="dlCedulasGlobal" autocomplete="off" placeholder="Cédula (Autocompleta)" oninput="autocompletarFormularioClase('cedula')" />
             </div>
             <div>
               <label class="field-label">Nombre Alumno *</label>
-              <input type="text" id="cl_alumno" placeholder="Nombre Alumno" />
+              <input type="text" id="cl_alumno" list="dlAlumnosGlobal" autocomplete="off" placeholder="Nombre Alumno (Autocompleta)" oninput="autocompletarFormularioClase('nombre')" />
             </div>
             <div>
               <label class="field-label">Categoría</label>
@@ -1384,7 +1406,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             </div>
             <div>
               <label class="field-label">Instructor *</label>
-              <input type="text" id="cl_instructor" placeholder="Nombre Instructor" />
+              <input type="text" id="cl_instructor" list="dlInstructoresGlobal" autocomplete="off" placeholder="Nombre Instructor" />
             </div>
             <div>
               <label class="field-label">Clases Dictadas (Ej: 1, 2)</label>
@@ -1435,7 +1457,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         <input type="hidden" id="filtroAlertaCartera" value="EN_CURSO" />
 
         <div class="table-toolbar">
-          <input type="text" id="searchClasesInput" placeholder="🔎 Buscar alumno por nombre, cédula o categoría..." oninput="renderizarModuloClases()" style="max-width: 440px;" />
+          <input type="search" id="searchClasesInput" autocomplete="off" placeholder="🔎 Buscar alumno por nombre, cédula o categoría..." oninput="renderizarModuloClases()" style="max-width: 440px;" />
           <span id="clasesCountInfo" style="font-size:12.5px; color:var(--muted);">Haz clic en 📄 F-59/F-62 para descargar la ficha oficial o ✈️/📲 para enviarla por Telegram/WhatsApp</span>
         </div>
 
@@ -1506,7 +1528,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
         <div class="panel-title" style="margin-top:10px;">
           <span>📋 Detalle de Clases Dictadas y Validación de Minuto de Envío</span>
-          <input type="text" id="searchNominaInput" placeholder="🔎 Filtrar por instructor, alumno, categoría o validación..." oninput="renderizarModuloNomina()" style="max-width: 360px;" />
+          <input type="search" id="searchNominaInput" autocomplete="off" placeholder="🔎 Filtrar por instructor, alumno, categoría o validación..." oninput="renderizarModuloNomina()" style="max-width: 360px;" />
         </div>
         <div class="table-wrap">
           <table>
@@ -1559,17 +1581,20 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
       <div class="panel" style="margin-bottom:18px;">
         <div class="panel-title">
-          <span>➕ Registrar Nueva Inasistencia de Alumno (Sincronizado con Google Sheets y Bot)</span>
+          <span>➕ Registrar o Actualizar Inasistencia de Alumno (Sincronizado con Google Sheets y Bot)</span>
           <span class="badge badge-warning">Hoja: Inasistencias</span>
         </div>
+        <p style="font-size:11.5px; color:#fde68a; margin-bottom:8px;">
+          💡 Al escribir el <b>Nombre del Alumno</b>, el sistema busca automáticamente sus inasistencias en la tabla de abajo para que puedas actualizar su medio de pago (💵 Efectivo / 🏦 Transf. / ⏳ Pendiente) con 1 clic, o registrar una nueva inasistencia.
+        </p>
         <div class="form-grid-4">
           <div>
             <label class="field-label">Fecha Programada *</label>
-            <input type="text" id="in_fecha" placeholder="DD/MM/YYYY" />
+            <input type="text" id="in_fecha" autocomplete="off" placeholder="DD/MM/YYYY" />
           </div>
           <div>
             <label class="field-label">Nombre Completo del Alumno *</label>
-            <input type="text" id="in_alumno" placeholder="Nombre y Apellidos" />
+            <input type="text" id="in_alumno" list="dlAlumnosGlobal" autocomplete="off" placeholder="Escribe para buscar o registrar (Ej: Nicolás Vera)" oninput="autocompletarYFiltrarInasistencia(this.value)" />
           </div>
           <div>
             <label class="field-label">Categoría *</label>
@@ -1582,22 +1607,23 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           </div>
           <div>
             <label class="field-label">Hora de Clase *</label>
-            <input type="text" id="in_hora" placeholder="Ej: 6:00 a 8:00 AM" />
+            <input type="text" id="in_hora" autocomplete="off" placeholder="Ej: 6:00 a 8:00 AM" value="6:00 a 8:00 AM" />
           </div>
           <div>
             <label class="field-label">Instructor Asignado *</label>
-            <input type="text" id="in_instructor" placeholder="Ej: ALDEMAR / HECTOR" />
+            <input type="text" id="in_instructor" list="dlInstructoresGlobal" autocomplete="off" placeholder="Ej: ALDEMAR / HECTOR" />
           </div>
           <div>
-            <label class="field-label">Estado de Pago *</label>
+            <label class="field-label">Estado / Medio de Pago *</label>
             <select id="in_estado">
               <option value="Pendiente Pago">⏳ Pendiente Pago</option>
               <option value="Cancelo Efectivo">💵 Cancelo Efectivo</option>
               <option value="Cancelo Trasferencia">🏦 Cancelo Trasferencia</option>
             </select>
           </div>
-          <div>
-            <button type="button" class="btn btn-primary" style="width:100%; justify-content:center;" onclick="registrarInasistenciaWeb()">💾 Registrar Inasistencia</button>
+          <div style="display:flex; gap:6px; grid-column: span 2;">
+            <button type="button" class="btn btn-primary" style="flex:1; justify-content:center;" onclick="registrarInasistenciaWeb()">💾 Registrar Nueva Inasistencia</button>
+            <button type="button" class="btn btn-success" style="flex:1; justify-content:center;" onclick="actualizarPagoAlumnoSeleccionadoInas()" title="Actualiza el estado de pago de la inasistencia encontrada del alumno">🔄 Actualizar Estado de Pago de Este Alumno</button>
           </div>
         </div>
         <div id="inasToast" class="status-toast"></div>
@@ -1626,7 +1652,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         </div>
 
         <div class="table-toolbar">
-          <input type="text" id="searchInasInput" placeholder="🔎 Buscar inasistencia por alumno, instructor, fecha o estado..." oninput="renderizarModuloInasistencias()" style="max-width: 440px;" />
+          <input type="search" id="searchInasInput" autocomplete="off" placeholder="🔎 Buscar inasistencia por alumno, instructor, fecha o estado..." oninput="renderizarModuloInasistencias()" style="max-width: 440px;" />
           <span id="inasCountInfo" style="font-size:12.5px; color:var(--muted);">Haz clic en 💵 Efectivo / 🏦 Transf. para actualizar el pago en vivo</span>
         </div>
 
@@ -2233,7 +2259,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         </div>
 
         <div class="search-bar">
-          <input type="text" id="searchWhatsappInput" placeholder="🔎 Buscar por teléfono (+57...), nombre, categoría o mensaje..." oninput="renderizarModuloWhatsapp()" />
+          <input type="search" id="searchWhatsappInput" autocomplete="off" placeholder="🔎 Buscar por teléfono (+57...), nombre, categoría o mensaje..." oninput="renderizarModuloWhatsapp()" />
           <div id="waCountInfo" style="font-size:12.5px; color:var(--muted); align-self:center;"></div>
         </div>
 
@@ -2427,6 +2453,18 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     let chartCarteraInstance = null;
 
     const fmtCOP = (val) => '$' + Math.round(Number(val || 0)).toLocaleString('es-CO');
+
+    function obtenerBusquedaLimpia(inputId) {
+      const el = document.getElementById(inputId);
+      if (!el) return '';
+      let val = (el.value || '').trim().toLowerCase();
+      const currUser = (window.__INITIAL_USER__ && window.__INITIAL_USER__.username) ? String(window.__INITIAL_USER__.username).toLowerCase() : '';
+      if (['admin', 'recepcion', 'profesores', 'pesv', currUser].includes(val) && val !== '') {
+        el.value = '';
+        return '';
+      }
+      return val;
+    }
 
     function toggleTarifas() {
       document.getElementById('tarifasDrawer').classList.toggle('open');
@@ -2646,8 +2684,9 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
     function cambiarTab(tabKey, btnEl) {
       ACTIVE_TAB = tabKey;
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('#tabsHeader .tab-btn').forEach(b => b.classList.remove('active'));
       if (btnEl) btnEl.classList.add('active');
+      obtenerBusquedaLimpia('searchInput');
       renderizarTablaActiva();
     }
 
@@ -2659,7 +2698,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     function renderizarTablaActiva() {
       if (!AUDIT_DATA || !AUDIT_DATA.hallazgos) return;
       const h = AUDIT_DATA.hallazgos;
-      const q = (document.getElementById('searchInput').value || '').trim().toLowerCase();
+      const q = obtenerBusquedaLimpia('searchInput');
 
       const thead = document.getElementById('auditThead');
       const tbody = document.getElementById('auditTbody');
@@ -2923,6 +2962,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         if (data.ok) {
           AUDIT_DATA = data;
           actualizarVista();
+          await cargarBotOverview();
           toast.className = 'status-toast ok';
           const k = data.hallazgos.kpis;
           toast.textContent = `✅ Auditado: ${k.total_matriculas} matrículas (${k.total_clientes_unicos} clientes únicos, ${k.clientes_multicurso_count} multi-curso).`;
@@ -3070,6 +3110,11 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         const res = await fetch('/api/bot/overview?' + qs.toString());
         const data = await res.json();
         if (!data.ok) return;
+        if (BOT_DATA && BOT_DATA.clases && (BOT_DATA.clases.alumnos || []).length > 0 && data.clases && (data.clases.alumnos || []).length === 0) {
+          // Si una consulta transitoria devolvió 0 alumnos pero ya teníamos alumnos cargados en memoria, conservar la lista previa
+          data.clases = BOT_DATA.clases;
+          data.alumnos = BOT_DATA.alumnos;
+        }
         BOT_DATA = data;
 
         // Estado de Google Sheets en Header
@@ -3091,12 +3136,63 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         document.getElementById('nav_badge_inas').textContent = `${data.inasistencias.kpis.total} (${data.inasistencias.kpis.pendientes} Pend.)`;
         document.getElementById('nav_badge_pesv').textContent = `${data.mantenimientos.kpis.total} Mant.`;
 
-        // Poblar datalist de alumnos en el Módulo 6 (Robot Gestor)
+        // Poblar datalist de alumnos en el Módulo 6 (Robot Gestor) y datalists globales de autocompletado
         const dlAl = document.getElementById('listaAlumnosRobot');
-        if (dlAl && data.clases && data.clases.alumnos) {
-          dlAl.innerHTML = data.clases.alumnos.map(a =>
+        const listaAl = (data.clases && data.clases.alumnos) ? data.clases.alumnos : [];
+        if (dlAl && listaAl.length) {
+          dlAl.innerHTML = listaAl.map(a =>
             `<option value="${a.cedula || a.nombre}|${a.categoria}">${a.nombre} (${a.categoria} - ${a.clases_completadas}/${a.total_requerido} - ${a.estado_curso})</option>`
           ).join('');
+        }
+
+        // Poblar datalists globales (Alumnos + Matrículas Excel + Inasistencias + Instructores)
+        const mapNom = new Map();
+        const mapCed = new Map();
+        listaAl.forEach(a => {
+          if (a.nombre) mapNom.set(a.nombre.toUpperCase(), a);
+          if (a.cedula) mapCed.set(String(a.cedula), a);
+        });
+        if (AUDIT_DATA && AUDIT_DATA.hallazgos && AUDIT_DATA.hallazgos.todas_matriculas) {
+          AUDIT_DATA.hallazgos.todas_matriculas.forEach(m => {
+            const nomM = String(m.ALUMNO || '').trim();
+            const docM = String(m.NUMERODOCUMENTO || '').trim();
+            const catM = String(m.CATEGORIA || 'B1').trim();
+            if (nomM && !mapNom.has(nomM.toUpperCase())) {
+              mapNom.set(nomM.toUpperCase(), { cedula: docM, nombre: nomM, categoria: catM });
+            }
+            if (docM && !mapCed.has(docM)) {
+              mapCed.set(docM, { cedula: docM, nombre: nomM, categoria: catM });
+            }
+          });
+        }
+        if (data.inasistencias && data.inasistencias.registros) {
+          data.inasistencias.registros.forEach(r => {
+            const nomI = String(r.alumno || '').trim();
+            if (nomI && !mapNom.has(nomI.toUpperCase())) {
+              mapNom.set(nomI.toUpperCase(), { cedula: r.cedula || '', nombre: nomI, categoria: r.categoria || 'B1' });
+            }
+          });
+        }
+        const dlNomGlobal = document.getElementById('dlAlumnosGlobal');
+        if (dlNomGlobal) {
+          dlNomGlobal.innerHTML = Array.from(mapNom.values()).slice(0, 600).map(a =>
+            `<option value="${a.nombre}">${a.cedula ? 'CC ' + a.cedula + ' • ' : ''}${a.categoria || ''}</option>`
+          ).join('');
+        }
+        const dlCedGlobal = document.getElementById('dlCedulasGlobal');
+        if (dlCedGlobal) {
+          dlCedGlobal.innerHTML = Array.from(mapCed.values()).slice(0, 600).map(a =>
+            `<option value="${a.cedula}">${a.nombre} (${a.categoria || ''})</option>`
+          ).join('');
+        }
+        const dlInstGlobal = document.getElementById('dlInstructoresGlobal');
+        if (dlInstGlobal && data.nomina && data.nomina.instructores_disponibles) {
+          dlInstGlobal.innerHTML = data.nomina.instructores_disponibles.map(i => `<option value="${i}"></option>`).join('');
+        }
+        const inFechaEl = document.getElementById('in_fecha');
+        if (inFechaEl && !inFechaEl.value) {
+          const hoy = new Date();
+          inFechaEl.value = `${String(hoy.getDate()).padStart(2, '0')}/${String(hoy.getMonth() + 1).padStart(2, '0')}/${hoy.getFullYear()}`;
         }
 
         renderizarModuloClases();
@@ -3168,7 +3264,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         </div>
       `;
 
-      const q = (document.getElementById('searchClasesInput').value || '').trim().toLowerCase();
+      const q = obtenerBusquedaLimpia('searchClasesInput');
       const catF = document.getElementById('filtroCatClases').value;
       const alertaF = document.getElementById('filtroAlertaCartera').value || 'EN_CURSO';
 
@@ -3229,7 +3325,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <td>${badgeCartera}</td>
           <td class="${(a.saldo_cartera || 0) > 0 ? 'money-neg' : 'money-pos'}">${fmtCOP(a.saldo_cartera || 0)}</td>
           <td>
-            <div style="display:flex; gap:5px; align-items:center;">
+            <div style="display:flex; gap:5px; align-items:center; flex-wrap:wrap;">
+              <button type="button" class="btn btn-outline" style="padding:5px 8px; font-size:11px;" title="Cargar datos del alumno arriba para editar o registrar clase" onclick="cargarAlumnoEnFormularios('${safeCedula}', '${safeNombre}', '${a.categoria}', ${a.clases_completadas || 0}, ${a.total_requerido || 15})">✏️ Editar / +Clase</button>
               <a href="/api/bot/pdf/alumno?q=${qParam}&cat=${catParam}" class="btn btn-primary" style="padding:5px 9px; font-size:11px;" title="Descargar Ficha Oficial PDF">📄 PDF ${a.formato_codigo}</a>
               <button type="button" class="btn btn-outline" style="padding:5px 7px; font-size:11px;" title="Enviar PDF F-59/F-62 al Telegram del CEA" onclick="enviarPdfAlumnoTelegram('${safeCedula}', '${safeNombre}', '${a.categoria}')">✈️</button>
               <button type="button" class="btn btn-success" style="padding:5px 7px; font-size:11px;" title="Enviar reporte y link del PDF por WhatsApp" onclick="enviarInfoAlumnoWhatsApp('${safeCedula}', '${safeNombre}', '${a.categoria}', '${a.clases_completadas}/${a.total_requerido} (${a.porcentaje_avance}%)', ${a.saldo_cartera || 0})">📲</button>
@@ -3290,7 +3387,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         </tr>`;
       }).join('') || '<tr><td colspan="7" style="text-align:center; color:var(--muted);">Sin registros en este periodo</td></tr>';
 
-      const q = (document.getElementById('searchNominaInput').value || '').trim().toLowerCase();
+      const q = obtenerBusquedaLimpia('searchNominaInput');
       const detRows = (nm.detalle_clases || []).filter(d => {
         if (!q) return true;
         return `${d.fecha} ${d.instructor} ${d.alumno} ${d.cedula} ${d.categoria} ${d.estado_validacion}`.toLowerCase().includes(q);
@@ -3349,7 +3446,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         </div>
       `;
 
-      const q = (document.getElementById('searchInasInput').value || '').trim().toLowerCase();
+      const q = obtenerBusquedaLimpia('searchInasInput');
       const rows = (BOT_DATA.inasistencias.registros || []).filter(r => {
         if (!q) return true;
         return `${r.fecha} ${r.alumno} ${r.categoria} ${r.instructor} ${r.estado_pago}`.toLowerCase().includes(q);
@@ -3431,12 +3528,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         </span>
       `).join('');
 
-      const inpPesv = document.getElementById('searchPesvInput');
-      let q = (inpPesv.value || '').trim().toLowerCase();
-      if (['pesv', 'recepcion', 'profesores', 'admin'].includes(q)) {
-        inpPesv.value = '';
-        q = '';
-      }
+      const q = obtenerBusquedaLimpia('searchPesvInput');
       const rows = (BOT_DATA.mantenimientos.registros || []).filter(r => {
         if (!q) return true;
         return `${r.id} ${r.fecha} ${r.placa} ${r.tipo_mantenimiento} ${r.actividad} ${r.taller} ${r.mecanico}`.toLowerCase().includes(q);
@@ -3464,6 +3556,168 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }).join('') || '<tr><td colspan="10" style="text-align:center; color:var(--muted);">No hay mantenimientos para este filtro.</td></tr>';
     }
 
+    function buscarCandidatoAlumno(qVal, campo) {
+      const q = String(qVal || '').trim().toLowerCase();
+      if (!q || q.length < 3) return null;
+      const listaBot = (BOT_DATA && BOT_DATA.clases && BOT_DATA.clases.alumnos) ? BOT_DATA.clases.alumnos : [];
+      let hit = listaBot.find(a => campo === 'cedula'
+        ? String(a.cedula || '').toLowerCase() === q
+        : String(a.nombre || '').toLowerCase() === q
+      );
+      if (!hit) {
+        hit = listaBot.find(a => campo === 'cedula'
+          ? String(a.cedula || '').toLowerCase().startsWith(q)
+          : String(a.nombre || '').toLowerCase().includes(q)
+        );
+      }
+      if (hit) return hit;
+      if (AUDIT_DATA && AUDIT_DATA.hallazgos && AUDIT_DATA.hallazgos.todas_matriculas) {
+        const m = AUDIT_DATA.hallazgos.todas_matriculas.find(r => campo === 'cedula'
+          ? String(r.NUMERODOCUMENTO || '').toLowerCase() === q
+          : String(r.ALUMNO || '').toLowerCase() === q
+        );
+        if (m) {
+          return {
+            cedula: String(m.NUMERODOCUMENTO || ''),
+            nombre: String(m.ALUMNO || ''),
+            categoria: String(m.CATEGORIA || 'A2'),
+            clases_completadas: 0,
+            total_requerido: 15
+          };
+        }
+      }
+      return null;
+    }
+
+    function autocompletarFormularioAlumno(origen) {
+      const cedEl = document.getElementById('al_cedula');
+      const nomEl = document.getElementById('al_nombre');
+      const catEl = document.getElementById('al_cat');
+      const qVal = origen === 'cedula' ? cedEl.value : nomEl.value;
+      const cand = buscarCandidatoAlumno(qVal, origen);
+      if (cand) {
+        if (origen === 'cedula' && cand.nombre && !nomEl.value) nomEl.value = cand.nombre;
+        if (origen === 'nombre' && cand.cedula) cedEl.value = cand.cedula;
+        if (cand.categoria && ['A1', 'A2', 'B1', 'C1', 'RECAT_C1'].includes(cand.categoria)) {
+          catEl.value = cand.categoria;
+        }
+      }
+      const searchEl = document.getElementById('searchClasesInput');
+      if (searchEl && qVal.trim().length >= 3) {
+        searchEl.value = qVal.trim();
+        renderizarModuloClases();
+      } else if (searchEl && qVal.trim().length === 0) {
+        searchEl.value = '';
+        renderizarModuloClases();
+      }
+    }
+
+    function buscarAlumnoDesdeFormulario() {
+      const q = (document.getElementById('al_cedula').value || document.getElementById('al_nombre').value || '').trim();
+      const searchEl = document.getElementById('searchClasesInput');
+      if (searchEl) {
+        searchEl.value = q;
+        cambiarSubTabClases('TODOS');
+      }
+    }
+
+    function autocompletarFormularioClase(origen) {
+      const cedEl = document.getElementById('cl_cedula');
+      const nomEl = document.getElementById('cl_alumno');
+      const catEl = document.getElementById('cl_cat');
+      const numsEl = document.getElementById('cl_nums');
+      const qVal = origen === 'cedula' ? cedEl.value : nomEl.value;
+      const cand = buscarCandidatoAlumno(qVal, origen);
+      if (cand) {
+        if (origen === 'cedula' && cand.nombre) nomEl.value = cand.nombre;
+        if (origen === 'nombre' && cand.cedula) cedEl.value = cand.cedula;
+        if (cand.categoria && ['A1', 'A2', 'B1', 'C1', 'RECAT_C1'].includes(cand.categoria)) {
+          catEl.value = cand.categoria;
+        }
+        const sig = Math.min((cand.total_requerido || 15), (cand.clases_completadas || 0) + 1);
+        const sig2 = Math.min((cand.total_requerido || 15), sig + 1);
+        numsEl.value = sig < sig2 ? `${sig}, ${sig2}` : `${sig}`;
+      }
+    }
+
+    function cargarAlumnoEnFormularios(cedula, nombre, categoria, completadas, requeridas) {
+      document.getElementById('al_cedula').value = cedula || '';
+      document.getElementById('al_nombre').value = nombre || '';
+      if (categoria) document.getElementById('al_cat').value = categoria;
+
+      document.getElementById('cl_cedula').value = cedula || '';
+      document.getElementById('cl_alumno').value = nombre || '';
+      if (categoria) document.getElementById('cl_cat').value = categoria;
+      const sig = Math.min((requeridas || 15), (completadas || 0) + 1);
+      const sig2 = Math.min((requeridas || 15), sig + 1);
+      document.getElementById('cl_nums').value = sig < sig2 ? `${sig}, ${sig2}` : `${sig}`;
+
+      const toast = document.getElementById('alumnoToast');
+      if (toast) {
+        toast.className = 'status-toast ok';
+        toast.textContent = `✏️ Alumno cargado: ${nombre} (${categoria} - CC ${cedula}). Puedes editar sus datos o registrarle las clases ${document.getElementById('cl_nums').value}.`;
+      }
+      window.scrollTo({ top: 120, behavior: 'smooth' });
+    }
+
+    function autocompletarYFiltrarInasistencia(val) {
+      const q = String(val || '').trim();
+      const searchInas = document.getElementById('searchInasInput');
+      if (searchInas) {
+        searchInas.value = q;
+        renderizarModuloInasistencias();
+      }
+      if (q.length < 3) return;
+      const qLow = q.toLowerCase();
+      const regsInas = (BOT_DATA && BOT_DATA.inasistencias && BOT_DATA.inasistencias.registros) ? BOT_DATA.inasistencias.registros : [];
+      const hitInas = regsInas.find(r => String(r.alumno || '').toLowerCase() === qLow) || regsInas.find(r => String(r.alumno || '').toLowerCase().includes(qLow));
+      if (hitInas) {
+        if (hitInas.categoria && ['A1', 'A2', 'B1', 'C1'].includes(hitInas.categoria)) {
+          document.getElementById('in_cat').value = hitInas.categoria;
+        }
+        if (hitInas.instructor && !document.getElementById('in_instructor').value) {
+          document.getElementById('in_instructor').value = hitInas.instructor;
+        }
+        if (hitInas.hora && (!document.getElementById('in_hora').value || document.getElementById('in_hora').value === '6:00 a 8:00 AM')) {
+          document.getElementById('in_hora').value = hitInas.hora;
+        }
+        const toast = document.getElementById('inasToast');
+        if (toast) {
+          toast.className = 'status-toast ok';
+          toast.textContent = `🔎 Encontrada inasistencia #${hitInas.fila} de ${hitInas.alumno} (${hitInas.fecha} - Instructor: ${hitInas.instructor || 'S/D'} - Estado actual: ${hitInas.estado_pago}). Elige el Estado de Pago y haz clic en '🔄 Actualizar Estado de Pago de Este Alumno' o usa los botones de la tabla inferior.`;
+        }
+        return;
+      }
+      const candAl = buscarCandidatoAlumno(q, 'nombre');
+      if (candAl && candAl.categoria && ['A1', 'A2', 'B1', 'C1'].includes(candAl.categoria)) {
+        document.getElementById('in_cat').value = candAl.categoria;
+      }
+    }
+
+    async function actualizarPagoAlumnoSeleccionadoInas() {
+      const nom = (document.getElementById('in_alumno').value || '').trim().toLowerCase();
+      const nuevoEstado = document.getElementById('in_estado').value;
+      const toast = document.getElementById('inasToast');
+      if (!nom) {
+        toast.className = 'status-toast err';
+        toast.textContent = '⚠️ Escribe el nombre del alumno para buscar su inasistencia y actualizar su estado de pago.';
+        return;
+      }
+      const regsInas = (BOT_DATA && BOT_DATA.inasistencias && BOT_DATA.inasistencias.registros) ? BOT_DATA.inasistencias.registros : [];
+      const coincidencias = regsInas.filter(r => String(r.alumno || '').toLowerCase().includes(nom));
+      if (!coincidencias.length) {
+        toast.className = 'status-toast err';
+        toast.textContent = `⚠️ No se encontró una inasistencia previa para "${document.getElementById('in_alumno').value}". Si deseas crear una nueva, completa el Instructor y haz clic en '💾 Registrar Nueva Inasistencia'.`;
+        return;
+      }
+      const target = coincidencias.find(r => String(r.estado_pago || '').toLowerCase().includes('pendiente')) || coincidencias[0];
+      toast.className = 'status-toast ok';
+      toast.textContent = `⏳ Actualizando inasistencia #${target.fila} de ${target.alumno} a "${nuevoEstado}" en Google Sheets...`;
+      await cambiarEstadoInasistencia(target.fila, nuevoEstado);
+      toast.className = 'status-toast ok';
+      toast.textContent = `✅ Inasistencia #${target.fila} de ${target.alumno} actualizada a "${nuevoEstado}" en Google Sheets.`;
+    }
+
     async function registrarAlumnoWeb() {
       const cedula = document.getElementById('al_cedula').value.trim();
       const nombre = document.getElementById('al_nombre').value.trim();
@@ -3475,15 +3729,22 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         toast.textContent = '⚠️ Ingresa Cédula y Nombre del alumno.';
         return;
       }
-      const res = await fetch('/api/bot/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'registrar_alumno', cedula, nombre, categoria, telefono })
-      });
-      const data = await res.json();
-      toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
-      toast.textContent = (data.ok ? '✅ ' : '❌ ') + data.message;
-      if (data.ok) cargarBotOverview();
+      toast.className = 'status-toast ok';
+      toast.textContent = '⏳ Guardando y sincronizando alumno en Google Sheets...';
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'registrar_alumno', cedula, nombre, categoria, telefono })
+        });
+        const data = await res.json();
+        toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+        toast.textContent = (data.ok ? '✅ ' : '❌ ') + data.message;
+        if (data.ok) await cargarBotOverview();
+      } catch (err) {
+        toast.className = 'status-toast err';
+        toast.textContent = '❌ Error de red: ' + err;
+      }
     }
 
     async function registrarClaseWeb() {
@@ -3498,52 +3759,78 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         toast.textContent = '⚠️ Completa Cédula, Nombre e Instructor.';
         return;
       }
-      const res = await fetch('/api/bot/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'registrar_clase', cedula, alumno, categoria, instructor, clases_str })
-      });
-      const data = await res.json();
-      toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
-      toast.textContent = (data.ok ? '✅ ' : '❌ ') + data.message;
-      if (data.ok) cargarBotOverview();
+      toast.className = 'status-toast ok';
+      toast.textContent = '⏳ Registrando clase práctica en Google Sheets...';
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'registrar_clase', cedula, alumno, categoria, instructor, clases_str })
+        });
+        const data = await res.json();
+        toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+        toast.textContent = (data.ok ? '✅ ' : '❌ ') + data.message;
+        if (data.ok) await cargarBotOverview();
+      } catch (err) {
+        toast.className = 'status-toast err';
+        toast.textContent = '❌ Error de red: ' + err;
+      }
     }
 
     async function registrarInasistenciaWeb() {
       const fecha_clase = document.getElementById('in_fecha').value.trim();
       const alumno = document.getElementById('in_alumno').value.trim();
       const categoria = document.getElementById('in_cat').value;
-      const hora_programada = document.getElementById('in_hora').value.trim();
-      const instructor = document.getElementById('in_instructor').value.trim();
+      const hora_programada = document.getElementById('in_hora').value.trim() || 'No especificada';
+      const instructor = document.getElementById('in_instructor').value.trim() || 'POR ASIGNAR';
       const estado_pago = document.getElementById('in_estado').value;
       const toast = document.getElementById('inasToast');
-      if (!alumno || !instructor) {
+      if (!alumno) {
         toast.className = 'status-toast err';
-        toast.textContent = '⚠️ Ingresa el nombre del alumno y el instructor.';
+        toast.textContent = '⚠️ Ingresa el nombre del alumno.';
         return;
       }
-      const res = await fetch('/api/bot/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'registrar_inasistencia',
-          fecha_clase, alumno, categoria, hora_programada, instructor, estado_pago
-        })
-      });
-      const data = await res.json();
-      toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
-      toast.textContent = (data.ok ? '✅ ' : '❌ ') + data.message;
-      if (data.ok) cargarBotOverview();
+      toast.className = 'status-toast ok';
+      toast.textContent = '⏳ Registrando inasistencia en Google Sheets...';
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'registrar_inasistencia',
+            fecha_clase, alumno, categoria, hora_programada, instructor, estado_pago
+          })
+        });
+        const data = await res.json();
+        toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+        toast.textContent = (data.ok ? '✅ ' : '❌ ') + data.message;
+        if (data.ok) await cargarBotOverview();
+      } catch (err) {
+        toast.className = 'status-toast err';
+        toast.textContent = '❌ Error de red: ' + err;
+      }
     }
 
     async function cambiarEstadoInasistencia(filaSheet, nuevoEstado) {
-      const res = await fetch('/api/bot/action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'estado_inasistencia', fila: filaSheet, estado_pago: nuevoEstado })
-      });
-      const data = await res.json();
-      if (data.ok) cargarBotOverview();
+      const toast = document.getElementById('inasToast');
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'estado_inasistencia', fila: filaSheet, estado_pago: nuevoEstado })
+        });
+        const data = await res.json();
+        if (toast) {
+          toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+          toast.textContent = (data.ok ? '✅ ' : '❌ ') + (data.message || '');
+        }
+        if (data.ok) await cargarBotOverview();
+      } catch (err) {
+        if (toast) {
+          toast.className = 'status-toast err';
+          toast.textContent = '❌ Error actualizando estado: ' + err;
+        }
+      }
     }
 
     async function registrarMantenimientoWeb() {
@@ -4202,7 +4489,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
 
       const filtroEst = (document.getElementById('wa_filtro_estado') || {}).value || 'SIN_CONCLUIR';
-      const q = ((document.getElementById('searchWhatsappInput') || {}).value || '').trim().toLowerCase();
+      const q = obtenerBusquedaLimpia('searchWhatsappInput');
 
       const rows = (WA_CRM_DATA.leads || []).filter(l => {
         if (filtroEst === 'SIN_CONCLUIR' && (l.estado_ia === 'MATRICULADO' || l.estado_ia === 'DESCARTADO')) return false;
@@ -4570,6 +4857,27 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     cargarAgendaWeb();
     cargarWhatsappCrm();
     cargarEmpleadosWeb();
+
+    // Guardián anti-autocompletado tardío del gestor de contraseñas del navegador
+    [350, 1000, 2200].forEach(delayMs => {
+      setTimeout(() => {
+        ['searchInput', 'searchClasesInput', 'searchNominaInput', 'searchInasInput', 'searchPesvInput', 'searchWhatsappInput'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el && el.value) {
+            const prev = el.value;
+            obtenerBusquedaLimpia(id);
+            if (el.value !== prev) {
+              if (id === 'searchInput') renderizarTablaActiva();
+              else if (id === 'searchClasesInput') renderizarModuloClases();
+              else if (id === 'searchNominaInput') renderizarModuloNomina();
+              else if (id === 'searchInasInput') renderizarModuloInasistencias();
+              else if (id === 'searchPesvInput') renderizarModuloPesv();
+              else if (id === 'searchWhatsappInput') renderizarModuloWhatsapp();
+            }
+          }
+        });
+      }, delayMs);
+    });
   </script>
 </body>
 </html>
