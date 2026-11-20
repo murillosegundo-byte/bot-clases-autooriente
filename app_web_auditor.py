@@ -1034,6 +1034,18 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
     .money-pos { color: #34d399; font-weight: 600; }
     .money-neg { color: #f87171; font-weight: 700; }
+    .money-warn { color: #facc15; font-weight: 700; }
+    tr.row-has-abono {
+      background: rgba(245, 158, 11, 0.12);
+      border-left: 3px solid #f59e0b;
+    }
+    tr.row-has-abono:hover {
+      background: rgba(245, 158, 11, 0.22) !important;
+    }
+    tr.row-zero-global {
+      background: rgba(239, 68, 68, 0.06);
+      border-left: 3px solid #ef4444;
+    }
     .status-toast { margin-top: 10px; padding: 9px 13px; border-radius: 8px; font-size: 12.5px; display: none; }
     .status-toast.ok { display: block; background: rgba(16,185,129,0.15); border: 1px solid #059669; color: #6ee7b7; }
     .status-toast.err { display: block; background: rgba(239,68,68,0.15); border: 1px solid #dc2626; color: #fca5a5; }
@@ -1314,7 +1326,21 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
 
       <div class="table-toolbar">
-        <input type="search" id="searchInput" autocomplete="off" placeholder="🔎 Buscar en vivo por cédula, nombre, matrícula, categoría o convenio..." oninput="renderizarTablaActiva()" style="max-width: 460px;" />
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; flex:1;">
+          <input type="search" id="searchInput" autocomplete="off" placeholder="🔎 Buscar en vivo por cédula, nombre, matrícula, categoría o convenio..." oninput="renderizarTablaActiva()" style="max-width: 390px; flex:1;" />
+          <select id="sortCarteraSelect" onchange="renderizarTablaActiva()" style="width:auto; min-width:235px; font-weight:600; border-color:#3b82f6;">
+            <option value="RECIENTES" selected>📅 Orden: Más Recientes a Más Antiguos</option>
+            <option value="ANTIGUOS">⏳ Orden: Más Antiguos a Más Recientes</option>
+            <option value="CON_ABONO_PRIMERO">💛 Con Abono Registrado Primero (Amarillo)</option>
+            <option value="SIN_ABONO_PRIMERO">🚨 Sin Abono ($0 Global) Primero (Rojo)</option>
+            <option value="MAYOR_SALDO">💰 Mayor Saldo Pendiente Primero</option>
+          </select>
+          <select id="filterAbonoCarteraSelect" onchange="renderizarTablaActiva()" style="width:auto; min-width:195px; font-weight:600;">
+            <option value="TODOS" selected>👁️ Ver Todos (Con y Sin Abono)</option>
+            <option value="SOLO_CON_ABONO">💛 Solo con Abono (En este o en otro curso)</option>
+            <option value="SOLO_CERO_GLOBAL">🚨 Solo $0 Global (Sin abono en ningún curso)</option>
+          </select>
+        </div>
         <span id="tableCountInfo" style="font-size: 12.5px; color: var(--muted);">💡 Haz clic sobre cualquier alumno para desplegar sus cursos hermanos y recibos de caja</span>
       </div>
 
@@ -1471,7 +1497,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         <input type="hidden" id="filtroAlertaCartera" value="PENDIENTE_RUNT" />
 
         <div class="table-toolbar">
-          <input type="search" id="searchClasesInput" autocomplete="off" placeholder="🔎 Buscar alumno por nombre, cédula, categoría o estado RUNT..." oninput="renderizarModuloClases()" style="max-width: 440px;" />
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; flex:1;">
+            <input type="search" id="searchClasesInput" autocomplete="off" placeholder="🔎 Buscar alumno por nombre, cédula, categoría o estado RUNT..." oninput="renderizarModuloClases()" style="max-width: 400px; flex:1;" />
+            <select id="sortClasesSelect" onchange="renderizarModuloClases()" style="width:auto; min-width:230px; font-weight:600; border-color:#3b82f6;">
+              <option value="RECIENTES" selected>📅 Orden: Más Recientes a Más Antiguos</option>
+              <option value="ANTIGUOS">⏳ Orden: Más Antiguos a Más Recientes</option>
+              <option value="AVANCE_DESC">🎓 Mayor Avance de Clases Primero</option>
+            </select>
+          </div>
           <span id="clasesCountInfo" style="font-size:12.5px; color:var(--muted);">💡 Al marcar <b>✅ Cargue RUNT</b> en una categoría (ej. A2 Moto), esa fila sale automáticamente del listado pendiente, pero su otra categoría (ej. C1 Carro) sigue visible hasta que la cargues</span>
         </div>
 
@@ -2767,11 +2800,26 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         return;
       }
 
+      const sortMode = (document.getElementById('sortCarteraSelect') || {}).value || 'RECIENTES';
+      const filterAbono = (document.getElementById('filterAbonoCarteraSelect') || {}).value || 'TODOS';
+
       // Pestaña de Clientes Multi-Curso Consolidados por Cédula
       if (ACTIVE_TAB === 'clientes_multicurso') {
-        const rows = h.clientes_multicurso.filter(c => {
+        let rows = h.clientes_multicurso.filter(c => {
+          const totAb = Number(c.TOTAL_ABONADO || 0);
+          if (filterAbono === 'SOLO_CON_ABONO' && totAb <= 0) return false;
+          if (filterAbono === 'SOLO_CERO_GLOBAL' && totAb > 0) return false;
           if (!q) return true;
           return `${c.NUMERODOCUMENTO} ${c.ALUMNO} ${c.CONVENIO_NORM} ${c.CATEGORIAS} ${c.MATRICULAS}`.toLowerCase().includes(q);
+        });
+        rows = [...rows].sort((a, b) => {
+          const fa = String(a.FECHA_PRIMERA_INSC || '');
+          const fb = String(b.FECHA_PRIMERA_INSC || '');
+          if (sortMode === 'ANTIGUOS') return fa.localeCompare(fb);
+          if (sortMode === 'CON_ABONO_PRIMERO') return Number(b.TOTAL_ABONADO || 0) - Number(a.TOTAL_ABONADO || 0) || fb.localeCompare(fa);
+          if (sortMode === 'SIN_ABONO_PRIMERO') return Number(a.TOTAL_ABONADO || 0) - Number(b.TOTAL_ABONADO || 0) || fb.localeCompare(fa);
+          if (sortMode === 'MAYOR_SALDO') return Number(b.SALDO_REAL_CLIENTE || 0) - Number(a.SALDO_REAL_CLIENTE || 0);
+          return fb.localeCompare(fa);
         });
         const sumaSaldo = rows.reduce((a, b) => a + Number(b.SALDO_REAL_CLIENTE || 0), 0);
         document.getElementById('tableCountInfo').textContent =
@@ -2859,15 +2907,48 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         showMotivo = true;
       }
 
-      const filtered = sourceList.filter(r => {
+      let filtered = sourceList.filter(r => {
+        const abMat = Number(r.ABONOS || 0);
+        const abGlobal = Number(r.TOTAL_ABONADO_CLIENTE || abMat || 0);
+        const tieneAbonoEnAlgunCurso = abMat > 0 || abGlobal > 0;
+        if (filterAbono === 'SOLO_CON_ABONO' && !tieneAbonoEnAlgunCurso) return false;
+        if (filterAbono === 'SOLO_CERO_GLOBAL' && tieneAbonoEnAlgunCurso) return false;
         if (!q) return true;
         const txt = `${r.NUMEROMATRICULA} ${r.NUMERODOCUMENTO} ${r.ALUMNO} ${r.CONVENIO_NORM} ${r.CATEGORIA} ${r.ETIQUETA_MULTICURSO || ''} ${r.MOTIVO_ERROR || ''}`.toLowerCase();
         return txt.includes(q);
       });
 
+      const numMatOf = (x) => Number(String(x.NUMEROMATRICULA || '').replace(/\D+/g, '')) || 0;
+      filtered = [...filtered].sort((a, b) => {
+        const fa = String(a.FECHAINSCRIPCION || '');
+        const fb = String(b.FECHAINSCRIPCION || '');
+        const abA = Math.max(Number(a.ABONOS || 0), Number(a.TOTAL_ABONADO_CLIENTE || 0));
+        const abB = Math.max(Number(b.ABONOS || 0), Number(b.TOTAL_ABONADO_CLIENTE || 0));
+        const hasAbA = abA > 0 ? 1 : 0;
+        const hasAbB = abB > 0 ? 1 : 0;
+        if (sortMode === 'ANTIGUOS') {
+          return fa.localeCompare(fb) || (numMatOf(a) - numMatOf(b));
+        }
+        if (sortMode === 'CON_ABONO_PRIMERO') {
+          if (hasAbB !== hasAbA) return hasAbB - hasAbA;
+          return fb.localeCompare(fa) || (numMatOf(b) - numMatOf(a));
+        }
+        if (sortMode === 'SIN_ABONO_PRIMERO') {
+          if (hasAbA !== hasAbB) return hasAbA - hasAbB;
+          return fb.localeCompare(fa) || (numMatOf(b) - numMatOf(a));
+        }
+        if (sortMode === 'MAYOR_SALDO') {
+          return (Number(b.VALORPENDIENTE || 0) - Number(a.VALORPENDIENTE || 0)) || fb.localeCompare(fa);
+        }
+        // Por defecto: RECIENTES (de los más recientes a los más antiguos)
+        return fb.localeCompare(fa) || (numMatOf(b) - numMatOf(a));
+      });
+
       const totalSaldo = filtered.reduce((acc, r) => acc + Number(r.VALORPENDIENTE || 0), 0);
-      document.getElementById('tableCountInfo').textContent =
-        `Mostrando ${filtered.length} registros | Suma Saldo Pendiente: ${fmtCOP(totalSaldo)} • 💡 Clic en un alumno para ver cruce de cursos y recibos`;
+      const cntConAbono = filtered.filter(r => Number(r.ABONOS || 0) > 0 || Number(r.TOTAL_ABONADO_CLIENTE || 0) > 0).length;
+      const cntCeroGlobal = filtered.length - cntConAbono;
+      document.getElementById('tableCountInfo').innerHTML =
+        `Mostrando <b>${filtered.length}</b> registros (<span style="color:#fde047; font-weight:700;">💛 ${cntConAbono} con abono</span> • <span style="color:#fca5a5; font-weight:700;">🚨 ${cntCeroGlobal} en $0 global</span>) | Suma Saldo: <b>${fmtCOP(totalSaldo)}</b>`;
 
       thead.innerHTML = `<tr>
         <th>Matrícula</th><th>Cédula / Doc</th><th>Alumno</th><th>Convenio</th>
@@ -2879,14 +2960,30 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
       tbody.innerHTML = filtered.map((r, idx) => {
         const expId = `exp_row_${idx}`;
+        const abMat = Number(r.ABONOS || 0);
+        const abGlobal = Number(r.TOTAL_ABONADO_CLIENTE || abMat || 0);
+        const tieneAbonoOtroCurso = (abMat === 0 && abGlobal > 0);
+        const tieneAlgunAbono = (abMat > 0 || abGlobal > 0);
+        const rowClass = tieneAlgunAbono ? 'data-row row-has-abono' : 'data-row row-zero-global';
+
         let badgeCtx = `<span class="badge">${r.ETIQUETA_MULTICURSO || 'Curso Único'}</span>`;
         if (r.TIPO_RIESGO_CERO === 'RIESGO_CERO_REAL') {
           badgeCtx = `<span class="badge badge-danger">🚨 $0 Global (Sin abono en ningún curso)</span>`;
-        } else if (r.TIPO_RIESGO_CERO === 'MULTICURSO_CON_ABONO') {
-          badgeCtx = `<span class="badge badge-info">🔄 Combo ${r.CATEGORIAS_CLIENTE} (Abonó ${fmtCOP(r.TOTAL_ABONADO_CLIENTE)} en otra mat.)</span>`;
+        } else if (r.TIPO_RIESGO_CERO === 'MULTICURSO_CON_ABONO' || tieneAbonoOtroCurso) {
+          badgeCtx = `<span class="badge badge-warning" style="background:rgba(245,158,11,0.28); color:#fde047; border:1px solid #f59e0b; font-weight:800;">💛 SÍ TIENE ABONO • Combo ${r.CATEGORIAS_CLIENTE} (Abonó ${fmtCOP(abGlobal)} en otra cat.)</span>`;
+        } else if (abMat > 0 && r.ES_MULTICURSO) {
+          badgeCtx = `<span class="badge badge-warning" style="background:rgba(245,158,11,0.24); color:#fde047; border:1px solid #f59e0b;">💛 SÍ TIENE ABONO (${r.CATEGORIAS_CLIENTE}) • Pagó ${fmtCOP(abGlobal)}</span>`;
+        } else if (abMat > 0) {
+          badgeCtx = `<span class="badge badge-warning" style="background:rgba(245,158,11,0.24); color:#fde047; border:1px solid #f59e0b;">💛 SÍ TIENE ABONO (Abonó ${fmtCOP(abMat)})</span>`;
         } else if (r.ES_MULTICURSO) {
           badgeCtx = `<span class="badge badge-purple">👥 Multi-Curso (${r.CATEGORIAS_CLIENTE}) • Global: ${fmtCOP(r.SALDO_REAL_CLIENTE)}</span>`;
         }
+
+        const abonoCellHtml = abMat > 0
+          ? `<span class="money-warn" title="Abonó en esta categoría">💛 ${fmtCOP(abMat)}</span>`
+          : (tieneAbonoOtroCurso
+              ? `<span class="money-warn" title="En esta matrícula figura $0, pero abonó ${fmtCOP(abGlobal)} en su otra categoría (${r.CATEGORIAS_CLIENTE})">💛 $0 (Abonó ${fmtCOP(abGlobal)})</span>`
+              : `<span class="money-neg">$0</span>`);
 
         const cursosHtml = (r.CURSOS_HERMANOS || []).map(cd => `
           <tr>
@@ -2911,7 +3008,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         `).join('') || '<tr><td colspan="5" style="color:#fca5a5;">🚨 Sin recibos ni abonos registrados en caja ($0 Global)</td></tr>';
 
         return `
-          <tr class="data-row" onclick="toggleExpander('${expId}')">
+          <tr class="${rowClass}" onclick="toggleExpander('${expId}')">
             <td><b>${r.NUMEROMATRICULA}</b></td>
             <td><code>${r.NUMERODOCUMENTO}</code></td>
             <td><b>🔍 ${r.ALUMNO}</b></td>
@@ -2919,7 +3016,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             <td>${r.FECHAINSCRIPCION}</td>
             <td><span class="badge">${r.CATEGORIA}</span></td>
             <td>${fmtCOP(r.VALORCURSO)}</td>
-            <td class="${r.ABONOS === 0 ? 'money-neg' : 'money-pos'}">${fmtCOP(r.ABONOS)}</td>
+            <td>${abonoCellHtml}</td>
             <td class="money-neg">${fmtCOP(r.VALORPENDIENTE)}</td>
             <td>${badgeCtx}</td>
             <td><span class="badge ${r.DIAS_ANTIGUEDAD > 90 ? 'badge-danger' : (r.DIAS_ANTIGUEDAD > 30 ? 'badge-warning' : '')}">${r.DIAS_ANTIGUEDAD} días</span></td>
@@ -3299,7 +3396,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         else b.classList.remove('active');
       });
 
-      const rows = todosAl.filter(a => {
+      let rows = todosAl.filter(a => {
         if (catF !== 'TODAS' && a.categoria !== catF) return false;
         const yaRunt = esCargadoRunt(a);
         if (alertaF === 'PENDIENTE_RUNT' && yaRunt) return false;
@@ -3311,6 +3408,13 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         if (!q) return true;
         return `${a.cedula} ${a.nombre} ${a.categoria} ${a.formato_codigo} ${a.estado_runt || ''}`.toLowerCase().includes(q);
       });
+
+      const sortClases = (document.getElementById('sortClasesSelect') || {}).value || 'RECIENTES';
+      if (sortClases === 'ANTIGUOS') {
+        rows = [...rows].reverse();
+      } else if (sortClases === 'AVANCE_DESC') {
+        rows = [...rows].sort((a, b) => Number(b.porcentaje_avance || 0) - Number(a.porcentaje_avance || 0));
+      }
 
       const etiquetasVista = {
         'PENDIENTE_RUNT': '⏳ Alumnos Matriculados Pendientes de Cargue RUNT (No Registrado RUNT)',
