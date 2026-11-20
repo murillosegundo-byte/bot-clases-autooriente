@@ -1366,11 +1366,19 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               </select>
             </div>
             <div>
+              <label class="field-label">Estado RUNT (Por Categoría)</label>
+              <select id="al_runt">
+                <option value="No Registrado RUNT">⏳ No Registrado RUNT (Pendiente)</option>
+                <option value="Cargue RUNT">✅ Cargue RUNT (Ocultar de pendientes)</option>
+              </select>
+            </div>
+            <div>
               <label class="field-label">Teléfono / Celular</label>
               <input type="text" id="al_tel" autocomplete="off" placeholder="Ej: 3101234567" />
             </div>
-            <div style="display:flex; gap:6px;">
-              <button type="button" class="btn btn-primary" style="flex:1; justify-content:center;" onclick="registrarAlumnoWeb()">💾 Guardar / Actualizar</button>
+            <div style="display:flex; gap:6px; grid-column: span 2;">
+              <button type="button" class="btn btn-primary" style="flex:1; justify-content:center;" onclick="registrarAlumnoWeb()">💾 Guardar / Actualizar Alumno</button>
+              <button type="button" class="btn btn-success" style="flex:1; justify-content:center;" onclick="marcarCargueRuntDesdeFormulario()" title="Marca Cargue RUNT para este alumno y esta categoría y lo filtra del listado">✅ Marcar Cargue RUNT</button>
               <button type="button" class="btn btn-outline" title="Buscar en la tabla" onclick="buscarAlumnoDesdeFormulario()">🔎</button>
             </div>
           </div>
@@ -1436,29 +1444,35 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- Sub-Pestañas para separar estrictamente Alumnos En Curso (<100%) de los Finalizados (100%) -->
+        <!-- Sub-Pestañas para Control Manual de Cargue RUNT por Categoría y Estado de Clases -->
         <div class="tabs-header" id="clasesTabsHeader">
-          <button type="button" class="tab-btn active" onclick="cambiarSubTabClases('EN_CURSO', this)">
-            🟢 Alumnos en Curso (Activos &lt; 100%) <span class="badge badge-info" id="cnt_cl_activos">0</span>
+          <button type="button" class="tab-btn active" onclick="cambiarSubTabClases('PENDIENTE_RUNT', this)">
+            ⏳ Pendientes Cargue RUNT (No Registrado RUNT) <span class="badge badge-warning" id="cnt_cl_runt_pend">0</span>
+          </button>
+          <button type="button" class="tab-btn" onclick="cambiarSubTabClases('CARGADOS_RUNT', this)">
+            ✅ Ya Cargados en RUNT <span class="badge badge-success" id="cnt_cl_runt_ok">0</span>
+          </button>
+          <button type="button" class="tab-btn" onclick="cambiarSubTabClases('EN_CURSO', this)">
+            🟢 En Curso (&lt; 100% + No RUNT) <span class="badge badge-info" id="cnt_cl_activos">0</span>
           </button>
           <button type="button" class="tab-btn" onclick="cambiarSubTabClases('FINALIZADOS', this)">
-            ✅ Alumnos Finalizados (100% Completados) <span class="badge badge-success" id="cnt_cl_fin">0</span>
+            🎓 Finalizaron Clases (100%) <span class="badge badge-success" id="cnt_cl_fin">0</span>
           </button>
           <button type="button" class="tab-btn" onclick="cambiarSubTabClases('CON_SALDO', this)">
-            ⚠️ En Curso con Saldo Pendiente <span class="badge badge-warning" id="cnt_cl_saldo">0</span>
+            ⚠️ Con Saldo Pendiente <span class="badge badge-warning" id="cnt_cl_saldo">0</span>
           </button>
           <button type="button" class="tab-btn" onclick="cambiarSubTabClases('CERO_REAL', this)">
-            🚨 En Curso con Abono $0 (Bloquear) <span class="badge badge-danger" id="cnt_cl_cero">0</span>
+            🚨 Con Abono $0 (Bloquear) <span class="badge badge-danger" id="cnt_cl_cero">0</span>
           </button>
           <button type="button" class="tab-btn" onclick="cambiarSubTabClases('TODOS', this)">
             📚 Todos (Histórico Completo) <span class="badge" id="cnt_cl_todos">0</span>
           </button>
         </div>
-        <input type="hidden" id="filtroAlertaCartera" value="EN_CURSO" />
+        <input type="hidden" id="filtroAlertaCartera" value="PENDIENTE_RUNT" />
 
         <div class="table-toolbar">
-          <input type="search" id="searchClasesInput" autocomplete="off" placeholder="🔎 Buscar alumno por nombre, cédula o categoría..." oninput="renderizarModuloClases()" style="max-width: 440px;" />
-          <span id="clasesCountInfo" style="font-size:12.5px; color:var(--muted);">Haz clic en 📄 F-59/F-62 para descargar la ficha oficial o ✈️/📲 para enviarla por Telegram/WhatsApp</span>
+          <input type="search" id="searchClasesInput" autocomplete="off" placeholder="🔎 Buscar alumno por nombre, cédula, categoría o estado RUNT..." oninput="renderizarModuloClases()" style="max-width: 440px;" />
+          <span id="clasesCountInfo" style="font-size:12.5px; color:var(--muted);">💡 Al marcar <b>✅ Cargue RUNT</b> en una categoría (ej. A2 Moto), esa fila sale automáticamente del listado pendiente, pero su otra categoría (ej. C1 Carro) sigue visible hasta que la cargues</span>
         </div>
 
         <div class="table-wrap">
@@ -1468,6 +1482,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
                 <th>Cédula</th>
                 <th>Alumno</th>
                 <th>Categoría</th>
+                <th>Estado RUNT (Control Manual)</th>
                 <th>Formato Oficial</th>
                 <th>Avance Clases Prácticas</th>
                 <th>Estado Curso</th>
@@ -3212,7 +3227,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       if (btnEl) {
         btnEl.classList.add('active');
       } else {
-        const mapIdx = { 'EN_CURSO': 0, 'FINALIZADOS': 1, 'CON_SALDO': 2, 'CERO_REAL': 3, 'TODOS': 4 };
+        const mapIdx = { 'PENDIENTE_RUNT': 0, 'CARGADOS_RUNT': 1, 'EN_CURSO': 2, 'FINALIZADOS': 3, 'CON_SALDO': 4, 'CERO_REAL': 5, 'TODOS': 6 };
         const btns = document.querySelectorAll('#clasesTabsHeader .tab-btn');
         if (btns[mapIdx[filtroVal] || 0]) btns[mapIdx[filtroVal] || 0].classList.add('active');
       }
@@ -3224,17 +3239,25 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const kc = BOT_DATA.clases.kpis;
       const todosAl = BOT_DATA.clases.alumnos || [];
 
-      // Contadores para las sub-pestañas
-      const cntActivos = todosAl.filter(a => a.estado_curso !== 'FINALIZADO').length;
-      const cntFin = todosAl.filter(a => a.estado_curso === 'FINALIZADO').length;
-      const cntSaldo = todosAl.filter(a => a.estado_curso !== 'FINALIZADO' && (a.saldo_cartera || 0) > 0).length;
-      const cntCero = todosAl.filter(a => a.estado_curso !== 'FINALIZADO' && a.alerta_cartera === 'RIESGO_CERO_REAL').length;
+      const esCargadoRunt = (a) => String(a.estado_runt || '').toLowerCase().includes('cargue') || String(a.estado_runt || '').toLowerCase().includes('cargado');
 
+      // Contadores para las sub-pestañas (con control manual RUNT por categoría)
+      const cntRuntPend = todosAl.filter(a => !esCargadoRunt(a)).length;
+      const cntRuntOk = todosAl.filter(a => esCargadoRunt(a)).length;
+      const cntActivos = todosAl.filter(a => a.estado_curso !== 'FINALIZADO' && !esCargadoRunt(a)).length;
+      const cntFin = todosAl.filter(a => a.estado_curso === 'FINALIZADO' && !esCargadoRunt(a)).length;
+      const cntSaldo = todosAl.filter(a => !esCargadoRunt(a) && (a.saldo_cartera || 0) > 0).length;
+      const cntCero = todosAl.filter(a => !esCargadoRunt(a) && a.alerta_cartera === 'RIESGO_CERO_REAL').length;
+
+      const elRuntPend = document.getElementById('cnt_cl_runt_pend');
+      const elRuntOk = document.getElementById('cnt_cl_runt_ok');
       const elAct = document.getElementById('cnt_cl_activos');
       const elFin = document.getElementById('cnt_cl_fin');
       const elSal = document.getElementById('cnt_cl_saldo');
       const elCer = document.getElementById('cnt_cl_cero');
       const elTod = document.getElementById('cnt_cl_todos');
+      if (elRuntPend) elRuntPend.textContent = cntRuntPend;
+      if (elRuntOk) elRuntOk.textContent = cntRuntOk;
       if (elAct) elAct.textContent = cntActivos;
       if (elFin) elFin.textContent = cntFin;
       if (elSal) elSal.textContent = cntSaldo;
@@ -3242,34 +3265,34 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       if (elTod) elTod.textContent = todosAl.length;
 
       document.getElementById('kpiClasesGrid').innerHTML = `
-        <div class="kpi-card">
-          <div class="kpi-label">🟢 Alumnos Activos en Curso (&lt; 100%)</div>
-          <div class="kpi-value" style="color:#60a5fa;">${cntActivos} Alumnos</div>
-          <div class="kpi-sub">Separados de los <b>${cntFin} alumnos finalizados (100%)</b></div>
+        <div class="kpi-card warning">
+          <div class="kpi-label">⏳ Pendientes Cargue RUNT (No Registrado)</div>
+          <div class="kpi-value" style="color:#fde68a;">${cntRuntPend} Matrículas</div>
+          <div class="kpi-sub"><b>${cntActivos} en curso</b> y <b>${cntFin} listos (100%)</b> por subir a RUNT</div>
         </div>
         <div class="kpi-card success">
-          <div class="kpi-label">✅ Alumnos Finalizados (100% Clases)</div>
-          <div class="kpi-value" style="color:#34d399;">${cntFin} Alumnos</div>
-          <div class="kpi-sub"><b>${kc.total_sesiones_registradas} sesiones</b> en formatos F-59 a F-62</div>
+          <div class="kpi-label">✅ Ya Cargados en RUNT (Ocultos del Filtro)</div>
+          <div class="kpi-value" style="color:#34d399;">${cntRuntOk} Cargados</div>
+          <div class="kpi-sub">Control independiente por categoría (<b>A2</b> vs <b>B1/C1</b>)</div>
         </div>
-        <div class="kpi-card warning">
-          <div class="kpi-label">⚠️ En Curso con Saldo en Cartera</div>
-          <div class="kpi-value" style="color:#fde68a;">${cntSaldo} Alumnos</div>
-          <div class="kpi-sub">Alumnos activos con saldo pendiente por cobrar</div>
+        <div class="kpi-card">
+          <div class="kpi-label">🎓 Total Clases y Formatos (F-59 a F-62)</div>
+          <div class="kpi-value" style="color:#60a5fa;">${todosAl.length} Cursos</div>
+          <div class="kpi-sub"><b>${kc.total_sesiones_registradas} sesiones</b> dictadas por instructores</div>
         </div>
         <div class="kpi-card danger">
-          <div class="kpi-label">🚨 En Curso con Abono $0 Global</div>
-          <div class="kpi-value" style="color:#fca5a5;">${cntCero} Alumnos</div>
-          <div class="kpi-sub">Bloquear programación práctica inmediata</div>
+          <div class="kpi-label">⚠️ Pendientes RUNT con Saldo en Cartera</div>
+          <div class="kpi-value" style="color:#fca5a5;">${cntSaldo} Alumnos</div>
+          <div class="kpi-sub">Verificar pago antes de realizar el Cargue RUNT</div>
         </div>
       `;
 
       const q = obtenerBusquedaLimpia('searchClasesInput');
       const catF = document.getElementById('filtroCatClases').value;
-      const alertaF = document.getElementById('filtroAlertaCartera').value || 'EN_CURSO';
+      const alertaF = document.getElementById('filtroAlertaCartera').value || 'PENDIENTE_RUNT';
 
       // Sincronizar pestaña visual activa con el select
-      const mapIdx = { 'EN_CURSO': 0, 'FINALIZADOS': 1, 'CON_SALDO': 2, 'CERO_REAL': 3, 'TODOS': 4 };
+      const mapIdx = { 'PENDIENTE_RUNT': 0, 'CARGADOS_RUNT': 1, 'EN_CURSO': 2, 'FINALIZADOS': 3, 'CON_SALDO': 4, 'CERO_REAL': 5, 'TODOS': 6 };
       const tabBtns = document.querySelectorAll('#clasesTabsHeader .tab-btn');
       tabBtns.forEach((b, idx) => {
         if (idx === mapIdx[alertaF]) b.classList.add('active');
@@ -3278,22 +3301,27 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
       const rows = todosAl.filter(a => {
         if (catF !== 'TODAS' && a.categoria !== catF) return false;
-        if (alertaF === 'EN_CURSO' && a.estado_curso === 'FINALIZADO') return false;
-        if (alertaF === 'FINALIZADOS' && a.estado_curso !== 'FINALIZADO') return false;
-        if (alertaF === 'CON_SALDO' && (a.estado_curso === 'FINALIZADO' || (a.saldo_cartera || 0) <= 0)) return false;
-        if (alertaF === 'CERO_REAL' && (a.estado_curso === 'FINALIZADO' || a.alerta_cartera !== 'RIESGO_CERO_REAL')) return false;
+        const yaRunt = esCargadoRunt(a);
+        if (alertaF === 'PENDIENTE_RUNT' && yaRunt) return false;
+        if (alertaF === 'CARGADOS_RUNT' && !yaRunt) return false;
+        if (alertaF === 'EN_CURSO' && (a.estado_curso === 'FINALIZADO' || yaRunt)) return false;
+        if (alertaF === 'FINALIZADOS' && (a.estado_curso !== 'FINALIZADO' || yaRunt)) return false;
+        if (alertaF === 'CON_SALDO' && (yaRunt || (a.saldo_cartera || 0) <= 0)) return false;
+        if (alertaF === 'CERO_REAL' && (yaRunt || a.alerta_cartera !== 'RIESGO_CERO_REAL')) return false;
         if (!q) return true;
-        return `${a.cedula} ${a.nombre} ${a.categoria} ${a.formato_codigo}`.toLowerCase().includes(q);
+        return `${a.cedula} ${a.nombre} ${a.categoria} ${a.formato_codigo} ${a.estado_runt || ''}`.toLowerCase().includes(q);
       });
 
       const etiquetasVista = {
-        'EN_CURSO': '🟢 Alumnos Activos en Curso (< 100%)',
-        'FINALIZADOS': '✅ Alumnos Finalizados (100% Completados)',
-        'CON_SALDO': '⚠️ Alumnos en Curso con Saldo Pendiente',
-        'CERO_REAL': '🚨 Alumnos en Curso con Abono $0 Global',
-        'TODOS': '📚 Histórico Completo (En Curso + Finalizados)'
+        'PENDIENTE_RUNT': '⏳ Alumnos Matriculados Pendientes de Cargue RUNT (No Registrado RUNT)',
+        'CARGADOS_RUNT': '✅ Alumnos con Cargue RUNT Realizado',
+        'EN_CURSO': '🟢 Alumnos Activos en Curso (< 100% y Pendientes RUNT)',
+        'FINALIZADOS': '🎓 Alumnos con 100% Clases Terminadas (Pendientes de Cargue RUNT)',
+        'CON_SALDO': '⚠️ Alumnos Pendientes RUNT con Saldo en Cartera',
+        'CERO_REAL': '🚨 Alumnos con Abono $0 Global',
+        'TODOS': '📚 Histórico Completo (Pendientes RUNT + Cargados RUNT)'
       };
-      document.getElementById('clasesCountInfo').textContent = `${etiquetasVista[alertaF] || ''} — Mostrando ${rows.length} alumnos`;
+      document.getElementById('clasesCountInfo').textContent = `${etiquetasVista[alertaF] || ''} — Mostrando ${rows.length} matrículas por categoría`;
 
       document.getElementById('clasesTbody').innerHTML = rows.map(a => {
         let badgeCartera = `<span class="badge badge-success">${a.alerta_texto || '✅ PAZ Y SALVO'}</span>`;
@@ -3307,15 +3335,29 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           badgeCartera = `<span class="badge">Curso Práctico Activo</span>`;
         }
 
-        const qParam = encodeURIComponent(a.cedula || a.nombre);
-        const catParam = encodeURIComponent(a.categoria || 'A2');
+        const yaRunt = esCargadoRunt(a);
         const safeNombre = (a.nombre || '').replace(/'/g, "\\'");
         const safeCedula = (a.cedula || a.nombre || '').replace(/'/g, "\\'");
+        const badgeRunt = yaRunt
+          ? `<span class="badge badge-success" title="${a.fecha_runt || ''}">✅ Cargue RUNT</span>`
+          : `<span class="badge badge-warning">⏳ No Registrado RUNT</span>`;
+        const btnRuntAccion = yaRunt
+          ? `<button type="button" class="btn btn-outline" style="padding:4px 8px; font-size:11px;" title="Devolver a No Registrado RUNT para que vuelva a aparecer en pendientes" onclick="cambiarEstadoRuntWeb('${safeCedula}', '${safeNombre}', '${a.categoria}', 'No Registrado RUNT')">↩️ Quitar RUNT</button>`
+          : `<button type="button" class="btn btn-success" style="padding:4px 8px; font-size:11px;" title="Confirmar Cargue RUNT de esta categoría (${a.categoria}) y ocultarlo del filtro de pendientes" onclick="cambiarEstadoRuntWeb('${safeCedula}', '${safeNombre}', '${a.categoria}', 'Cargue RUNT')">✅ Cargue RUNT</button>`;
+
+        const qParam = encodeURIComponent(a.cedula || a.nombre);
+        const catParam = encodeURIComponent(a.categoria || 'A2');
 
         return `<tr>
           <td><code>${a.cedula || 'S/D'}</code></td>
           <td><b>${a.nombre}</b></td>
           <td><span class="badge badge-info">${a.categoria}</span></td>
+          <td>
+            <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+              ${badgeRunt}
+              ${btnRuntAccion}
+            </div>
+          </td>
           <td><b>${a.formato_codigo}</b></td>
           <td>
             <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${a.porcentaje_avance}%;"></div></div>
@@ -3326,14 +3368,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <td class="${(a.saldo_cartera || 0) > 0 ? 'money-neg' : 'money-pos'}">${fmtCOP(a.saldo_cartera || 0)}</td>
           <td>
             <div style="display:flex; gap:5px; align-items:center; flex-wrap:wrap;">
-              <button type="button" class="btn btn-outline" style="padding:5px 8px; font-size:11px;" title="Cargar datos del alumno arriba para editar o registrar clase" onclick="cargarAlumnoEnFormularios('${safeCedula}', '${safeNombre}', '${a.categoria}', ${a.clases_completadas || 0}, ${a.total_requerido || 15})">✏️ Editar / +Clase</button>
+              <button type="button" class="btn btn-outline" style="padding:5px 8px; font-size:11px;" title="Cargar datos del alumno arriba para editar, cambiar RUNT o registrar clase" onclick="cargarAlumnoEnFormularios('${safeCedula}', '${safeNombre}', '${a.categoria}', ${a.clases_completadas || 0}, ${a.total_requerido || 15}, '${a.estado_runt || 'No Registrado RUNT'}')">✏️ Editar / +Clase</button>
               <a href="/api/bot/pdf/alumno?q=${qParam}&cat=${catParam}" class="btn btn-primary" style="padding:5px 9px; font-size:11px;" title="Descargar Ficha Oficial PDF">📄 PDF ${a.formato_codigo}</a>
               <button type="button" class="btn btn-outline" style="padding:5px 7px; font-size:11px;" title="Enviar PDF F-59/F-62 al Telegram del CEA" onclick="enviarPdfAlumnoTelegram('${safeCedula}', '${safeNombre}', '${a.categoria}')">✈️</button>
               <button type="button" class="btn btn-success" style="padding:5px 7px; font-size:11px;" title="Enviar reporte y link del PDF por WhatsApp" onclick="enviarInfoAlumnoWhatsApp('${safeCedula}', '${safeNombre}', '${a.categoria}', '${a.clases_completadas}/${a.total_requerido} (${a.porcentaje_avance}%)', ${a.saldo_cartera || 0})">📲</button>
             </div>
           </td>
         </tr>`;
-      }).join('') || '<tr><td colspan="9" style="text-align:center; color:var(--muted); padding:20px;">No hay alumnos que coincidan con el filtro seleccionado.</td></tr>';
+      }).join('') || '<tr><td colspan="10" style="text-align:center; color:var(--muted); padding:20px;">No hay alumnos que coincidan con el filtro seleccionado.</td></tr>';
     }
 
     function renderizarModuloNomina() {
@@ -3640,10 +3682,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
     }
 
-    function cargarAlumnoEnFormularios(cedula, nombre, categoria, completadas, requeridas) {
+    function cargarAlumnoEnFormularios(cedula, nombre, categoria, completadas, requeridas, estadoRunt) {
       document.getElementById('al_cedula').value = cedula || '';
       document.getElementById('al_nombre').value = nombre || '';
       if (categoria) document.getElementById('al_cat').value = categoria;
+      const runtEl = document.getElementById('al_runt');
+      if (runtEl && estadoRunt) {
+        runtEl.value = String(estadoRunt).toLowerCase().includes('cargue') ? 'Cargue RUNT' : 'No Registrado RUNT';
+      }
 
       document.getElementById('cl_cedula').value = cedula || '';
       document.getElementById('cl_alumno').value = nombre || '';
@@ -3655,9 +3701,58 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const toast = document.getElementById('alumnoToast');
       if (toast) {
         toast.className = 'status-toast ok';
-        toast.textContent = `✏️ Alumno cargado: ${nombre} (${categoria} - CC ${cedula}). Puedes editar sus datos o registrarle las clases ${document.getElementById('cl_nums').value}.`;
+        toast.textContent = `✏️ Alumno cargado: ${nombre} (${categoria} - CC ${cedula} - ${estadoRunt || 'No Registrado RUNT'}). Puedes cambiar su Estado RUNT o registrarle las clases ${document.getElementById('cl_nums').value}.`;
       }
       window.scrollTo({ top: 120, behavior: 'smooth' });
+    }
+
+    async function cambiarEstadoRuntWeb(cedula, nombre, categoria, nuevoEstadoRunt) {
+      const toast = document.getElementById('alumnoToast');
+      if (toast) {
+        toast.className = 'status-toast ok';
+        toast.textContent = `⏳ Actualizando estado RUNT de ${nombre} (${categoria}) a "${nuevoEstadoRunt}"...`;
+      }
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'estado_runt_alumno',
+            cedula,
+            nombre,
+            categoria,
+            estado_runt: nuevoEstadoRunt
+          })
+        });
+        const rawTxt = await res.text();
+        let data = {};
+        try { data = JSON.parse(rawTxt); } catch (_) { data = { ok: false, message: rawTxt.slice(0, 180) }; }
+        if (toast) {
+          toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+          toast.textContent = (data.ok ? '✅ ' : '❌ ') + (data.message || 'Estado RUNT actualizado.');
+        }
+        if (data.ok) await cargarBotOverview();
+      } catch (err) {
+        if (toast) {
+          toast.className = 'status-toast err';
+          toast.textContent = '❌ Error actualizando RUNT: ' + err;
+        }
+      }
+    }
+
+    async function marcarCargueRuntDesdeFormulario() {
+      const cedula = document.getElementById('al_cedula').value.trim();
+      const nombre = document.getElementById('al_nombre').value.trim();
+      const categoria = document.getElementById('al_cat').value;
+      const toast = document.getElementById('alumnoToast');
+      if (!cedula && !nombre) {
+        toast.className = 'status-toast err';
+        toast.textContent = '⚠️ Escribe o selecciona primero la Cédula o Nombre del alumno.';
+        return;
+      }
+      const runtEl = document.getElementById('al_runt');
+      if (runtEl) runtEl.value = 'Cargue RUNT';
+      await cambiarEstadoRuntWeb(cedula, nombre, categoria, 'Cargue RUNT');
     }
 
     function autocompletarYFiltrarInasistencia(val) {
@@ -3722,6 +3817,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const cedula = document.getElementById('al_cedula').value.trim();
       const nombre = document.getElementById('al_nombre').value.trim();
       const categoria = document.getElementById('al_cat').value;
+      const estado_runt = (document.getElementById('al_runt') || {}).value || 'No Registrado RUNT';
       const telefono = document.getElementById('al_tel').value.trim();
       const toast = document.getElementById('alumnoToast');
       if (!cedula || !nombre) {
@@ -3735,11 +3831,13 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         const res = await fetch('/api/bot/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'registrar_alumno', cedula, nombre, categoria, telefono })
+          body: JSON.stringify({ action: 'registrar_alumno', cedula, nombre, categoria, telefono, estado_runt })
         });
-        const data = await res.json();
+        const rawTxt = await res.text();
+        let data = {};
+        try { data = JSON.parse(rawTxt); } catch (_) { data = { ok: false, message: 'Respuesta inesperada del servidor: ' + rawTxt.slice(0, 120) }; }
         toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
-        toast.textContent = (data.ok ? '✅ ' : '❌ ') + data.message;
+        toast.textContent = (data.ok ? '✅ ' : '❌ ') + (data.message || '');
         if (data.ok) await cargarBotOverview();
       } catch (err) {
         toast.className = 'status-toast err';
@@ -3767,9 +3865,11 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'registrar_clase', cedula, alumno, categoria, instructor, clases_str })
         });
-        const data = await res.json();
+        const rawTxt = await res.text();
+        let data = {};
+        try { data = JSON.parse(rawTxt); } catch (_) { data = { ok: false, message: 'Respuesta inesperada del servidor: ' + rawTxt.slice(0, 120) }; }
         toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
-        toast.textContent = (data.ok ? '✅ ' : '❌ ') + data.message;
+        toast.textContent = (data.ok ? '✅ ' : '❌ ') + (data.message || '');
         if (data.ok) await cargarBotOverview();
       } catch (err) {
         toast.className = 'status-toast err';
@@ -5263,6 +5363,16 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self) -> None:
+        try:
+            self._handle_post()
+        except Exception as exc:
+            logger.exception("Error inesperado en do_POST (%s)", self.path)
+            try:
+                self._send_json({"ok": False, "message": f"Error procesando solicitud: {exc}", "error": str(exc)}, 500)
+            except Exception:
+                pass
+
+    def _handle_post(self) -> None:
         if self.path == "/api/login":
             length = int(self.headers.get("Content-Length", "0"))
             body_raw = self.rfile.read(length) if length > 0 else b"{}"
@@ -5502,11 +5612,40 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                 nombre = str(payload.get("nombre", "")).strip().upper()
                 categoria = str(payload.get("categoria", "A2")).strip().upper()
                 telefono = str(payload.get("telefono", "")).strip()
-                ok = clases_core.sheets_service.asegurar_alumno(cedula, nombre, categoria, telefono)
-                _registrar_bitacora_empleado(u_sesion["username"], u_sesion["nombre"], u_sesion["rol"], "MATRICULAR_ALUMNO", f"Registró alumno {nombre} ({categoria} - CC {cedula})")
+                estado_runt = str(payload.get("estado_runt", "")).strip() or None
+                ok = clases_core.sheets_service.asegurar_alumno(cedula, nombre, categoria, telefono, estado_runt=estado_runt)
+                _registrar_bitacora_empleado(u_sesion["username"], u_sesion["nombre"], u_sesion["rol"], "MATRICULAR_ALUMNO", f"Registró alumno {nombre} ({categoria} - CC {cedula} - {estado_runt or 'No Registrado RUNT'})")
                 self._send_json({
                     "ok": bool(ok),
-                    "message": f"Alumno {nombre} ({categoria} - C.C. {cedula}) guardado y sincronizado.",
+                    "message": f"Alumno {nombre} ({categoria} - C.C. {cedula}) guardado ({estado_runt or 'No Registrado RUNT'}).",
+                })
+                return
+
+            if action == "estado_runt_alumno":
+                cedula = str(payload.get("cedula", "")).strip()
+                nombre = str(payload.get("nombre", "")).strip().upper()
+                categoria = str(payload.get("categoria", "A2")).strip().upper()
+                estado_runt = str(payload.get("estado_runt", "Cargue RUNT")).strip()
+                res_r = clases_core.sheets_service.actualizar_estado_runt_alumno(
+                    documento_o_nombre=cedula or nombre,
+                    categoria=categoria,
+                    estado_runt=estado_runt,
+                    nombre_alumno=nombre,
+                )
+                est_final = res_r.get("Estado_RUNT", estado_runt)
+                _registrar_bitacora_empleado(
+                    u_sesion["username"], u_sesion["nombre"], u_sesion["rol"],
+                    "CONTROL_RUNT",
+                    f"Marcó '{est_final}' para {nombre or cedula} (Categoría {categoria})"
+                )
+                self._send_json({
+                    "ok": True,
+                    "message": (
+                        f"✅ {nombre or cedula} ({categoria}) marcado como 'Cargue RUNT' y ocultado del listado pendiente."
+                        if est_final == "Cargue RUNT"
+                        else f"⏳ {nombre or cedula} ({categoria}) devuelto a 'No Registrado RUNT' (visible en pendientes)."
+                    ),
+                    "alumno": res_r,
                 })
                 return
 

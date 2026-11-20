@@ -717,6 +717,26 @@ def formatear_clases(clases: List[int]) -> str:
     return "-".join(str(c) for c in ordenadas)
 
 
+def obtener_temas_para_clases(categoria: str, clases: List[int]) -> str:
+    """
+    Devuelve el texto concatenado del temario oficial (A.O.C.E.A - F - 59 a F - 62)
+    para la lista de clases dictadas en la categoría indicada.
+    """
+    cat_key = normalizar_categoria(categoria)
+    cfg = FORMATOS_OFICIALES.get(cat_key, FORMATOS_OFICIALES["B1"])
+    nums_set = set(clases or [])
+    temas: List[str] = []
+    for fila in cfg.get("filas", []):
+        clases_fila = set(fila.get("clases", []))
+        if clases_fila & nums_set:
+            t_str = str(fila.get("tema", "")).strip()
+            if t_str and t_str not in temas:
+                temas.append(t_str)
+    if not temas:
+        return f"Clase práctica {cat_key} ({formatear_clases(clases)})"
+    return " / ".join(temas)
+
+
 # Palabras del temario/clases que NUNCA hacen parte del nombre de un ciudadano
 PALABRAS_CORTE_CLASE = (
     r"\b(?:"
@@ -833,7 +853,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive",
 ]
 
-HEADERS_ALUMNOS = ["ID_Matricula", "Documento", "Nombre_Completo", "Categoria", "Estado"]
+HEADERS_ALUMNOS = ["ID_Matricula", "Documento", "Nombre_Completo", "Categoria", "Estado", "Estado_RUNT", "Fecha_RUNT"]
 HEADERS_INSTRUCTORES = [
     "Telegram_User_ID",
     "Nombre_Instructor",
@@ -1051,13 +1071,27 @@ class _MemoriaWorksheet:
     def update(self, values: List[List[Any]] = None, range_name: str = "A2", **kwargs: Any) -> None:
         if not values:
             return
-        m = re.search(r"(\d+)", str(range_name or "A2"))
-        start_row = int(m.group(1)) if m else 2
+        m = re.match(r"([A-Za-z]+)(\d+)", str(range_name or "A2").strip())
+        if m:
+            col_letters = m.group(1).upper()
+            start_col = 0
+            for ch in col_letters:
+                start_col = start_col * 26 + (ord(ch) - ord("A") + 1)
+            start_row = int(m.group(2))
+        else:
+            start_col = 1
+            m_num = re.search(r"(\d+)", str(range_name or "A2"))
+            start_row = int(m_num.group(1)) if m_num else 2
         for offset, row_vals in enumerate(values):
             r_idx = start_row + offset
             while len(self._rows) < r_idx:
                 self._rows.append([])
-            self._rows[r_idx - 1] = [str(v) for v in row_vals]
+            fila_dest = self._rows[r_idx - 1]
+            for c_off, val in enumerate(row_vals):
+                c_idx = start_col + c_off
+                while len(fila_dest) < c_idx:
+                    fila_dest.append("")
+                fila_dest[c_idx - 1] = str(val)
 
 
 class _CachedWorksheet:
@@ -1656,6 +1690,10 @@ class SheetsService:
                 if filtrar_cat and cat_alumno != normalizar_categoria(categoria):
                     continue
 
+                raw_runt = str(f.get("Estado_RUNT", "")).strip()
+                est_runt = "Cargue RUNT" if "cargue" in raw_runt.lower() or "cargado" in raw_runt.lower() else "No Registrado RUNT"
+                fecha_runt = str(f.get("Fecha_RUNT", "")).strip()
+
                 item_alu = dict(f)
                 item_alu["Categoria"] = cat_alumno
                 item_alu["Clases_Completadas"] = cant_completadas
@@ -1663,6 +1701,8 @@ class SheetsService:
                 item_alu["Curso_Completado"] = ya_cumplio_minimo
                 item_alu["Clases_Vistas_Lista"] = sorted(clases_validas)
                 item_alu["Estado_Real"] = "Finalizado" if ya_cumplio_minimo else "En curso"
+                item_alu["Estado_RUNT"] = est_runt
+                item_alu["Fecha_RUNT"] = fecha_runt
 
                 if modo == "todos":
                     resultado.append(item_alu)
@@ -1853,17 +1893,24 @@ class SheetsService:
             return nombre_limpio
 
     def registrar_o_actualizar_alumno(
-        self, documento: str, nombre_completo: str, categoria: str
+        self,
+        documento: str,
+        nombre_completo: str,
+        categoria: str,
+        estado_runt: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Registra o recupera la matrícula de un alumno para la CATEGORÍA indicada.
-        - Si el alumno ya está matriculado en esa misma categoría, devuelve esa matrícula.
+        - Si el alumno ya está matriculado en esa misma categoría, devuelve esa matrícula (y actualiza Estado_RUNT si se especifica).
         - Si el alumno ya existe en otra categoría (ej. A2 Moto) y ahora inicia un segundo curso
           (ej. C1 Carro), crea automáticamente una nueva fila de matrícula (MAT-XXX) para la
           nueva categoría sin sobrescribir ni bloquear el otro curso.
         """
         cat_norm = normalizar_categoria(categoria)
         nombre_depurado = limpiar_solo_nombre_persona(nombre_completo) or nombre_completo.strip().title()
+        runt_norm = ""
+        if estado_runt:
+            runt_norm = "Cargue RUNT" if ("cargue" in estado_runt.lower() or "cargado" in estado_runt.lower()) else "No Registrado RUNT"
 
         # 1. Buscar si ya tiene matrícula en ESTA MISMA categoría
         existente_misma_cat = (
@@ -1873,14 +1920,22 @@ class SheetsService:
         if existente_misma_cat:
             nom_actual = str(existente_misma_cat.get("Nombre_Completo", "")).strip()
             doc_actual = str(existente_misma_cat.get("Documento", "")).strip()
+            runt_actual = str(existente_misma_cat.get("Estado_RUNT", "")).strip() or "No Registrado RUNT"
             nom_limpio = nombre_depurado if (nombre_depurado and nombre_depurado != "Desconocido") else (limpiar_solo_nombre_persona(nom_actual) or nom_actual)
             doc_limpio = documento.strip() if (documento and documento.strip() not in ("", "Pendiente", "Desconocido")) else doc_actual
-            # Si se actualizaron datos desde la Web (ej. corrigió nombre o cédula), reflejarlo en Google Sheets
-            if (nom_limpio and nom_limpio != nom_actual) or (doc_limpio and doc_limpio != doc_actual):
+            runt_final = runt_norm if runt_norm else ("Cargue RUNT" if "cargue" in runt_actual.lower() else "No Registrado RUNT")
+            fecha_runt_final = (
+                datetime.now(TZ_COLOMBIA).strftime("%Y-%m-%d %H:%M")
+                if runt_final == "Cargue RUNT"
+                else str(existente_misma_cat.get("Fecha_RUNT", "")).strip()
+            )
+            # Si se actualizaron datos desde la Web (nombre, cédula o Estado_RUNT), reflejarlo en Google Sheets
+            if (nom_limpio and nom_limpio != nom_actual) or (doc_limpio and doc_limpio != doc_actual) or (runt_norm and runt_norm != runt_actual):
                 try:
                     ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
                     todas_al = ws.get_all_values()
                     id_mat_ex = str(existente_misma_cat.get("ID_Matricula", "")).strip()
+                    est_curso_ex = str(existente_misma_cat.get("Estado", "En curso")).strip() or "En curso"
                     for idx_f in range(2, len(todas_al) + 1):
                         fila_f = todas_al[idx_f - 1]
                         if len(fila_f) >= 4:
@@ -1888,14 +1943,15 @@ class SheetsService:
                             d_f = _normalizar_texto(str(fila_f[1]).strip())
                             n_f = _normalizar_texto(str(fila_f[2]).strip())
                             c_f = normalizar_categoria(str(fila_f[3]).strip())
+                            est_f = str(fila_f[4]).strip() if len(fila_f) > 4 and str(fila_f[4]).strip() else est_curso_ex
                             if c_f == cat_norm and (
                                 (id_mat_ex and m_id_f == id_mat_ex)
                                 or (_normalizar_texto(doc_actual) and d_f == _normalizar_texto(doc_actual))
                                 or (_normalizar_texto(nom_actual) and n_f == _normalizar_texto(nom_actual))
                             ):
                                 ws.update(
-                                    values=[[m_id_f or id_mat_ex, doc_limpio, nom_limpio, cat_norm]],
-                                    range_name=f"A{idx_f}:D{idx_f}",
+                                    values=[[m_id_f or id_mat_ex, doc_limpio, nom_limpio, cat_norm, est_f, runt_final, fecha_runt_final]],
+                                    range_name=f"A{idx_f}:G{idx_f}",
                                     value_input_option="USER_ENTERED",
                                 )
                                 break
@@ -1904,6 +1960,8 @@ class SheetsService:
             existente_misma_cat["Documento"] = doc_limpio
             existente_misma_cat["Nombre_Completo"] = nom_limpio
             existente_misma_cat["Categoria"] = cat_norm
+            existente_misma_cat["Estado_RUNT"] = runt_final
+            existente_misma_cat["Fecha_RUNT"] = fecha_runt_final
             return existente_misma_cat
 
         # 2. Si está en otra categoría, recuperar su nombre/cédula oficial para crearle la matrícula en la nueva categoría
@@ -1916,6 +1974,8 @@ class SheetsService:
             if (not nombre_depurado or nombre_depurado == "Desconocido") and nom_prev:
                 nombre_depurado = limpiar_solo_nombre_persona(nom_prev) or nom_prev
 
+        runt_inicial = runt_norm if runt_norm else "No Registrado RUNT"
+        fecha_runt_ini = datetime.now(TZ_COLOMBIA).strftime("%Y-%m-%d %H:%M") if runt_inicial == "Cargue RUNT" else ""
         try:
             ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
             filas = self._leer_filas_diccionario(ws, HEADERS_ALUMNOS)
@@ -1925,7 +1985,7 @@ class SheetsService:
                 if m_id:
                     max_num = max(max_num, int(m_id.group(1)))
             nuevo_id = f"MAT-{max_num + 1:03d}"
-            nueva_fila = [nuevo_id, documento, nombre_depurado, cat_norm, "En curso"]
+            nueva_fila = [nuevo_id, documento, nombre_depurado, cat_norm, "En curso", runt_inicial, fecha_runt_ini]
             self._agregar_fila_al_final(ws, nueva_fila)
             return {
                 "ID_Matricula": nuevo_id,
@@ -1933,6 +1993,8 @@ class SheetsService:
                 "Nombre_Completo": nombre_depurado,
                 "Categoria": cat_norm,
                 "Estado": "En curso",
+                "Estado_RUNT": runt_inicial,
+                "Fecha_RUNT": fecha_runt_ini,
             }
         except Exception as exc:
             logger.warning("No se pudo agregar automáticamente en hoja Alumnos: %s", exc)
@@ -1942,7 +2004,79 @@ class SheetsService:
                 "Nombre_Completo": nombre_depurado,
                 "Categoria": cat_norm,
                 "Estado": "En curso",
+                "Estado_RUNT": runt_inicial,
+                "Fecha_RUNT": fecha_runt_ini,
             }
+
+    def actualizar_estado_runt_alumno(
+        self,
+        documento_o_nombre: str,
+        categoria: str,
+        estado_runt: str,
+        nombre_alumno: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Actualiza manualmente el Estado_RUNT ('Cargue RUNT' o 'No Registrado RUNT')
+        para un alumno y categoría específicos (ej. A2 Moto vs C1 Carro son independientes).
+        Si el alumno tenía clases en Registro_Clases pero aún no tenía fila en Alumnos para esa categoría,
+        crea la fila y la marca con el estado RUNT indicado.
+        """
+        cat_norm = normalizar_categoria(categoria)
+        es_cargado = "cargue" in str(estado_runt).lower() or "cargado" in str(estado_runt).lower()
+        runt_val = "Cargue RUNT" if es_cargado else "No Registrado RUNT"
+        fecha_runt = datetime.now(TZ_COLOMBIA).strftime("%Y-%m-%d %H:%M") if es_cargado else ""
+
+        crit_norm = _normalizar_texto(documento_o_nombre)
+        nom_norm = _normalizar_texto(nombre_alumno)
+
+        try:
+            ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
+            todas = ws.get_all_values()
+            for idx_f in range(2, len(todas) + 1):
+                fila = todas[idx_f - 1]
+                if not any(str(c).strip() for c in fila):
+                    continue
+                id_m = _normalizar_texto(str(fila[0]).strip()) if len(fila) > 0 else ""
+                doc_f = _normalizar_texto(str(fila[1]).strip()) if len(fila) > 1 else ""
+                nom_f = _normalizar_texto(str(fila[2]).strip()) if len(fila) > 2 else ""
+                cat_f = normalizar_categoria(str(fila[3]).strip()) if len(fila) > 3 else "B1"
+
+                if cat_f != cat_norm:
+                    continue
+
+                coincide = False
+                if crit_norm and crit_norm in (id_m, doc_f, nom_f):
+                    coincide = True
+                elif nom_norm and nom_f and (nom_norm == nom_f or nom_norm in nom_f or nom_f in nom_norm):
+                    coincide = True
+
+                if coincide:
+                    ws.update(
+                        values=[[runt_val, fecha_runt]],
+                        range_name=f"F{idx_f}:G{idx_f}",
+                        value_input_option="USER_ENTERED",
+                    )
+                    return {
+                        "ok": True,
+                        "ID_Matricula": fila[0] if len(fila) > 0 else "",
+                        "Documento": fila[1] if len(fila) > 1 else documento_o_nombre,
+                        "Nombre_Completo": fila[2] if len(fila) > 2 else (nombre_alumno or documento_o_nombre),
+                        "Categoria": cat_norm,
+                        "Estado_RUNT": runt_val,
+                        "Fecha_RUNT": fecha_runt,
+                    }
+        except Exception as exc:
+            logger.warning("Aviso buscando fila para actualizar_estado_runt_alumno: %s", exc)
+
+        # Si no existía fila en hoja Alumnos para esta categoría, crearla con el Estado_RUNT solicitado
+        creado = self.registrar_o_actualizar_alumno(
+            documento=documento_o_nombre if documento_o_nombre.isdigit() else "",
+            nombre_completo=nombre_alumno or documento_o_nombre,
+            categoria=cat_norm,
+            estado_runt=runt_val,
+        )
+        creado["ok"] = True
+        return creado
 
     def buscar_matriculas_alumno(self, criterio: str) -> List[Dict[str, Any]]:
         """
@@ -3375,6 +3509,8 @@ class SheetsService:
                     "Categoria": cat_r,
                     "Estado": "Finalizado" if ya_fin else "En curso",
                     "Estado_Real": "Finalizado" if ya_fin else "En curso",
+                    "Estado_RUNT": "No Registrado RUNT",
+                    "Fecha_RUNT": "",
                     "Clases_Completadas": cant_c,
                     "Clases_Requeridas": total_req,
                     "Curso_Completado": ya_fin,
@@ -3457,6 +3593,8 @@ class SheetsService:
                     "Categoria": cat_c,
                     "Estado": "En curso",
                     "Estado_Real": "En curso",
+                    "Estado_RUNT": "No Registrado RUNT",
+                    "Fecha_RUNT": "",
                     "Clases_Completadas": 0,
                     "Clases_Requeridas": tot_req,
                     "Curso_Completado": False,
@@ -3550,6 +3688,8 @@ class SheetsService:
         alumnos_web_list: List[Dict[str, Any]] = []
         mora_en_clase_cnt = 0
         cero_en_clase_cnt = 0
+        runt_cargados_cnt = 0
+        runt_pendientes_cnt = 0
         for alu in alumnos_todos:
             cat_a = normalizar_categoria(str(alu.get("Categoria", "B1")))
             cfg_a = FORMATOS_OFICIALES.get(cat_a, FORMATOS_OFICIALES["B1"])
@@ -3561,6 +3701,15 @@ class SheetsService:
             abonado_curso_c = float(alu.get("Abonado_Curso_Cartera", abonado_c) or 0)
             contratado_curso_c = float(alu.get("Contratado_Curso_Cartera", 0) or 0)
             est_c = str(alu.get("Estado_Cartera", "No cruzado"))
+            raw_runt_a = str(alu.get("Estado_RUNT", "No Registrado RUNT")).strip()
+            es_runt_cargado = "cargue" in raw_runt_a.lower() or "cargado" in raw_runt_a.lower()
+            est_runt_a = "Cargue RUNT" if es_runt_cargado else "No Registrado RUNT"
+            fecha_runt_a = str(alu.get("Fecha_RUNT", "")).strip()
+            if es_runt_cargado:
+                runt_cargados_cnt += 1
+            else:
+                runt_pendientes_cnt += 1
+
             alerta_code = "AL_DIA"
             alerta_txt = (
                 f"✅ PAZ Y SALVO (Abonó ${int(abonado_curso_c):,})"
@@ -3592,6 +3741,7 @@ class SheetsService:
                     mora_en_clase_cnt += 1
 
             alumnos_web_list.append({
+                "id_matricula": str(alu.get("ID_Matricula", "")),
                 "cedula": str(alu.get("Documento", "")),
                 "nombre": str(alu.get("Nombre_Completo", "")),
                 "categoria": cat_a,
@@ -3600,6 +3750,8 @@ class SheetsService:
                 "total_requerido": req_a,
                 "porcentaje_avance": pct_a,
                 "estado_curso": "FINALIZADO" if alu.get("Curso_Completado") else "EN CURSO",
+                "estado_runt": est_runt_a,
+                "fecha_runt": fecha_runt_a,
                 "alerta_cartera": alerta_code,
                 "alerta_texto": alerta_txt,
                 "saldo_cartera": saldo_c,
@@ -3784,6 +3936,8 @@ class SheetsService:
                     "total_alumnos": len(alumnos_web_list),
                     "en_curso": alumnos_activos_cnt,
                     "finalizados": alumnos_finalizados_cnt,
+                    "runt_pendientes": runt_pendientes_cnt,
+                    "runt_cargados": runt_cargados_cnt,
                     "total_sesiones_registradas": nomina.get("total_reportes", 0),
                     "alumnos_con_mora_en_clase": mora_en_clase_cnt,
                     "alumnos_abono_cero_en_clase": cero_en_clase_cnt,
@@ -3860,8 +4014,15 @@ class SheetsService:
             periodo = meses_idx_map.get(periodo[4:], periodo)
         return self.consultar_mantenimientos_periodo(periodo, placa)
 
-    def asegurar_alumno(self, cedula: str, nombre: str, categoria: str = "A2", telefono: str = "") -> Dict[str, Any]:
-        return self.registrar_o_actualizar_alumno(cedula, nombre, categoria)
+    def asegurar_alumno(
+        self,
+        cedula: str,
+        nombre: str,
+        categoria: str = "A2",
+        telefono: str = "",
+        estado_runt: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self.registrar_o_actualizar_alumno(cedula, nombre, categoria, estado_runt=estado_runt)
 
     def agregar_vehiculo_pesv(self, placa: str, tipo: str = "CARRO", categoria: str = "B1", marca: str = "") -> Dict[str, Any]:
         res = self.agregar_vehiculo_flota(placa, tipo)
