@@ -424,6 +424,51 @@ class RuntControlService:
                 semaforo_90 = "VIGENTE"
 
             pct_runt = min(100, int(round((total_cargadas / max(1, metas_cat["total"])) * 100)))
+            teoria_faltante = max(0, metas_cat["teoria"] - teoria)
+            taller_faltante = max(0, metas_cat["taller"] - taller)
+            practica_real = max(practica, practica_bot)
+            practica_faltante = max(0, metas_cat["practica"] - practica)
+            es_terminado_sin_cargue = (
+                not es_cargado
+                and (
+                    "termino" in prioridad.lower()
+                    or practica_real >= metas_cat["practica"]
+                )
+            )
+            es_urgente_en_practica = (
+                not es_cargado
+                and not es_terminado_sin_cargue
+                and (
+                    "practica" in prioridad.lower()
+                    or practica_real > 0
+                )
+            )
+            # Orden de prioridad operativa:
+            # 1: Terminaron práctica pero falta el cargue manual a RUNT (Urgencia Máxima Certificación)
+            # 2: En Práctica activa (Urgentes porque están próximos a certificar)
+            # 3: Por vencer / vencidos 90 días
+            # 4: Falta Teoría o Taller (Cargue masivo)
+            # 5: Ya cargados en RUNT
+            if es_cargado:
+                orden_prioridad = 5
+                etiqueta_prioridad_op = "✅ 5. YA CERTIFICADO / CARGADO RUNT"
+            elif es_terminado_sin_cargue:
+                orden_prioridad = 1
+                etiqueta_prioridad_op = "🔥 1. TERMINÓ PRÁCTICA (FALTA CARGUE MANUAL RUNT)"
+            elif es_urgente_en_practica:
+                orden_prioridad = 2
+                etiqueta_prioridad_op = "🚨 2. URGENTE EN PRÁCTICA (A CERTIFICAR)"
+            elif semaforo_90 in ("VENCIDO", "POR_VENCER"):
+                orden_prioridad = 3
+                etiqueta_prioridad_op = "⏰ 3. RIESGO VENCIMIENTO 90 DÍAS"
+            else:
+                orden_prioridad = 4
+                etiqueta_prioridad_op = "📘 4. EN TEORÍA / TALLER (CARGUE MASIVO)"
+
+            # Sugerencia de lote respetando el tope de máximo 8 clases por día en RUNT
+            sug_teoria_8 = min(8, teoria_faltante) if teoria_faltante > 0 else 0
+            sug_taller_8 = min(8, taller_faltante) if taller_faltante > 0 else 0
+            sug_practica_8 = min(8, practica_faltante) if practica_faltante > 0 else 0
 
             registros.append({
                 "fila": idx_f,
@@ -432,7 +477,11 @@ class RuntControlService:
                 "categoria": cat,
                 "categoria_raw": cat_raw or cat,
                 "fecha_matricula": f_mat,
-                "prioridad": prioridad or ("Termino" if practica >= metas_cat["practica"] else "EN PRACTICA"),
+                "prioridad": prioridad or ("Termino" if practica_real >= metas_cat["practica"] else "EN PRACTICA"),
+                "orden_prioridad": orden_prioridad,
+                "etiqueta_prioridad_op": etiqueta_prioridad_op,
+                "es_terminado_sin_cargue": es_terminado_sin_cargue,
+                "es_urgente_en_practica": es_urgente_en_practica,
                 "vence_90_dias": f_vence,
                 "dias_restantes_90": dias_restantes_90,
                 "fecha_registro_runt": f_reg_runt,
@@ -440,10 +489,16 @@ class RuntControlService:
                 "semaforo_90": semaforo_90,
                 "teoria": teoria,
                 "meta_teoria": metas_cat["teoria"],
+                "teoria_faltante": teoria_faltante,
+                "sug_teoria_8": sug_teoria_8,
                 "taller": taller,
                 "meta_taller": metas_cat["taller"],
+                "taller_faltante": taller_faltante,
+                "sug_taller_8": sug_taller_8,
                 "practica": practica,
                 "meta_practica": metas_cat["practica"],
+                "practica_faltante": practica_faltante,
+                "sug_practica_8": sug_practica_8,
                 "practica_bot": practica_bot,
                 "pendiente_subir_bot": diferencia_practica_bot,
                 "clases_cargadas": total_cargadas,
@@ -744,6 +799,211 @@ class RuntControlService:
             "message": f"🔄 Sincronización completada: {actualizados} alumno(s) actualizados con las horas prácticas dictadas en el Bot.",
         }
 
+    def cargue_masivo_teoria_o_taller(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Realiza el cargue masivo de Teoría o Taller en la pestaña 'Practica'
+        para todos los alumnos pendientes de una categoría (o de las filas seleccionadas),
+        respetando el límite diario de máximo 8 clases por alumno (o completando al 100% si el usuario lo autoriza).
+        """
+        tipo = str(payload.get("tipo", "TEORIA")).strip().upper()  # 'TEORIA' o 'TALLER' o 'TEORIA_Y_TALLER'
+        categoria_filtro = str(payload.get("categoria", "A2")).strip().upper()
+        modo_cupo = str(payload.get("modo_cupo", "MAX_8")).strip().upper()  # 'MAX_8' o 'COMPLETAR_META'
+        fecha_reporte = _excel_serial_a_iso(payload.get("fecha_cargue", "")) or datetime.datetime.now(clases_core.TZ_COLOMBIA).strftime("%Y-%m-%d")
+        filas_objetivo = payload.get("filas") or []
+        filas_set = {int(x) for x in filas_objetivo if str(x).isdigit()}
+
+        practica_list = self.listar_practica_runt(forzar=False)
+        actualizados = 0
+        nombres_act: List[str] = []
+
+        for item in practica_list:
+            if item["estado_runt"] == "CARGADO RUNT":
+                continue
+            if filas_set:
+                if item["fila"] not in filas_set:
+                    continue
+            else:
+                if categoria_filtro != "TODAS" and item["categoria"] != categoria_filtro:
+                    continue
+
+            teo_actual = item["teoria"]
+            tal_actual = item["taller"]
+            meta_teo = item["meta_teoria"]
+            meta_tal = item["meta_taller"]
+
+            nuevo_teo = teo_actual
+            nuevo_tal = tal_actual
+            etiqueta_diaria = item["cargue_diario"]
+
+            if tipo in ("TEORIA", "TEORIA_Y_TALLER") and teo_actual < meta_teo:
+                if modo_cupo == "COMPLETAR_META":
+                    nuevo_teo = meta_teo
+                else:
+                    nuevo_teo = min(meta_teo, teo_actual + 8)
+                etiqueta_diaria = "TEORIA"
+
+            if tipo in ("TALLER", "TEORIA_Y_TALLER") and tal_actual < meta_tal:
+                if modo_cupo == "COMPLETAR_META":
+                    nuevo_tal = meta_tal
+                else:
+                    cupo_restante_8 = max(0, 8 - (nuevo_teo - teo_actual))
+                    inc_tal = min(meta_tal - tal_actual, cupo_restante_8 if tipo == "TEORIA_Y_TALLER" else 8)
+                    nuevo_tal = tal_actual + inc_tal
+                etiqueta_diaria = "TALLER" if nuevo_teo == teo_actual else "TEORIA+TALLER"
+
+            if nuevo_teo != teo_actual or nuevo_tal != tal_actual:
+                self.guardar_o_actualizar_practica_runt({
+                    "fila": item["fila"],
+                    "nombre": item["nombre"],
+                    "cedula": item["cedula"],
+                    "categoria": item["categoria"],
+                    "fecha_matricula": item["fecha_matricula"],
+                    "prioridad": item["prioridad"],
+                    "vence_90_dias": item["vence_90_dias"],
+                    "fecha_registro_runt": item["fecha_registro_runt"],
+                    "teoria": nuevo_teo,
+                    "taller": nuevo_tal,
+                    "practica": item["practica"],
+                    "instructor": item["instructor"],
+                    "estado_runt": item["estado_runt"],
+                    "fecha_cargue": fecha_reporte,
+                    "cargue_diario": etiqueta_diaria,
+                })
+                actualizados += 1
+                if len(nombres_act) < 6:
+                    nombres_act.append(f"{item['nombre']} ({nuevo_teo}/{meta_teo}T, {nuevo_tal}/{meta_tal}Tl)")
+
+        resumen_noms = ", ".join(nombres_act) + (f" y {actualizados - len(nombres_act)} más" if actualizados > len(nombres_act) else "")
+        return {
+            "ok": True,
+            "actualizados": actualizados,
+            "message": (
+                f"🚀 Cargue Masivo de {tipo} ({categoria_filtro} • {'Tope +8h/día' if modo_cupo == 'MAX_8' else 'Completar Meta'}) "
+                f"aplicado con fecha {fecha_reporte} a {actualizados} alumno(s)"
+                + (f": {resumen_noms}." if resumen_noms else ".")
+            ),
+        }
+
+    def sumar_lote_practica_individual(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Suma un lote individual de horas de Práctica (ej. +2h, +4h, +8h o completar al 100%)
+        a un alumno específico, registrando la Fecha de Cargue (hoy, ayer, mañana, etc.).
+        Si con el lote completa Teoría + Taller + Práctica y marcar_cargado=True, lo marca ✅ CARGADO RUNT.
+        """
+        fila_idx = _limpiar_entero(payload.get("fila", 0), 0)
+        horas_sumar = _limpiar_entero(payload.get("horas_sumar", 8), 8)
+        completar_todo = bool(payload.get("completar_todo", False))
+        fecha_reporte = _excel_serial_a_iso(payload.get("fecha_cargue", "")) or datetime.datetime.now(clases_core.TZ_COLOMBIA).strftime("%Y-%m-%d")
+
+        practica_list = self.listar_practica_runt(forzar=False)
+        item = next((x for x in practica_list if x["fila"] == fila_idx), None)
+        if not item:
+            return {"ok": False, "message": f"No se encontró la fila #{fila_idx} en la pestaña Practica."}
+
+        teo = item["teoria"] if item["teoria"] > 0 else item["meta_teoria"]
+        tal = item["taller"] if item["taller"] > 0 else item["meta_taller"]
+        if completar_todo:
+            teo = item["meta_teoria"]
+            tal = item["meta_taller"]
+            nueva_prac = item["meta_practica"]
+        else:
+            nueva_prac = min(item["meta_practica"], item["practica"] + max(1, horas_sumar))
+
+        llego_al_100 = (teo >= item["meta_teoria"] and tal >= item["meta_taller"] and nueva_prac >= item["meta_practica"])
+        nuevo_estado = "CARGADO RUNT" if (completar_todo or (llego_al_100 and payload.get("auto_certificar", False))) else item["estado_runt"]
+        nueva_prioridad = "Termino" if nueva_prac >= item["meta_practica"] else "EN PRACTICA"
+
+        res = self.guardar_o_actualizar_practica_runt({
+            "fila": item["fila"],
+            "nombre": item["nombre"],
+            "cedula": item["cedula"],
+            "categoria": item["categoria"],
+            "fecha_matricula": item["fecha_matricula"],
+            "prioridad": nueva_prioridad,
+            "vence_90_dias": item["vence_90_dias"],
+            "fecha_registro_runt": item["fecha_registro_runt"],
+            "teoria": teo,
+            "taller": tal,
+            "practica": nueva_prac,
+            "instructor": item["instructor"],
+            "estado_runt": nuevo_estado,
+            "fecha_cargue": fecha_reporte,
+            "cargue_diario": f"PRACTICA (+{nueva_prac - item['practica']}h)",
+        })
+        return res
+
+    def reiniciar_curso_vencido_con_sancion(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Cuando a un alumno se le vencen los 90 días del curso en RUNT:
+        1. Reinicia su Fecha de Matrícula / Inicio RUNT a la nueva fecha indicada (por defecto Hoy),
+           recalculando un nuevo plazo de 90 días (✅ VIGENTE).
+        2. Reinicia el conteo de horas reportadas en RUNT a 0 (o conserva Teoría si se indica) para
+           volver a subirlas desde cero en la plataforma RUNT.
+        3. Registra automáticamente la Sanción Económica por Vencimiento de Curso (90 días) en la hoja
+           de Inasistencias / Multas para control de caja y cobro al alumno.
+        """
+        fila_idx = _limpiar_entero(payload.get("fila", 0), 0)
+        valor_sancion = _limpiar_entero(payload.get("valor_sancion", 50000), 50000)
+        nueva_fecha_inicio = _excel_serial_a_iso(payload.get("nueva_fecha", "")) or datetime.datetime.now(clases_core.TZ_COLOMBIA).strftime("%Y-%m-%d")
+        conservar_teoria = bool(payload.get("conservar_teoria", False))
+
+        practica_list = self.listar_practica_runt(forzar=False)
+        item = next((x for x in practica_list if x["fila"] == fila_idx), None)
+        if not item:
+            return {"ok": False, "message": f"No se encontró la fila #{fila_idx} en la pestaña Practica."}
+
+        d0 = datetime.datetime.strptime(nueva_fecha_inicio, "%Y-%m-%d").date()
+        nuevo_vence_90 = (d0 + datetime.timedelta(days=90)).strftime("%Y-%m-%d")
+
+        res_runt = self.guardar_o_actualizar_practica_runt({
+            "fila": item["fila"],
+            "nombre": item["nombre"],
+            "cedula": item["cedula"],
+            "categoria": item["categoria"],
+            "fecha_matricula": nueva_fecha_inicio,
+            "prioridad": "EN PRACTICA",
+            "vence_90_dias": nuevo_vence_90,
+            "fecha_registro_runt": nueva_fecha_inicio,
+            "teoria": item["teoria"] if conservar_teoria else 0,
+            "taller": 0,
+            "practica": 0,
+            "instructor": f"REINICIO RUNT (SANCIÓN ${valor_sancion:,})",
+            "estado_runt": "PENDIENTE RUNT",
+            "fecha_cargue": nueva_fecha_inicio,
+            "cargue_diario": f"REINICIO SANCIÓN ${valor_sancion:,}",
+        })
+
+        # Registrar también el cobro de la sanción económica en la hoja de Inasistencias / Multas
+        consec_sancion = ""
+        try:
+            res_in = clases_core.sheets_service.registrar_inasistencia(
+                documento_alumno=item["cedula"],
+                nombre_alumno=item["nombre"],
+                categoria=item["categoria"],
+                clases_faltadas="SANCIÓN VENCIMIENTO 90 DÍAS RUNT (REINICIO CURSO)",
+                nombre_instructor="CONTROL RUNT / ADMINISTRACIÓN",
+                no_horas=1,
+                valor_hora=valor_sancion,
+                estado="Pendiente Pago",
+                fecha=d0.strftime("%d/%m/%Y"),
+                hora="REINICIO RUNT",
+            )
+            consec_sancion = str(res_in.get("Consecutivo", ""))
+        except Exception as exc_s:
+            logger.warning("Aviso registrando sanción económica por vencimiento RUNT: %s", exc_s)
+
+        return {
+            "ok": True,
+            "fila": item["fila"],
+            "message": (
+                f"🔄 Curso RUNT reiniciado para {item['nombre']} ({item['categoria']}): "
+                f"Nueva vigencia de 90 días hasta {nuevo_vence_90} (Horas reiniciadas a 0 para nuevo cargue RUNT) "
+                f"y Sanción Económica por ${valor_sancion:,} generada en Control de Pagos"
+                + (f" (Recibo/Multa #{consec_sancion})." if consec_sancion else ".")
+            ),
+            "detalle": res_runt,
+        }
+
     def obtener_panorama_runt_web(self, forzar: bool = False) -> Dict[str, Any]:
         practica = self.listar_practica_runt(forzar=forzar)
         no_runt = self.listar_no_runt()
@@ -752,7 +1012,13 @@ class RuntControlService:
 
         cargados_cnt = sum(1 for x in practica if x["estado_runt"] == "CARGADO RUNT")
         pendientes_cnt = len(practica) - cargados_cnt
+        terminaron_sin_cargue_cnt = sum(1 for x in practica if x["es_terminado_sin_cargue"])
+        urgentes_en_practica_cnt = sum(1 for x in practica if x["es_urgente_en_practica"])
+        moto_sin_25_teoria_cnt = sum(1 for x in practica if x["estado_runt"] != "CARGADO RUNT" and x["categoria"] in ("A1", "A2") and x["teoria"] < x["meta_teoria"])
+        moto_sin_3_taller_cnt = sum(1 for x in practica if x["estado_runt"] != "CARGADO RUNT" and x["categoria"] in ("A1", "A2") and x["taller"] < x["meta_taller"])
+        carro_sin_teoria_taller_cnt = sum(1 for x in practica if x["estado_runt"] != "CARGADO RUNT" and x["categoria"] in ("B1", "C1", "RECAT_C1") and (x["teoria"] < x["meta_teoria"] or x["taller"] < x["meta_taller"]))
         por_vencer_cnt = sum(1 for x in practica if x["semaforo_90"] in ("POR_VENCER", "VENCIDO") and x["estado_runt"] != "CARGADO RUNT")
+        vencidos_sancion_cnt = sum(1 for x in practica if x["semaforo_90"] == "VENCIDO" and x["estado_runt"] != "CARGADO RUNT")
         con_desfase_bot_cnt = sum(1 for x in practica if x["pendiente_subir_bot"] > 0 and x["estado_runt"] != "CARGADO RUNT")
         sin_registro_no_runt_cnt = sum(1 for x in no_runt if "SIN" in x["estado_registro"].upper())
 
@@ -766,7 +1032,13 @@ class RuntControlService:
                 "total_practica": len(practica),
                 "cargados_runt": cargados_cnt,
                 "pendientes_runt": pendientes_cnt,
+                "terminaron_sin_cargue": terminaron_sin_cargue_cnt,
+                "urgentes_en_practica": urgentes_en_practica_cnt,
+                "moto_sin_25_teoria": moto_sin_25_teoria_cnt,
+                "moto_sin_3_taller": moto_sin_3_taller_cnt,
+                "carro_sin_teoria_taller": carro_sin_teoria_taller_cnt,
                 "por_vencer_o_vencidos": por_vencer_cnt,
+                "vencidos_sancion": vencidos_sancion_cnt,
                 "con_clases_bot_por_subir": con_desfase_bot_cnt,
                 "no_runt_pendientes": sin_registro_no_runt_cnt,
                 "total_no_runt": len(no_runt),
