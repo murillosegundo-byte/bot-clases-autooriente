@@ -57,6 +57,7 @@ except Exception: pass
 
 import bot_agenda_cea
 import crm_whatsapp_cea
+import runt_control_cea
 
 
 def _parse_multipart_binary(content_type: str, raw_body: bytes) -> Dict[str, Tuple[Optional[str], bytes]]:
@@ -1564,6 +1565,143 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               </tr>
             </thead>
             <tbody id="clasesTbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- =================================================================== -->
+      <!-- PANEL INTEGRADO: HOJA DE CÁLCULO CONTROL DIGITAL RUNT               -->
+      <!-- ID: 1XHbqfDa7dK5CWcgWKNgJZiXN_OSrjJCEJJu8F4z-u2M                    -->
+      <!-- =================================================================== -->
+      <div class="panel" style="margin-top:18px; border-color:#3b82f6; background:linear-gradient(180deg, rgba(30,58,138,0.18), rgba(15,23,42,0.96));">
+        <div class="panel-title">
+          <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+            <span>🏛️ Hoja de Cálculo Integrada: Control Digital de Reporte de Clases en Plataforma RUNT</span>
+            <span class="badge badge-info" id="runtSheetStatusBadge">ID: 1XHbqfDa7dK5CWcgWKNgJZiXN_OSrjJCEJJu8F4z-u2M</span>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="btn btn-primary" onclick="sincronizarHorasBotHaciaHojaRunt()" title="Toma las horas prácticas dictadas por los instructores en el Bot y actualiza la columna Practica de esta hoja">🔄 Pasar Horas Prácticas del Bot a Hoja RUNT</button>
+            <button type="button" class="btn btn-outline" onclick="cargarPanoramaRuntDigital(true)">🔃 Recargar Hoja RUNT</button>
+            <a id="runtSheetExternalLink" href="https://docs.google.com/spreadsheets/d/1XHbqfDa7dK5CWcgWKNgJZiXN_OSrjJCEJJu8F4z-u2M/edit" target="_blank" class="btn btn-outline">↗️ Abrir en Google Sheets</a>
+          </div>
+        </div>
+
+        <!-- KPIs de la Hoja RUNT -->
+        <div class="kpi-grid" id="kpiRuntSheetGrid" style="margin-bottom:14px;"></div>
+
+        <!-- Formulario de Actualización / Registro en Pestaña 'Practica' de la Hoja RUNT -->
+        <div class="panel" style="margin-bottom:14px; background:#0f172a; border-color:#2b3d63;">
+          <div class="panel-title">
+            <span>📝 Reportar / Actualizar Conteo de Horas en Plataforma RUNT (Teoría + Taller + Práctica = Clases Cargadas)</span>
+            <span class="badge badge-warning" id="runtEditRowBadge">Nuevo / Buscar por Cédula o Clic en ✏️ de la Tabla</span>
+          </div>
+          <input type="hidden" id="rn_fila" value="0" />
+          <div class="form-grid-4">
+            <div>
+              <label class="field-label">Cédula Alumno *</label>
+              <input type="text" id="rn_cedula" list="dlCedulasGlobal" autocomplete="off" placeholder="Ej: 1094278698" oninput="autocompletarFormularioRuntSheet('cedula')" />
+            </div>
+            <div>
+              <label class="field-label">Nombre y Apellido *</label>
+              <input type="text" id="rn_nombre" list="dlAlumnosGlobal" autocomplete="off" placeholder="Ej: ADRIAN MAURICIO RAMIREZ" oninput="autocompletarFormularioRuntSheet('nombre')" />
+            </div>
+            <div>
+              <label class="field-label">Categoría *</label>
+              <select id="rn_cat" onchange="ajustarMetasFormularioRunt()">
+                <option value="A2">🏍️ A2 (25 Teo + 3 Tal + 15 Prác = 43h)</option>
+                <option value="B1">🚗 B1 (25 Teo + 5 Tal + 20 Prác = 50h)</option>
+                <option value="C1">🚕 C1 (30 Teo + 5 Tal + 30 Prác = 65h)</option>
+                <option value="RECAT_C1">🔄 RAC. C1 (8 Teo + 0 Tal + 8 Prác = 16h)</option>
+                <option value="A1">🏍️ A1 (25 Teo + 3 Tal + 8 Prác = 36h)</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label">Prioridad / Etapa</label>
+              <select id="rn_prioridad">
+                <option value="EN PRACTICA">🟢 EN PRACTICA</option>
+                <option value="Termino">🎓 Termino</option>
+                <option value="revisado">🔍 revisado</option>
+                <option value="Novedad">⚠️ Novedad</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label">📅 Fecha Matrícula (Calcula Vence 90d)</label>
+              <input type="date" id="rn_fecha_mat" />
+            </div>
+            <div>
+              <label class="field-label">📘 Horas Teoría Cargadas</label>
+              <input type="number" id="rn_teoria" value="25" min="0" max="40" />
+            </div>
+            <div>
+              <label class="field-label">🔧 Horas Taller Cargadas</label>
+              <input type="number" id="rn_taller" value="3" min="0" max="15" />
+            </div>
+            <div>
+              <label class="field-label">🚗 Horas Práctica Cargadas</label>
+              <input type="number" id="rn_practica" value="15" min="0" max="40" />
+            </div>
+            <div>
+              <label class="field-label">📌 Cargue Diario (Hoy)</label>
+              <select id="rn_cargue_diario">
+                <option value="">-- Sin etiqueta diaria --</option>
+                <option value="TEORIA">📘 TEORIA</option>
+                <option value="TALLER">🔧 TALLER</option>
+                <option value="PRACTICA">🚗 PRACTICA</option>
+                <option value="COMPLETO">✅ COMPLETO</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label">🏛️ Actividad / Estado RUNT</label>
+              <select id="rn_estado_runt">
+                <option value="PENDIENTE RUNT">⚠️ PENDIENTE RUNT</option>
+                <option value="CARGADO RUNT">✅ CARGADO RUNT</option>
+              </select>
+            </div>
+            <div style="display:flex; gap:6px; grid-column: span 2;">
+              <button type="button" class="btn btn-primary" style="flex:1; justify-content:center;" onclick="guardarRegistroHojaRunt(false)">💾 Guardar Conteo en Hoja RUNT</button>
+              <button type="button" class="btn btn-success" style="flex:1; justify-content:center;" onclick="guardarRegistroHojaRunt(true)" title="Completa el 100% de Teoría+Taller+Práctica y marca ✅ CARGADO RUNT">✅ Completar 100% y Marcar CARGADO RUNT</button>
+            </div>
+          </div>
+          <div id="runtSheetToast" class="status-toast"></div>
+        </div>
+
+        <!-- Sub-Pestañas de la Hoja de Cálculo RUNT (1XHbqfDa7dK5CWcgWKNgJZiXN_OSrjJCEJJu8F4z-u2M) -->
+        <div class="tabs-header" id="runtSheetTabsHeader">
+          <button type="button" class="tab-btn active" onclick="cambiarTabHojaRunt('PENDIENTES_PRACTICA', this)">
+            ⚠️ Pestaña Práctica: Pendientes RUNT <span class="badge badge-warning" id="cnt_rn_pend">0</span>
+          </button>
+          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('DESFASE_BOT', this)">
+            🔄 Con Horas Nuevas del Bot por Subir a RUNT <span class="badge badge-info" id="cnt_rn_bot">0</span>
+          </button>
+          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('POR_VENCER_90', this)">
+            🚨 Por Vencer / Vencidos (90 Días) <span class="badge badge-danger" id="cnt_rn_vence">0</span>
+          </button>
+          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('CARGADOS_PRACTICA', this)">
+            ✅ Pestaña Práctica: Ya Cargados RUNT <span class="badge badge-success" id="cnt_rn_cargados">0</span>
+          </button>
+          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('TODOS_PRACTICA', this)">
+            📋 Todos Pestaña Práctica <span class="badge" id="cnt_rn_todos">0</span>
+          </button>
+          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('TAB_NO_RUNT', this)">
+            🚫 Pestaña "No runt" (Sin Registro) <span class="badge badge-danger" id="cnt_rn_norunt">0</span>
+          </button>
+          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('TAB_INICIO_PRACTICA', this)">
+            🕒 Pestaña "Inicio Practica" (Horarios) <span class="badge badge-purple" id="cnt_rn_horarios">0</span>
+          </button>
+          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('TAB_CODIGOS_RUNT', this)">
+            🔢 Pestaña "Codigo de Runt" <span class="badge badge-info" id="cnt_rn_codigos">0</span>
+          </button>
+        </div>
+
+        <div class="table-toolbar">
+          <input type="search" id="searchRuntSheetInput" autocomplete="off" placeholder="🔎 Buscar en esta hoja por nombre, cédula, categoría, prioridad o estado..." oninput="renderizarTablaHojaRunt()" style="max-width:460px;" />
+          <span id="runtSheetCountInfo" style="font-size:12.5px; color:var(--muted);">Haz clic en <b>✏️ Editar</b> o en <b>✅ CARGADO RUNT</b> para actualizar en tiempo real</span>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead id="runtSheetThead"></thead>
+            <tbody id="runtSheetTbody"></tbody>
           </table>
         </div>
       </div>
@@ -3351,9 +3489,466 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         renderizarModuloInasistencias();
         renderizarModuloPesv();
         cargarBitacoraRobot();
+        cargarPanoramaRuntDigital(false);
       } catch (err) {
         console.error('Error cargando panorama del bot:', err);
       }
+    }
+
+    let RUNT_SHEET_DATA = null;
+    let ACTIVE_RUNT_TAB = 'PENDIENTES_PRACTICA';
+
+    async function cargarPanoramaRuntDigital(forzar = false) {
+      try {
+        const res = await fetch('/api/bot/runt_control?forzar=' + (forzar ? '1' : '0'));
+        const data = await res.json();
+        if (!data || !data.ok) return;
+        RUNT_SHEET_DATA = data;
+
+        const stBadge = document.getElementById('runtSheetStatusBadge');
+        const extLink = document.getElementById('runtSheetExternalLink');
+        if (extLink && data.sheet_url) extLink.href = data.sheet_url;
+        if (stBadge) {
+          if (data.conectado_en_vivo) {
+            stBadge.className = 'badge badge-success';
+            stBadge.textContent = `🟢 Conectado en Vivo • ID: ${data.sheet_id}`;
+          } else {
+            stBadge.className = 'badge badge-warning';
+            stBadge.textContent = `🟡 Base Activa RUNT (${data.kpis.total_practica} reg.) • ID: ${data.sheet_id}`;
+          }
+        }
+
+        const k = data.kpis || {};
+        const setCnt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+        setCnt('cnt_rn_pend', k.pendientes_runt || 0);
+        setCnt('cnt_rn_bot', k.con_clases_bot_por_subir || 0);
+        setCnt('cnt_rn_vence', k.por_vencer_o_vencidos || 0);
+        setCnt('cnt_rn_cargados', k.cargados_runt || 0);
+        setCnt('cnt_rn_todos', k.total_practica || 0);
+        setCnt('cnt_rn_norunt', k.no_runt_pendientes || 0);
+        setCnt('cnt_rn_horarios', k.total_inicio_practica || 0);
+        setCnt('cnt_rn_codigos', k.total_codigos_runt || 0);
+
+        const kpiEl = document.getElementById('kpiRuntSheetGrid');
+        if (kpiEl) {
+          kpiEl.innerHTML = `
+            <div class="kpi-card warning" style="cursor:pointer;" onclick="cambiarTabHojaRunt('PENDIENTES_PRACTICA')">
+              <div class="kpi-label">⚠️ Pendientes de Cargue en Hoja RUNT</div>
+              <div class="kpi-value" style="color:#fde047;">${k.pendientes_runt || 0} Alumnos</div>
+              <div class="kpi-sub">De <b>${k.total_practica || 0}</b> registros en pestaña <b>Practica</b></div>
+            </div>
+            <div class="kpi-card" style="cursor:pointer;" onclick="cambiarTabHojaRunt('DESFASE_BOT')">
+              <div class="kpi-label">🔄 Con Clases del Bot por Subir a RUNT</div>
+              <div class="kpi-value" style="color:#60a5fa;">${k.con_clases_bot_por_subir || 0} Alumnos</div>
+              <div class="kpi-sub">Tienen más horas prácticas en el Bot que en la hoja RUNT</div>
+            </div>
+            <div class="kpi-card danger" style="cursor:pointer;" onclick="cambiarTabHojaRunt('POR_VENCER_90')">
+              <div class="kpi-label">🚨 Por Vencer / Vencidos (Plazo 90 Días)</div>
+              <div class="kpi-value" style="color:#fca5a5;">${k.por_vencer_o_vencidos || 0} En Riesgo</div>
+              <div class="kpi-sub">Control de columna <b>Vence 90 días</b> en Hoja RUNT</div>
+            </div>
+            <div class="kpi-card success" style="cursor:pointer;" onclick="cambiarTabHojaRunt('CARGADOS_PRACTICA')">
+              <div class="kpi-label">✅ Ya Cargados 100% en Plataforma RUNT</div>
+              <div class="kpi-value" style="color:#34d399;">${k.cargados_runt || 0} Completados</div>
+              <div class="kpi-sub"><b>${k.no_runt_pendientes || 0}</b> pendientes en pestaña <b>No runt</b></div>
+            </div>
+          `;
+        }
+
+        renderizarTablaHojaRunt();
+      } catch (err) {
+        console.error('Error cargando hoja RUNT digital:', err);
+      }
+    }
+
+    function cambiarTabHojaRunt(tabVal, btnEl) {
+      ACTIVE_RUNT_TAB = tabVal;
+      document.querySelectorAll('#runtSheetTabsHeader .tab-btn').forEach(b => b.classList.remove('active'));
+      if (btnEl) {
+        btnEl.classList.add('active');
+      } else {
+        const idxMap = {
+          'PENDIENTES_PRACTICA': 0,
+          'DESFASE_BOT': 1,
+          'POR_VENCER_90': 2,
+          'CARGADOS_PRACTICA': 3,
+          'TODOS_PRACTICA': 4,
+          'TAB_NO_RUNT': 5,
+          'TAB_INICIO_PRACTICA': 6,
+          'TAB_CODIGOS_RUNT': 7
+        };
+        const btns = document.querySelectorAll('#runtSheetTabsHeader .tab-btn');
+        if (btns[idxMap[tabVal] || 0]) btns[idxMap[tabVal] || 0].classList.add('active');
+      }
+      renderizarTablaHojaRunt();
+    }
+
+    function ajustarMetasFormularioRunt() {
+      const cat = (document.getElementById('rn_cat') || {}).value || 'A2';
+      const metas = {
+        'A1': { t: 25, tl: 3, p: 8 },
+        'A2': { t: 25, tl: 3, p: 15 },
+        'B1': { t: 25, tl: 5, p: 20 },
+        'C1': { t: 30, tl: 5, p: 30 },
+        'RECAT_C1': { t: 8, tl: 0, p: 8 }
+      }[cat] || { t: 25, tl: 3, p: 15 };
+      const filaAct = Number((document.getElementById('rn_fila') || {}).value || 0);
+      if (filaAct === 0) {
+        document.getElementById('rn_teoria').value = metas.t;
+        document.getElementById('rn_taller').value = metas.tl;
+        document.getElementById('rn_practica').value = metas.p;
+      }
+    }
+
+    function cargarFilaRuntEnFormulario(filaIdx) {
+      if (!RUNT_SHEET_DATA || !RUNT_SHEET_DATA.practica) return;
+      const item = RUNT_SHEET_DATA.practica.find(x => Number(x.fila) === Number(filaIdx));
+      if (!item) return;
+      document.getElementById('rn_fila').value = item.fila;
+      document.getElementById('rn_cedula').value = item.cedula || '';
+      document.getElementById('rn_nombre').value = item.nombre || '';
+      document.getElementById('rn_cat').value = item.categoria || 'A2';
+      document.getElementById('rn_prioridad').value = item.prioridad || 'EN PRACTICA';
+      document.getElementById('rn_fecha_mat').value = item.fecha_matricula || '';
+      document.getElementById('rn_teoria').value = item.teoria || 0;
+      document.getElementById('rn_taller').value = item.taller || 0;
+      document.getElementById('rn_practica').value = Math.max(item.practica || 0, item.practica_bot || 0);
+      document.getElementById('rn_cargue_diario').value = item.cargue_diario || '';
+      document.getElementById('rn_estado_runt').value = item.estado_runt || 'PENDIENTE RUNT';
+      const badge = document.getElementById('runtEditRowBadge');
+      if (badge) {
+        badge.className = 'badge badge-info';
+        badge.textContent = `✏️ Editando Fila #${item.fila}: ${item.nombre} (${item.categoria})`;
+      }
+      document.getElementById('rn_cedula').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function autocompletarFormularioRuntSheet(origen) {
+      if (!RUNT_SHEET_DATA || !RUNT_SHEET_DATA.practica) return;
+      const cedVal = (document.getElementById('rn_cedula').value || '').trim();
+      const nomVal = (document.getElementById('rn_nombre').value || '').trim().toUpperCase();
+      const catVal = (document.getElementById('rn_cat').value || 'A2').trim();
+      let match = null;
+      if (origen === 'cedula' && cedVal.length >= 5) {
+        match = RUNT_SHEET_DATA.practica.find(x => String(x.cedula) === cedVal && x.categoria === catVal)
+          || RUNT_SHEET_DATA.practica.find(x => String(x.cedula) === cedVal);
+      } else if (origen === 'nombre' && nomVal.length >= 4) {
+        match = RUNT_SHEET_DATA.practica.find(x => String(x.nombre || '').toUpperCase() === nomVal && x.categoria === catVal)
+          || RUNT_SHEET_DATA.practica.find(x => String(x.nombre || '').toUpperCase() === nomVal);
+      }
+      if (match) {
+        document.getElementById('rn_fila').value = match.fila;
+        if (origen === 'cedula' && match.nombre) document.getElementById('rn_nombre').value = match.nombre;
+        if (origen === 'nombre' && match.cedula) document.getElementById('rn_cedula').value = match.cedula;
+        document.getElementById('rn_cat').value = match.categoria || 'A2';
+        document.getElementById('rn_prioridad').value = match.prioridad || 'EN PRACTICA';
+        if (match.fecha_matricula) document.getElementById('rn_fecha_mat').value = match.fecha_matricula;
+        document.getElementById('rn_teoria').value = match.teoria || 0;
+        document.getElementById('rn_taller').value = match.taller || 0;
+        document.getElementById('rn_practica').value = Math.max(match.practica || 0, match.practica_bot || 0);
+        document.getElementById('rn_estado_runt').value = match.estado_runt || 'PENDIENTE RUNT';
+        const badge = document.getElementById('runtEditRowBadge');
+        if (badge) {
+          badge.className = 'badge badge-info';
+          badge.textContent = `✏️ Fila #${match.fila} encontrada (${match.nombre} - ${match.categoria})`;
+        }
+      } else {
+        document.getElementById('rn_fila').value = '0';
+      }
+    }
+
+    async function guardarRegistroHojaRunt(completarCienPorCiento = false) {
+      const fila = Number(document.getElementById('rn_fila').value || 0);
+      const cedula = document.getElementById('rn_cedula').value.trim();
+      const nombre = document.getElementById('rn_nombre').value.trim();
+      const categoria = document.getElementById('rn_cat').value;
+      let prioridad = document.getElementById('rn_prioridad').value;
+      const fecha_matricula = document.getElementById('rn_fecha_mat').value;
+      let teoria = Number(document.getElementById('rn_teoria').value || 0);
+      let taller = Number(document.getElementById('rn_taller').value || 0);
+      let practica = Number(document.getElementById('rn_practica').value || 0);
+      let cargue_diario = document.getElementById('rn_cargue_diario').value;
+      let estado_runt = document.getElementById('rn_estado_runt').value;
+      const toast = document.getElementById('runtSheetToast');
+
+      if (!cedula && !nombre) {
+        toast.className = 'status-toast err';
+        toast.textContent = '⚠️ Ingresa la Cédula o el Nombre del alumno.';
+        return;
+      }
+
+      if (completarCienPorCiento) {
+        const metas = {
+          'A1': { t: 25, tl: 3, p: 8 },
+          'A2': { t: 25, tl: 3, p: 15 },
+          'B1': { t: 25, tl: 5, p: 20 },
+          'C1': { t: 30, tl: 5, p: 30 },
+          'RECAT_C1': { t: 8, tl: 0, p: 8 }
+        }[categoria] || { t: 25, tl: 3, p: 15 };
+        teoria = metas.t;
+        taller = metas.tl;
+        practica = metas.p;
+        prioridad = 'Termino';
+        estado_runt = 'CARGADO RUNT';
+        if (!cargue_diario) cargue_diario = 'PRACTICA';
+      }
+
+      toast.className = 'status-toast ok';
+      toast.textContent = '⏳ Guardando conteo de horas en Hoja RUNT y sincronizando con Módulo 2...';
+
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'runt_guardar_practica',
+            fila, cedula, nombre, categoria, prioridad, fecha_matricula,
+            teoria, taller, practica, cargue_diario, estado_runt
+          })
+        });
+        const data = await res.json();
+        toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+        toast.textContent = data.message || 'Actualizado.';
+        if (data.ok) {
+          await cargarPanoramaRuntDigital(false);
+          await cargarBotOverview();
+        }
+      } catch (err) {
+        toast.className = 'status-toast err';
+        toast.textContent = '❌ Error guardando en Hoja RUNT: ' + err;
+      }
+    }
+
+    async function marcarCargadoHojaRuntRapido(filaIdx, marcarCargado = true) {
+      if (!RUNT_SHEET_DATA || !RUNT_SHEET_DATA.practica) return;
+      const item = RUNT_SHEET_DATA.practica.find(x => Number(x.fila) === Number(filaIdx));
+      if (!item) return;
+      const payload = {
+        action: 'runt_guardar_practica',
+        fila: item.fila,
+        cedula: item.cedula,
+        nombre: item.nombre,
+        categoria: item.categoria,
+        prioridad: marcarCargado ? 'Termino' : 'EN PRACTICA',
+        fecha_matricula: item.fecha_matricula,
+        teoria: marcarCargado ? item.meta_teoria : item.teoria,
+        taller: marcarCargado ? item.meta_taller : item.taller,
+        practica: marcarCargado ? item.meta_practica : Math.max(item.practica, item.practica_bot),
+        cargue_diario: marcarCargado ? 'PRACTICA' : item.cargue_diario,
+        estado_runt: marcarCargado ? 'CARGADO RUNT' : 'PENDIENTE RUNT'
+      };
+      const res = await fetch('/api/bot/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      const toast = document.getElementById('runtSheetToast');
+      if (toast) {
+        toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+        toast.textContent = data.message || '';
+      }
+      await cargarPanoramaRuntDigital(false);
+      await cargarBotOverview();
+    }
+
+    async function sincronizarHorasBotHaciaHojaRunt() {
+      const toast = document.getElementById('runtSheetToast');
+      if (toast) {
+        toast.className = 'status-toast ok';
+        toast.textContent = '⏳ Cruzando clases prácticas del Bot de Telegram con la hoja RUNT...';
+      }
+      const res = await fetch('/api/bot/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'runt_sincronizar_bot' })
+      });
+      const data = await res.json();
+      if (toast) {
+        toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+        toast.textContent = data.message || '';
+      }
+      await cargarPanoramaRuntDigital(false);
+    }
+
+    async function cambiarEstadoPestanaNoRunt(filaIdx, nuevoEstado) {
+      const res = await fetch('/api/bot/action', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'runt_cambiar_no_runt', fila: filaIdx, estado_registro: nuevoEstado })
+      });
+      const data = await res.json();
+      const toast = document.getElementById('runtSheetToast');
+      if (toast) {
+        toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+        toast.textContent = data.message || '';
+      }
+      await cargarPanoramaRuntDigital(false);
+    }
+
+    function renderizarTablaHojaRunt() {
+      if (!RUNT_SHEET_DATA) return;
+      const q = obtenerBusquedaLimpia('searchRuntSheetInput');
+      const thead = document.getElementById('runtSheetThead');
+      const tbody = document.getElementById('runtSheetTbody');
+      const infoEl = document.getElementById('runtSheetCountInfo');
+      if (!thead || !tbody) return;
+
+      if (ACTIVE_RUNT_TAB === 'TAB_NO_RUNT') {
+        const rows = (RUNT_SHEET_DATA.no_runt || []).filter(r => {
+          if (!q) return true;
+          return `${r.nombre} ${r.cedula} ${r.categoria} ${r.estado_registro} ${r.novedad}`.toLowerCase().includes(q);
+        });
+        infoEl.textContent = `Pestaña "No runt" — Mostrando ${rows.length} alumnos pendientes o verificados de inscripción RUNT`;
+        thead.innerHTML = `<tr>
+          <th>Fila</th><th>Fecha Reporte</th><th>Nombre y Apellido</th><th>Cédula</th><th>Tipo Doc.</th>
+          <th>Cat.</th><th>Fecha Matrícula</th><th>Fecha Registro RUNT</th><th>Estado Registro</th><th>Acción 1 Clic</th>
+        </tr>`;
+        tbody.innerHTML = rows.map(r => {
+          const esReg = r.estado_registro.includes('REGISTRADO') && !r.estado_registro.includes('SIN');
+          return `<tr class="${esReg ? 'row-sem-verde' : 'row-sem-rojo'}">
+            <td><code>#${r.fila}</code></td>
+            <td>${r.timestamp || '-'}</td>
+            <td><b>${r.nombre || 'SIN NOMBRE'}</b></td>
+            <td><code>${r.cedula}</code></td>
+            <td>${r.tipo_documento}</td>
+            <td><span class="badge badge-info">${r.categoria}</span></td>
+            <td>${r.fecha_matricula || '-'}</td>
+            <td>${r.fecha_registro_runt || '-'}</td>
+            <td><span class="badge ${esReg ? 'badge-success' : 'badge-danger'}">${r.estado_registro}</span></td>
+            <td>
+              ${esReg
+                ? `<button type="button" class="btn btn-outline" style="padding:4px 8px; font-size:11px;" onclick="cambiarEstadoPestanaNoRunt(${r.fila}, 'SIN REGISTRO')">↩️ Marcar Sin Registro</button>`
+                : `<button type="button" class="btn btn-success" style="padding:4px 8px; font-size:11px;" onclick="cambiarEstadoPestanaNoRunt(${r.fila}, 'REGISTRADO')">✅ Marcar REGISTRADO</button>`}
+            </td>
+          </tr>`;
+        }).join('') || '<tr><td colspan="10" style="text-align:center; padding:18px; color:var(--muted);">Sin registros en pestaña No runt.</td></tr>';
+        return;
+      }
+
+      if (ACTIVE_RUNT_TAB === 'TAB_INICIO_PRACTICA') {
+        const rows = (RUNT_SHEET_DATA.inicio_practica || []).filter(r => {
+          if (!q) return true;
+          return `${r.nombre} ${r.cedula} ${r.categoria} ${r.novedades} ${r.horarios_practica}`.toLowerCase().includes(q);
+        });
+        infoEl.textContent = `Pestaña "Inicio Practica" — Mostrando ${rows.length} respuestas de disponibilidad de horarios y novedades`;
+        thead.innerHTML = `<tr>
+          <th>Fecha Formulario</th><th>Alumno</th><th>Cédula</th><th>Categoría</th><th>Novedades (Saldo / Viaje / Embarazo)</th><th>Mis Horarios de Práctica</th>
+        </tr>`;
+        tbody.innerHTML = rows.map(r => `<tr>
+          <td>${r.fecha || '-'}</td>
+          <td><b>${r.nombre}</b></td>
+          <td><code>${r.cedula}</code></td>
+          <td><span class="badge badge-info">${r.categoria}</span></td>
+          <td>${r.novedades ? `<span class="badge badge-warning">${r.novedades}</span>` : '-'}</td>
+          <td style="white-space:normal; max-width:420px; font-size:11.5px; color:#cbd5e1;">${r.horarios_practica || '-'}</td>
+        </tr>`).join('') || '<tr><td colspan="6" style="text-align:center; padding:18px; color:var(--muted);">Sin registros.</td></tr>';
+        return;
+      }
+
+      if (ACTIVE_RUNT_TAB === 'TAB_CODIGOS_RUNT') {
+        const rows = (RUNT_SHEET_DATA.codigos_runt || []).filter(r => {
+          if (!q) return true;
+          return `${r.nombre} ${r.cedula} ${r.codigo_runt} ${r.responsable}`.toLowerCase().includes(q);
+        });
+        infoEl.textContent = `Pestaña "Codigo de Runt" — Mostrando ${rows.length} códigos asignados`;
+        thead.innerHTML = `<tr>
+          <th>N°</th><th>Alumno</th><th>Cédula</th><th>Fecha</th><th>Código RUNT</th><th>Responsable</th>
+        </tr>`;
+        tbody.innerHTML = rows.map(r => `<tr>
+          <td><b>#${r.numeracion || r.fila}</b></td>
+          <td><b>${r.nombre || '-'}</b></td>
+          <td><code>${r.cedula || '-'}</code></td>
+          <td>${r.fecha || '-'}</td>
+          <td><code style="color:#fde047; font-weight:700;">${r.codigo_runt || '-'}</code></td>
+          <td>${r.responsable ? `<span class="badge badge-purple">${r.responsable}</span>` : '-'}</td>
+        </tr>`).join('') || '<tr><td colspan="6" style="text-align:center; padding:18px; color:var(--muted);">Sin códigos.</td></tr>';
+        return;
+      }
+
+      // Pestaña principal 'Practica' (con filtros de Pendientes, Desfase Bot, Por Vencer 90 días, Cargados, Todos)
+      let listP = RUNT_SHEET_DATA.practica || [];
+      listP = listP.filter(r => {
+        const esCarg = r.estado_runt === 'CARGADO RUNT';
+        if (ACTIVE_RUNT_TAB === 'PENDIENTES_PRACTICA' && esCarg) return false;
+        if (ACTIVE_RUNT_TAB === 'CARGADOS_PRACTICA' && !esCarg) return false;
+        if (ACTIVE_RUNT_TAB === 'DESFASE_BOT' && (esCarg || (r.pendiente_subir_bot || 0) <= 0)) return false;
+        if (ACTIVE_RUNT_TAB === 'POR_VENCER_90' && (esCarg || !['POR_VENCER', 'VENCIDO'].includes(r.semaforo_90))) return false;
+        if (!q) return true;
+        return `${r.nombre} ${r.cedula} ${r.categoria} ${r.prioridad} ${r.estado_runt} ${r.cargue_diario} ${r.vigente_texto}`.toLowerCase().includes(q);
+      });
+
+      infoEl.innerHTML = `Pestaña <b>"Practica"</b> — Mostrando <b>${listP.length}</b> registros • 💡 Al hacer clic en <b>✅ CARGADO RUNT</b> se completan sus horas y pasa automáticamente a Cargados`;
+
+      thead.innerHTML = `<tr>
+        <th>Alumno</th>
+        <th>Cédula</th>
+        <th>Cat.</th>
+        <th>Fecha Mat.</th>
+        <th>Prioridad</th>
+        <th>Vence 90 Días</th>
+        <th>Fecha Reg. RUNT</th>
+        <th>Vigencia</th>
+        <th>📘 Teoría</th>
+        <th>🔧 Taller</th>
+        <th>🚗 Práctica (RUNT vs Bot)</th>
+        <th>Σ Clases Cargadas</th>
+        <th>Actividad RUNT</th>
+        <th>Fecha / Cargue Diario</th>
+        <th>Acciones Rápidas</th>
+      </tr>`;
+
+      tbody.innerHTML = listP.map(r => {
+        const esCarg = r.estado_runt === 'CARGADO RUNT';
+        let trClass = esCarg ? 'row-sem-verde' : '';
+        if (!esCarg && r.semaforo_90 === 'VENCIDO') trClass = 'row-sem-rojo';
+        else if (!esCarg && (r.semaforo_90 === 'POR_VENCER' || r.pendiente_subir_bot > 0)) trClass = 'row-sem-amarillo';
+
+        let badgeVig = `<span class="badge badge-success">${r.vigente_texto || '✅ VIGENTE'}</span>`;
+        if (r.semaforo_90 === 'VENCIDO') {
+          badgeVig = `<span class="badge badge-danger">❌ VENCIDO ${r.dias_restantes_90 !== null ? '(' + r.dias_restantes_90 + 'd)' : ''}</span>`;
+        } else if (r.semaforo_90 === 'POR_VENCER') {
+          badgeVig = `<span class="badge badge-warning">⚠️ POR VENCER (${r.dias_restantes_90}d)</span>`;
+        } else if (r.dias_restantes_90 !== null) {
+          badgeVig = `<span class="badge badge-success">✅ VIGENTE (${r.dias_restantes_90}d)</span>`;
+        }
+
+        const pracHtml = r.pendiente_subir_bot > 0
+          ? `<b style="color:#fde047;">${r.practica}/${r.meta_practica}</b> <span class="badge badge-info" title="El Bot de Clases ya tiene ${r.practica_bot}h dictadas (+${r.pendiente_subir_bot}h por subir a RUNT)">🤖 Bot: ${r.practica_bot}h (+${r.pendiente_subir_bot})</span>`
+          : `<b style="color:${r.practica >= r.meta_practica ? '#34d399' : '#cbd5e1'};">${r.practica}/${r.meta_practica}</b>`;
+
+        return `<tr class="${trClass}">
+          <td><b>${r.nombre}</b></td>
+          <td><code>${r.cedula}</code></td>
+          <td><span class="badge badge-info">${r.categoria_raw || r.categoria}</span></td>
+          <td>${r.fecha_matricula || '-'}</td>
+          <td><span class="badge ${r.prioridad === 'Termino' ? 'badge-purple' : 'badge-success'}">${r.prioridad || '-'}</span></td>
+          <td style="color:#fde047; font-weight:600;">${r.vence_90_dias || '-'}</td>
+          <td>${r.fecha_registro_runt || '-'}</td>
+          <td>${badgeVig}</td>
+          <td style="text-align:center;"><b style="color:${r.teoria >= r.meta_teoria ? '#34d399' : '#fde047'};">${r.teoria}/${r.meta_teoria}</b></td>
+          <td style="text-align:center;"><b style="color:${r.taller >= r.meta_taller ? '#34d399' : '#fde047'};">${r.taller}/${r.meta_taller}</b></td>
+          <td>${pracHtml}</td>
+          <td>
+            <b>${r.clases_cargadas}/${r.meta_total}</b> (${r.porcentaje_runt}%)
+          </td>
+          <td>
+            <span class="badge ${esCarg ? 'badge-success' : 'badge-danger'}">${esCarg ? '✅ CARGADO RUNT' : '⚠️ PENDIENTE RUNT'}</span>
+          </td>
+          <td>
+            ${r.fecha_cargue ? `<span style="font-size:11px;">${r.fecha_cargue}</span>` : ''}
+            ${r.cargue_diario ? `<span class="badge badge-info">${r.cargue_diario}</span>` : ''}
+          </td>
+          <td>
+            <div style="display:flex; gap:5px; flex-wrap:wrap;">
+              <button type="button" class="btn btn-outline" style="padding:4px 8px; font-size:11px;" onclick="cargarFilaRuntEnFormulario(${r.fila})">✏️ Editar Horas</button>
+              ${esCarg
+                ? `<button type="button" class="btn btn-outline" style="padding:4px 8px; font-size:11px;" onclick="marcarCargadoHojaRuntRapido(${r.fila}, false)">↩️ Pendiente</button>`
+                : `<button type="button" class="btn btn-success" style="padding:4px 8px; font-size:11px;" onclick="marcarCargadoHojaRuntRapido(${r.fila}, true)">✅ CARGADO RUNT</button>`}
+            </div>
+          </td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="15" style="text-align:center; padding:18px; color:var(--muted);">No hay alumnos que coincidan con este filtro en la hoja RUNT.</td></tr>';
     }
 
     function cambiarSubTabClases(filtroVal, btnEl) {
@@ -5588,6 +6183,17 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": str(exc)}, 500)
             return
 
+        if self.path.startswith("/api/bot/runt_control"):
+            try:
+                parsed = urllib.parse.urlparse(self.path)
+                qs = urllib.parse.parse_qs(parsed.query)
+                forzar = (qs.get("forzar", ["0"])[0] == "1")
+                res_rc = runt_control_cea.runt_service.obtener_panorama_runt_web(forzar=forzar)
+                self._send_json(res_rc)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 500)
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -5862,6 +6468,23 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                     nombre_alumno=nombre,
                 )
                 est_final = res_r.get("Estado_RUNT", estado_runt)
+                # Sincronizar también hacia la hoja de Control Digital RUNT (1XHbqfDa7dK5CWcgWKNgJZiXN_OSrjJCEJJu8F4z-u2M)
+                try:
+                    es_carg = est_final == "Cargue RUNT"
+                    metas_c = {"A1": (25, 3, 8), "A2": (25, 3, 15), "B1": (25, 5, 20), "C1": (30, 5, 30), "RECAT_C1": (8, 0, 8)}.get(categoria, (25, 3, 15))
+                    runt_control_cea.runt_service.guardar_o_actualizar_practica_runt({
+                        "cedula": cedula,
+                        "nombre": nombre or res_r.get("Nombre_Completo", ""),
+                        "categoria": categoria,
+                        "prioridad": "Termino" if es_carg else "EN PRACTICA",
+                        "teoria": metas_c[0],
+                        "taller": metas_c[1],
+                        "practica": metas_c[2] if es_carg else 0,
+                        "estado_runt": "CARGADO RUNT" if es_carg else "PENDIENTE RUNT",
+                        "cargue_diario": "PRACTICA" if es_carg else "",
+                    })
+                except Exception:
+                    pass
                 _registrar_bitacora_empleado(
                     u_sesion["username"], u_sesion["nombre"], u_sesion["rol"],
                     "CONTROL_RUNT",
@@ -6165,6 +6788,40 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                 nom = str(payload.get("nombre") or crm_whatsapp_cea.PLANTILLAS_DEFAULT.get(cod, {}).get("nombre") or cod)
                 crm_whatsapp_cea.guardar_plantilla(codigo=cod, nombre=nom, texto=txt)
                 self._send_json({"ok": True, "message": f"Plantilla '{nom}' actualizada y lista para remarketing."})
+                return
+
+            if action == "runt_guardar_practica":
+                res_rp = runt_control_cea.runt_service.guardar_o_actualizar_practica_runt(payload)
+                _registrar_bitacora_empleado(
+                    u_sesion["username"], u_sesion["nombre"], u_sesion["rol"],
+                    "REPORTE_RUNT_DIGITAL",
+                    res_rp.get("message", "Actualizó conteo RUNT")
+                )
+                self._send_json(res_rp)
+                return
+
+            if action == "runt_cambiar_no_runt":
+                fila_nr = int(payload.get("fila") or 0)
+                est_nr = str(payload.get("estado_registro", "REGISTRADO")).strip()
+                nov_nr = str(payload.get("novedad", "")).strip()
+                res_nr = runt_control_cea.runt_service.cambiar_estado_no_runt(fila_nr, est_nr, nov_nr)
+                self._send_json(res_nr)
+                return
+
+            if action == "runt_sincronizar_bot":
+                res_sb = runt_control_cea.runt_service.sincronizar_clases_bot_a_runt()
+                _registrar_bitacora_empleado(
+                    u_sesion["username"], u_sesion["nombre"], u_sesion["rol"],
+                    "SINCRONIZAR_BOT_A_RUNT",
+                    res_sb.get("message", "Sincronizó horas prácticas del Bot hacia hoja RUNT")
+                )
+                self._send_json(res_sb)
+                return
+
+            if action == "runt_configurar_sheet":
+                nuevo_id = str(payload.get("sheet_id", "")).strip()
+                res_cs = runt_control_cea.runt_service.cambiar_sheet_id(nuevo_id)
+                self._send_json(res_cs)
                 return
 
             self._send_json({"ok": False, "message": f"Acción desconocida: {action}"}, 400)
