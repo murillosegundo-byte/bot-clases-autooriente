@@ -1046,6 +1046,36 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       background: rgba(239, 68, 68, 0.06);
       border-left: 3px solid #ef4444;
     }
+    tr.row-sem-rojo {
+      background: rgba(239, 68, 68, 0.14);
+      border-left: 4px solid #ef4444;
+    }
+    tr.row-sem-rojo:hover {
+      background: rgba(239, 68, 68, 0.24) !important;
+    }
+    tr.row-sem-amarillo {
+      background: rgba(245, 158, 11, 0.11);
+      border-left: 4px solid #f59e0b;
+    }
+    tr.row-sem-amarillo:hover {
+      background: rgba(245, 158, 11, 0.20) !important;
+    }
+    tr.row-sem-verde {
+      border-left: 4px solid #10b981;
+    }
+    .semaforo-bar-wrap {
+      width: 120px;
+      background: #0f172a;
+      border: 1px solid #2b3d63;
+      border-radius: 999px;
+      height: 8px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .semaforo-bar-fill {
+      height: 100%;
+      transition: width 0.2s;
+    }
     .status-toast { margin-top: 10px; padding: 9px 13px; border-radius: 8px; font-size: 12.5px; display: none; }
     .status-toast.ok { display: block; background: rgba(16,185,129,0.15); border: 1px solid #059669; color: #6ee7b7; }
     .status-toast.err { display: block; background: rgba(239,68,68,0.15); border: 1px solid #dc2626; color: #fca5a5; }
@@ -1470,10 +1500,16 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           </div>
         </div>
 
-        <!-- Sub-Pestañas para Control Manual de Cargue RUNT por Categoría y Estado de Clases -->
+        <!-- Sub-Pestañas para Control Manual de Cargue RUNT por Categoría y Semáforo de Vencimiento 90 Días -->
         <div class="tabs-header" id="clasesTabsHeader">
           <button type="button" class="tab-btn active" onclick="cambiarSubTabClases('PENDIENTE_RUNT', this)">
-            ⏳ Pendientes Cargue RUNT (No Registrado RUNT) <span class="badge badge-warning" id="cnt_cl_runt_pend">0</span>
+            ⏳ Pendientes Cargue RUNT <span class="badge badge-warning" id="cnt_cl_runt_pend">0</span>
+          </button>
+          <button type="button" class="tab-btn" onclick="cambiarSubTabClases('SEMAFORO_ROJO', this)" style="border-color:rgba(239,68,68,0.65);">
+            🔴 Semáforo Crítico / Próximos a Vencer 90d <span class="badge badge-danger" id="cnt_cl_sem_rojo">0</span>
+          </button>
+          <button type="button" class="tab-btn" onclick="cambiarSubTabClases('SEMAFORO_AMARILLO', this)" style="border-color:rgba(245,158,11,0.55);">
+            🟡 Semáforo en Alerta (90d) <span class="badge badge-warning" id="cnt_cl_sem_amarillo">0</span>
           </button>
           <button type="button" class="tab-btn" onclick="cambiarSubTabClases('CARGADOS_RUNT', this)">
             ✅ Ya Cargados en RUNT <span class="badge badge-success" id="cnt_cl_runt_ok">0</span>
@@ -1498,14 +1534,16 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
         <div class="table-toolbar">
           <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; flex:1;">
-            <input type="search" id="searchClasesInput" autocomplete="off" placeholder="🔎 Buscar alumno por nombre, cédula, categoría o estado RUNT..." oninput="renderizarModuloClases()" style="max-width: 400px; flex:1;" />
-            <select id="sortClasesSelect" onchange="renderizarModuloClases()" style="width:auto; min-width:230px; font-weight:600; border-color:#3b82f6;">
+            <input type="search" id="searchClasesInput" autocomplete="off" placeholder="🔎 Buscar alumno por nombre, cédula, categoría o semáforo..." oninput="renderizarModuloClases()" style="max-width: 390px; flex:1;" />
+            <select id="sortClasesSelect" onchange="renderizarModuloClases()" style="width:auto; min-width:255px; font-weight:600; border-color:#3b82f6;">
               <option value="RECIENTES" selected>📅 Orden: Más Recientes a Más Antiguos</option>
+              <option value="SEMAFORO_URGENCIA">🚦 Semáforo 90 Días: Más Críticos / Próximos a Vencer Primero</option>
+              <option value="MENOS_DIAS">⏰ Menos Días Restantes (De 90 Días) Primero</option>
               <option value="ANTIGUOS">⏳ Orden: Más Antiguos a Más Recientes</option>
               <option value="AVANCE_DESC">🎓 Mayor Avance de Clases Primero</option>
             </select>
           </div>
-          <span id="clasesCountInfo" style="font-size:12.5px; color:var(--muted);">💡 Al marcar <b>✅ Cargue RUNT</b> en una categoría (ej. A2 Moto), esa fila sale automáticamente del listado pendiente, pero su otra categoría (ej. C1 Carro) sigue visible hasta que la cargues</span>
+          <span id="clasesCountInfo" style="font-size:12.5px; color:var(--muted);">💡 Control Semáforo 90 Días desde 1ra Clase Práctica + Control Manual Cargue RUNT por categoría</span>
         </div>
 
         <div class="table-wrap">
@@ -1515,6 +1553,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
                 <th>Cédula</th>
                 <th>Alumno</th>
                 <th>Categoría</th>
+                <th>🚦 Semáforo 90 Días (Desde 1ra Clase)</th>
                 <th>Estado RUNT (Control Manual)</th>
                 <th>Formato Oficial</th>
                 <th>Avance Clases Prácticas</th>
@@ -3321,12 +3360,26 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const sel = document.getElementById('filtroAlertaCartera');
       if (sel) sel.value = filtroVal;
       document.querySelectorAll('#clasesTabsHeader .tab-btn').forEach(b => b.classList.remove('active'));
+      const mapIdx = {
+        'PENDIENTE_RUNT': 0,
+        'SEMAFORO_ROJO': 1,
+        'SEMAFORO_AMARILLO': 2,
+        'CARGADOS_RUNT': 3,
+        'EN_CURSO': 4,
+        'FINALIZADOS': 5,
+        'CON_SALDO': 6,
+        'CERO_REAL': 7,
+        'TODOS': 8
+      };
       if (btnEl) {
         btnEl.classList.add('active');
       } else {
-        const mapIdx = { 'PENDIENTE_RUNT': 0, 'CARGADOS_RUNT': 1, 'EN_CURSO': 2, 'FINALIZADOS': 3, 'CON_SALDO': 4, 'CERO_REAL': 5, 'TODOS': 6 };
         const btns = document.querySelectorAll('#clasesTabsHeader .tab-btn');
         if (btns[mapIdx[filtroVal] || 0]) btns[mapIdx[filtroVal] || 0].classList.add('active');
+      }
+      if (filtroVal === 'SEMAFORO_ROJO' || filtroVal === 'SEMAFORO_AMARILLO') {
+        const sortSel = document.getElementById('sortClasesSelect');
+        if (sortSel) sortSel.value = 'SEMAFORO_URGENCIA';
       }
       renderizarModuloClases();
     }
@@ -3338,15 +3391,20 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
       const esCargadoRunt = (a) => String(a.estado_runt || '').toLowerCase().includes('cargue') || String(a.estado_runt || '').toLowerCase().includes('cargado');
 
-      // Contadores para las sub-pestañas (con control manual RUNT por categoría)
+      // Contadores para las sub-pestañas (con control manual RUNT por categoría y Semáforo de 90 Días)
       const cntRuntPend = todosAl.filter(a => !esCargadoRunt(a)).length;
       const cntRuntOk = todosAl.filter(a => esCargadoRunt(a)).length;
       const cntActivos = todosAl.filter(a => a.estado_curso !== 'FINALIZADO' && !esCargadoRunt(a)).length;
       const cntFin = todosAl.filter(a => a.estado_curso === 'FINALIZADO' && !esCargadoRunt(a)).length;
       const cntSaldo = todosAl.filter(a => !esCargadoRunt(a) && (a.saldo_cartera || 0) > 0).length;
       const cntCero = todosAl.filter(a => !esCargadoRunt(a) && a.alerta_cartera === 'RIESGO_CERO_REAL').length;
+      const cntSemRojo = todosAl.filter(a => !esCargadoRunt(a) && a.estado_curso !== 'FINALIZADO' && a.semaforo_color === 'ROJO').length;
+      const cntSemAmarillo = todosAl.filter(a => !esCargadoRunt(a) && a.estado_curso !== 'FINALIZADO' && a.semaforo_color === 'AMARILLO').length;
+      const cntSemVerde = todosAl.filter(a => !esCargadoRunt(a) && (a.semaforo_color === 'VERDE' || a.estado_curso === 'FINALIZADO')).length;
 
       const elRuntPend = document.getElementById('cnt_cl_runt_pend');
+      const elSemRojo = document.getElementById('cnt_cl_sem_rojo');
+      const elSemAmarillo = document.getElementById('cnt_cl_sem_amarillo');
       const elRuntOk = document.getElementById('cnt_cl_runt_ok');
       const elAct = document.getElementById('cnt_cl_activos');
       const elFin = document.getElementById('cnt_cl_fin');
@@ -3354,6 +3412,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const elCer = document.getElementById('cnt_cl_cero');
       const elTod = document.getElementById('cnt_cl_todos');
       if (elRuntPend) elRuntPend.textContent = cntRuntPend;
+      if (elSemRojo) elSemRojo.textContent = cntSemRojo;
+      if (elSemAmarillo) elSemAmarillo.textContent = cntSemAmarillo;
       if (elRuntOk) elRuntOk.textContent = cntRuntOk;
       if (elAct) elAct.textContent = cntActivos;
       if (elFin) elFin.textContent = cntFin;
@@ -3362,25 +3422,25 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       if (elTod) elTod.textContent = todosAl.length;
 
       document.getElementById('kpiClasesGrid').innerHTML = `
-        <div class="kpi-card warning">
+        <div class="kpi-card danger" style="cursor:pointer;" onclick="cambiarSubTabClases('SEMAFORO_ROJO')" title="Haz clic para ver los alumnos en riesgo crítico de perder el curso por vencimiento de los 90 días">
+          <div class="kpi-label">🔴 Semáforo Crítico / Próximos a Vencer (90 Días)</div>
+          <div class="kpi-value" style="color:#fca5a5;">${cntSemRojo} En Riesgo</div>
+          <div class="kpi-sub"><b>🟡 ${cntSemAmarillo} en alerta preventiva</b> • <b>🟢 ${cntSemVerde} a tiempo</b> (clic para filtrar)</div>
+        </div>
+        <div class="kpi-card warning" style="cursor:pointer;" onclick="cambiarSubTabClases('PENDIENTE_RUNT')">
           <div class="kpi-label">⏳ Pendientes Cargue RUNT (No Registrado)</div>
           <div class="kpi-value" style="color:#fde68a;">${cntRuntPend} Matrículas</div>
           <div class="kpi-sub"><b>${cntActivos} en curso</b> y <b>${cntFin} listos (100%)</b> por subir a RUNT</div>
         </div>
-        <div class="kpi-card success">
+        <div class="kpi-card success" style="cursor:pointer;" onclick="cambiarSubTabClases('CARGADOS_RUNT')">
           <div class="kpi-label">✅ Ya Cargados en RUNT (Ocultos del Filtro)</div>
           <div class="kpi-value" style="color:#34d399;">${cntRuntOk} Cargados</div>
           <div class="kpi-sub">Control independiente por categoría (<b>A2</b> vs <b>B1/C1</b>)</div>
         </div>
-        <div class="kpi-card">
-          <div class="kpi-label">🎓 Total Clases y Formatos (F-59 a F-62)</div>
-          <div class="kpi-value" style="color:#60a5fa;">${todosAl.length} Cursos</div>
-          <div class="kpi-sub"><b>${kc.total_sesiones_registradas} sesiones</b> dictadas por instructores</div>
-        </div>
-        <div class="kpi-card danger">
+        <div class="kpi-card" style="cursor:pointer;" onclick="cambiarSubTabClases('CON_SALDO')">
           <div class="kpi-label">⚠️ Pendientes RUNT con Saldo en Cartera</div>
-          <div class="kpi-value" style="color:#fca5a5;">${cntSaldo} Alumnos</div>
-          <div class="kpi-sub">Verificar pago antes de realizar el Cargue RUNT</div>
+          <div class="kpi-value" style="color:#60a5fa;">${cntSaldo} Alumnos</div>
+          <div class="kpi-sub"><b>${kc.total_sesiones_registradas} sesiones</b> registradas en total</div>
         </div>
       `;
 
@@ -3389,7 +3449,17 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const alertaF = document.getElementById('filtroAlertaCartera').value || 'PENDIENTE_RUNT';
 
       // Sincronizar pestaña visual activa con el select
-      const mapIdx = { 'PENDIENTE_RUNT': 0, 'CARGADOS_RUNT': 1, 'EN_CURSO': 2, 'FINALIZADOS': 3, 'CON_SALDO': 4, 'CERO_REAL': 5, 'TODOS': 6 };
+      const mapIdx = {
+        'PENDIENTE_RUNT': 0,
+        'SEMAFORO_ROJO': 1,
+        'SEMAFORO_AMARILLO': 2,
+        'CARGADOS_RUNT': 3,
+        'EN_CURSO': 4,
+        'FINALIZADOS': 5,
+        'CON_SALDO': 6,
+        'CERO_REAL': 7,
+        'TODOS': 8
+      };
       const tabBtns = document.querySelectorAll('#clasesTabsHeader .tab-btn');
       tabBtns.forEach((b, idx) => {
         if (idx === mapIdx[alertaF]) b.classList.add('active');
@@ -3400,13 +3470,15 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         if (catF !== 'TODAS' && a.categoria !== catF) return false;
         const yaRunt = esCargadoRunt(a);
         if (alertaF === 'PENDIENTE_RUNT' && yaRunt) return false;
+        if (alertaF === 'SEMAFORO_ROJO' && (yaRunt || a.estado_curso === 'FINALIZADO' || a.semaforo_color !== 'ROJO')) return false;
+        if (alertaF === 'SEMAFORO_AMARILLO' && (yaRunt || a.estado_curso === 'FINALIZADO' || a.semaforo_color !== 'AMARILLO')) return false;
         if (alertaF === 'CARGADOS_RUNT' && !yaRunt) return false;
         if (alertaF === 'EN_CURSO' && (a.estado_curso === 'FINALIZADO' || yaRunt)) return false;
         if (alertaF === 'FINALIZADOS' && (a.estado_curso !== 'FINALIZADO' || yaRunt)) return false;
         if (alertaF === 'CON_SALDO' && (yaRunt || (a.saldo_cartera || 0) <= 0)) return false;
         if (alertaF === 'CERO_REAL' && (yaRunt || a.alerta_cartera !== 'RIESGO_CERO_REAL')) return false;
         if (!q) return true;
-        return `${a.cedula} ${a.nombre} ${a.categoria} ${a.formato_codigo} ${a.estado_runt || ''}`.toLowerCase().includes(q);
+        return `${a.cedula} ${a.nombre} ${a.categoria} ${a.formato_codigo} ${a.estado_runt || ''} ${a.semaforo_etiqueta || ''} ${a.semaforo_detalle || ''}`.toLowerCase().includes(q);
       });
 
       const sortClases = (document.getElementById('sortClasesSelect') || {}).value || 'RECIENTES';
@@ -3414,10 +3486,20 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         rows = [...rows].reverse();
       } else if (sortClases === 'AVANCE_DESC') {
         rows = [...rows].sort((a, b) => Number(b.porcentaje_avance || 0) - Number(a.porcentaje_avance || 0));
+      } else if (sortClases === 'SEMAFORO_URGENCIA') {
+        rows = [...rows].sort((a, b) => Number(b.urgencia_score || 0) - Number(a.urgencia_score || 0));
+      } else if (sortClases === 'MENOS_DIAS') {
+        rows = [...rows].sort((a, b) => {
+          const da = a.estado_curso === 'FINALIZADO' ? 9999 : Number(a.dias_restantes_90 ?? 90);
+          const db = b.estado_curso === 'FINALIZADO' ? 9999 : Number(b.dias_restantes_90 ?? 90);
+          return da - db;
+        });
       }
 
       const etiquetasVista = {
         'PENDIENTE_RUNT': '⏳ Alumnos Matriculados Pendientes de Cargue RUNT (No Registrado RUNT)',
+        'SEMAFORO_ROJO': '🔴 SEMÁFORO CRÍTICO (90 DÍAS): Alumnos Próximos a Vencer o con Alto % de Clases Faltantes',
+        'SEMAFORO_AMARILLO': '🟡 SEMÁFORO EN ALERTA PREVENTIVA (90 DÍAS): Alumnos que Requieren Acelerar Programación',
         'CARGADOS_RUNT': '✅ Alumnos con Cargue RUNT Realizado',
         'EN_CURSO': '🟢 Alumnos Activos en Curso (< 100% y Pendientes RUNT)',
         'FINALIZADOS': '🎓 Alumnos con 100% Clases Terminadas (Pendientes de Cargue RUNT)',
@@ -3425,7 +3507,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         'CERO_REAL': '🚨 Alumnos con Abono $0 Global',
         'TODOS': '📚 Histórico Completo (Pendientes RUNT + Cargados RUNT)'
       };
-      document.getElementById('clasesCountInfo').textContent = `${etiquetasVista[alertaF] || ''} — Mostrando ${rows.length} matrículas por categoría`;
+      document.getElementById('clasesCountInfo').innerHTML =
+        `${etiquetasVista[alertaF] || ''} — Mostrando <b>${rows.length}</b> (<span style="color:#fca5a5;">🔴 ${cntSemRojo} críticos</span> • <span style="color:#fde047;">🟡 ${cntSemAmarillo} en alerta</span> • <span style="color:#6ee7b7;">🟢 ${cntSemVerde} a tiempo</span>)`;
 
       document.getElementById('clasesTbody').innerHTML = rows.map(a => {
         let badgeCartera = `<span class="badge badge-success">${a.alerta_texto || '✅ PAZ Y SALVO'}</span>`;
@@ -3449,13 +3532,50 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           ? `<button type="button" class="btn btn-outline" style="padding:4px 8px; font-size:11px;" title="Devolver a No Registrado RUNT para que vuelva a aparecer en pendientes" onclick="cambiarEstadoRuntWeb('${safeCedula}', '${safeNombre}', '${a.categoria}', 'No Registrado RUNT')">↩️ Quitar RUNT</button>`
           : `<button type="button" class="btn btn-success" style="padding:4px 8px; font-size:11px;" title="Confirmar Cargue RUNT de esta categoría (${a.categoria}) y ocultarlo del filtro de pendientes" onclick="cambiarEstadoRuntWeb('${safeCedula}', '${safeNombre}', '${a.categoria}', 'Cargue RUNT')">✅ Cargue RUNT</button>`;
 
+        // Renderizado visual del Semáforo de 90 Días (Desde 1ra Clase Práctica)
+        const semColor = a.semaforo_color || 'AZUL';
+        let semBadgeClass = 'badge-info';
+        let semBarColor = '#3b82f6';
+        let trSemClass = '';
+        if (semColor === 'ROJO') {
+          semBadgeClass = 'badge-danger';
+          semBarColor = '#ef4444';
+          trSemClass = 'row-sem-rojo';
+        } else if (semColor === 'AMARILLO') {
+          semBadgeClass = 'badge-warning';
+          semBarColor = '#f59e0b';
+          trSemClass = 'row-sem-amarillo';
+        } else if (semColor === 'VERDE') {
+          semBadgeClass = 'badge-success';
+          semBarColor = '#10b981';
+          trSemClass = 'row-sem-verde';
+        }
+        const diasTrans = Math.min(90, Math.max(0, Number(a.dias_transcurridos_90 || 0)));
+        const pctTiempo90 = Math.min(100, Math.round((diasTrans / 90) * 100));
+        const infoFechas90 = a.fecha_primera_clase
+          ? `<div style="font-size:10.5px; color:#94a3b8; margin-top:2px;">1ra clase: <b>${a.fecha_primera_clase}</b> → Vence: <b style="color:#e2e8f0;">${a.fecha_vencimiento_90 || '-'}</b> (${a.dias_transcurridos_90}d/90d)</div>`
+          : `<div style="font-size:10.5px; color:#94a3b8; margin-top:2px;">Sin 1ra clase fechada • Faltan ${a.clases_faltantes || 0} clases (${a.porcentaje_faltante || 0}%)</div>`;
+        const semaforoCellHtml = `
+          <div style="min-width:195px;">
+            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+              <span class="badge ${semBadgeClass}" style="font-weight:800;">${a.semaforo_etiqueta || '⚪ En Curso'}</span>
+              <span style="font-size:11px; color:${semColor === 'ROJO' ? '#fca5a5' : (semColor === 'AMARILLO' ? '#fde047' : '#cbd5e1')}; font-weight:700;">${a.semaforo_detalle || ''}</span>
+            </div>
+            <div class="semaforo-bar-wrap" title="Tiempo consumido del plazo de 90 días: ${diasTrans}/90 días (${pctTiempo90}%) vs Avance de clases: ${a.porcentaje_avance}%">
+              <div class="semaforo-bar-fill" style="width:${pctTiempo90}%; background:${semBarColor};"></div>
+            </div>
+            ${infoFechas90}
+          </div>
+        `;
+
         const qParam = encodeURIComponent(a.cedula || a.nombre);
         const catParam = encodeURIComponent(a.categoria || 'A2');
 
-        return `<tr>
+        return `<tr class="${trSemClass}">
           <td><code>${a.cedula || 'S/D'}</code></td>
           <td><b>${a.nombre}</b></td>
           <td><span class="badge badge-info">${a.categoria}</span></td>
+          <td>${semaforoCellHtml}</td>
           <td>
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
               ${badgeRunt}
@@ -3466,6 +3586,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <td>
             <div class="progress-bar-wrap"><div class="progress-bar-fill" style="width:${a.porcentaje_avance}%;"></div></div>
             <b>${a.clases_completadas}/${a.total_requerido}</b> (${a.porcentaje_avance}%)
+            <div style="font-size:10.5px; color:${(a.porcentaje_faltante || 0) >= 80 ? '#fca5a5' : '#94a3b8'};">Faltan <b>${a.clases_faltantes ?? (a.total_requerido - a.clases_completadas)}</b> cl. (${a.porcentaje_faltante ?? (100 - a.porcentaje_avance)}%)</div>
           </td>
           <td><span class="badge ${a.estado_curso === 'FINALIZADO' ? 'badge-success' : 'badge-purple'}">${a.estado_curso}</span></td>
           <td>${badgeCartera}</td>
@@ -3475,11 +3596,11 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               <button type="button" class="btn btn-outline" style="padding:5px 8px; font-size:11px;" title="Cargar datos del alumno arriba para editar, cambiar RUNT o registrar clase" onclick="cargarAlumnoEnFormularios('${safeCedula}', '${safeNombre}', '${a.categoria}', ${a.clases_completadas || 0}, ${a.total_requerido || 15}, '${a.estado_runt || 'No Registrado RUNT'}')">✏️ Editar / +Clase</button>
               <a href="/api/bot/pdf/alumno?q=${qParam}&cat=${catParam}" class="btn btn-primary" style="padding:5px 9px; font-size:11px;" title="Descargar Ficha Oficial PDF">📄 PDF ${a.formato_codigo}</a>
               <button type="button" class="btn btn-outline" style="padding:5px 7px; font-size:11px;" title="Enviar PDF F-59/F-62 al Telegram del CEA" onclick="enviarPdfAlumnoTelegram('${safeCedula}', '${safeNombre}', '${a.categoria}')">✈️</button>
-              <button type="button" class="btn btn-success" style="padding:5px 7px; font-size:11px;" title="Enviar reporte y link del PDF por WhatsApp" onclick="enviarInfoAlumnoWhatsApp('${safeCedula}', '${safeNombre}', '${a.categoria}', '${a.clases_completadas}/${a.total_requerido} (${a.porcentaje_avance}%)', ${a.saldo_cartera || 0})">📲</button>
+              <button type="button" class="btn btn-success" style="padding:5px 7px; font-size:11px;" title="Enviar recordatorio de vencimiento 90 días y avance por WhatsApp al alumno" onclick="enviarInfoAlumnoWhatsApp('${safeCedula}', '${safeNombre}', '${a.categoria}', '${a.clases_completadas}/${a.total_requerido} (${a.porcentaje_avance}%)', ${a.saldo_cartera || 0}, '${a.dias_restantes_90 ?? 90}', '${a.fecha_vencimiento_90 || ''}', '${a.clases_faltantes ?? 0}')">📲</button>
             </div>
           </td>
         </tr>`;
-      }).join('') || '<tr><td colspan="10" style="text-align:center; color:var(--muted); padding:20px;">No hay alumnos que coincidan con el filtro seleccionado.</td></tr>';
+      }).join('') || '<tr><td colspan="11" style="text-align:center; color:var(--muted); padding:20px;">No hay alumnos que coincidan con el filtro seleccionado.</td></tr>';
     }
 
     function renderizarModuloNomina() {
@@ -4138,16 +4259,20 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
     }
 
-    function enviarInfoAlumnoWhatsApp(cedulaOrNombre, nombre, cat, avance, saldo) {
+    function enviarInfoAlumnoWhatsApp(cedulaOrNombre, nombre, cat, avance, saldo, diasRest90, fechaVenc90, clasesFalt) {
       const tel = (document.getElementById('rb_wa_phone') || {}).value || '573134908073';
       const cleanTel = tel.replace(/\D+/g, '') || '573134908073';
       const pdfUrl = `${window.location.origin}/api/bot/pdf/alumno?q=${encodeURIComponent(cedulaOrNombre)}&cat=${encodeURIComponent(cat)}`;
+      const lineaPlazo = fechaVenc90
+        ? `🚦 *Vigencia 90 Días (Desde 1ra Clase):* Quedan *${diasRest90} días* (Vence: ${fechaVenc90}) • Faltan *${clasesFalt} clases* por programar.`
+        : `🚦 *Clases Pendientes:* Faltan *${clasesFalt || 0} clases* dentro del plazo reglamentario de 90 días.`;
       const msg = [
-        `🎓 *CEA AUTO ORIENTE — FICHA DE SEGUIMIENTO PRÁCTICO*`,
+        `🎓 *CEA AUTO ORIENTE — CONTROL DE VIGENCIA 90 DÍAS Y CLASES PRÁCTICAS*`,
         `👤 *Alumno:* ${nombre}`,
         `🪪 *Cédula:* ${cedulaOrNombre}`,
         `🏍️ *Categoría:* ${cat}`,
         `📊 *Avance Clases:* ${avance}`,
+        lineaPlazo,
         `💰 *Saldo Cartera:* ${fmtCOP(saldo || 0)}`,
         `📄 *Descargar Ficha Oficial PDF:* ${pdfUrl}`
       ].join('\n');

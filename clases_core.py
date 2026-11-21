@@ -3469,6 +3469,7 @@ class SheetsService:
         alumnos_todos = self.listar_alumnos_activos(modo="todos")
 
         # Incluir también alumnos que tengan clases en Registro_Clases pero aún no figuren en hoja Alumnos
+        # y construir el mapa de primera y última fecha de clase práctica por (Alumno, Categoría) para el Semáforo de 90 Días
         vistos_alu_cat = {
             (
                 _normalizar_texto(str(a.get("Documento", ""))) or _normalizar_texto(str(a.get("Nombre_Completo", ""))),
@@ -3476,10 +3477,40 @@ class SheetsService:
             )
             for a in alumnos_todos
         }
+        primera_clase_por_doc: Dict[Tuple[str, str], str] = {}
+        primera_clase_por_nom: Dict[Tuple[str, str], str] = {}
+        ultima_clase_por_doc: Dict[Tuple[str, str], str] = {}
+        ultima_clase_por_nom: Dict[Tuple[str, str], str] = {}
         try:
             por_doc, por_nom = self._calcular_mapa_clases_por_alumno()
             ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
             filas_reg = self._leer_filas_diccionario(ws_reg, HEADERS_REGISTRO)
+            for r_f in filas_reg:
+                if _es_registro_inasistencia(r_f):
+                    continue
+                f_iso_r = self._normalizar_fecha_iso(str(r_f.get("Fecha_Reporte", "")), str(r_f.get("Timestamp", "")))
+                if not f_iso_r or len(f_iso_r) < 10:
+                    continue
+                f_iso_10 = f_iso_r[:10]
+                doc_rf = _normalizar_texto(str(r_f.get("ID_Alumno", "")))
+                nom_rf = _normalizar_texto(
+                    limpiar_solo_nombre_persona(str(r_f.get("Nombre_Alumno", "")))
+                    or str(r_f.get("Nombre_Alumno", ""))
+                )
+                cat_rf = normalizar_categoria(str(r_f.get("Categoria", "B1")))
+                if doc_rf and doc_rf not in ("pendiente", "desconocido", "s/n"):
+                    kd = (doc_rf, cat_rf)
+                    if kd not in primera_clase_por_doc or f_iso_10 < primera_clase_por_doc[kd]:
+                        primera_clase_por_doc[kd] = f_iso_10
+                    if kd not in ultima_clase_por_doc or f_iso_10 > ultima_clase_por_doc[kd]:
+                        ultima_clase_por_doc[kd] = f_iso_10
+                if nom_rf:
+                    kn = (nom_rf, cat_rf)
+                    if kn not in primera_clase_por_nom or f_iso_10 < primera_clase_por_nom[kn]:
+                        primera_clase_por_nom[kn] = f_iso_10
+                    if kn not in ultima_clase_por_nom or f_iso_10 > ultima_clase_por_nom[kn]:
+                        ultima_clase_por_nom[kn] = f_iso_10
+
             for r in reversed(filas_reg):
                 if _es_registro_inasistencia(r):
                     continue
@@ -3563,6 +3594,7 @@ class SheetsService:
                     "convenio": str(reg_c.get("CONVENIO_NORM", "")),
                     "dias_mora": int(reg_c.get("DIAS_ANTIGUEDAD", 0) or 0),
                     "riesgo_cero": str(reg_c.get("TIPO_RIESGO_CERO", "")),
+                    "fecha_inscripcion": str(reg_c.get("FECHAINSCRIPCION", "")).strip(),
                 }
                 if doc_c:
                     mapa_cartera_doc[doc_c] = info_c
@@ -3639,6 +3671,7 @@ class SheetsService:
                 alu["Contratado_Curso_Cartera"] = c_info.get("contratado_curso", c_info["contratado_cliente"])
                 alu["Convenio_Cartera"] = c_info["convenio"]
                 alu["Dias_Mora_Cartera"] = c_info["dias_mora"]
+                alu["Fecha_Inscripcion_Cartera"] = c_info.get("fecha_inscripcion", "")
                 if c_info["riesgo_cero"] == "RIESGO_CERO_REAL":
                     alu["Estado_Cartera"] = "RIESGO $0 REAL"
                 elif c_info["saldo_cliente"] > 0 and c_info["dias_mora"] > 90:
@@ -3690,12 +3723,19 @@ class SheetsService:
         cero_en_clase_cnt = 0
         runt_cargados_cnt = 0
         runt_pendientes_cnt = 0
+        semaforo_rojo_cnt = 0
+        semaforo_amarillo_cnt = 0
+        semaforo_verde_cnt = 0
+        hoy_date = datetime.now(TZ_COLOMBIA).date()
+
         for alu in alumnos_todos:
             cat_a = normalizar_categoria(str(alu.get("Categoria", "B1")))
             cfg_a = FORMATOS_OFICIALES.get(cat_a, FORMATOS_OFICIALES["B1"])
             comp_a = int(alu.get("Clases_Completadas", 0) or 0)
             req_a = int(alu.get("Clases_Requeridas", cfg_a.get("total_clases", 20)) or 20)
             pct_a = min(100, int(round((comp_a / max(1, req_a)) * 100)))
+            clases_faltantes_a = max(0, req_a - comp_a)
+            pct_faltante_a = max(0, 100 - pct_a)
             saldo_c = float(alu.get("Saldo_Cartera", 0) or 0)
             abonado_c = float(alu.get("Abonado_Cartera", 0) or 0)
             abonado_curso_c = float(alu.get("Abonado_Curso_Cartera", abonado_c) or 0)
@@ -3709,6 +3749,113 @@ class SheetsService:
                 runt_cargados_cnt += 1
             else:
                 runt_pendientes_cnt += 1
+
+            # Cálculo del Semáforo de Vigencia de 90 Días desde la 1ra Clase Práctica
+            doc_norm_a = _normalizar_texto(str(alu.get("Documento", "")))
+            nom_norm_a = _normalizar_texto(str(alu.get("Nombre_Completo", "")))
+            fecha_primera_iso = (
+                primera_clase_por_doc.get((doc_norm_a, cat_a))
+                or primera_clase_por_nom.get((nom_norm_a, cat_a))
+                or ""
+            )
+            fecha_ultima_iso = (
+                ultima_clase_por_doc.get((doc_norm_a, cat_a))
+                or ultima_clase_por_nom.get((nom_norm_a, cat_a))
+                or ""
+            )
+            origen_fecha_90 = "1ra Clase" if fecha_primera_iso else ""
+            if not fecha_primera_iso:
+                f_insc_c = str(alu.get("Fecha_Inscripcion_Cartera", "")).strip()
+                if f_insc_c and len(f_insc_c) >= 10:
+                    fecha_primera_iso = f_insc_c[:10]
+                    origen_fecha_90 = "Matrícula"
+
+            fecha_venc_iso = ""
+            dias_transcurridos_90 = 0
+            dias_restantes_90 = 90
+            ritmo_clases_dia = 0.0
+            semaforo_codigo = "SIN_INICIAR"
+            semaforo_color = "AZUL"
+            semaforo_etiqueta = "⚪ Sin Fecha 1ra Clase"
+            semaforo_detalle = f"Faltan {clases_faltantes_a} clases ({pct_faltante_a}%)"
+            urgencia_score = 0.0
+
+            if alu.get("Curso_Completado") or comp_a >= req_a:
+                semaforo_codigo = "COMPLETADO"
+                semaforo_color = "VERDE"
+                semaforo_etiqueta = "✅ 100% Terminado"
+                semaforo_detalle = f"Cumplió {comp_a}/{req_a} clases dentro del plazo"
+                urgencia_score = -10.0
+                if fecha_primera_iso:
+                    try:
+                        d0 = datetime.strptime(fecha_primera_iso[:10], "%Y-%m-%d").date()
+                        fecha_venc_iso = (d0 + timedelta(days=90)).strftime("%Y-%m-%d")
+                        dias_transcurridos_90 = max(0, (hoy_date - d0).days)
+                        dias_restantes_90 = 90 - dias_transcurridos_90
+                    except Exception:
+                        pass
+            elif fecha_primera_iso:
+                try:
+                    d0 = datetime.strptime(fecha_primera_iso[:10], "%Y-%m-%d").date()
+                    d_venc = d0 + timedelta(days=90)
+                    fecha_venc_iso = d_venc.strftime("%Y-%m-%d")
+                    dias_transcurridos_90 = max(0, (hoy_date - d0).days)
+                    dias_restantes_90 = 90 - dias_transcurridos_90
+                    ritmo_clases_dia = round(clases_faltantes_a / max(1, dias_restantes_90), 2) if dias_restantes_90 > 0 else float(clases_faltantes_a)
+
+                    # Reglas de Semáforo (Plazo 90 Días vs % de Clases Faltantes)
+                    es_vencido = dias_restantes_90 <= 0
+                    es_critico = (
+                        es_vencido
+                        or dias_restantes_90 <= 15
+                        or (dias_restantes_90 <= 25 and pct_faltante_a >= 60)
+                        or (dias_restantes_90 <= 35 and pct_faltante_a >= 80)
+                        or ritmo_clases_dia >= 1.0
+                    )
+                    es_alerta = (
+                        not es_critico
+                        and (
+                            dias_restantes_90 <= 30
+                            or (dias_restantes_90 <= 45 and pct_faltante_a >= 50)
+                            or (dias_restantes_90 <= 60 and pct_faltante_a >= 75)
+                            or ritmo_clases_dia >= 0.45
+                        )
+                    )
+
+                    if es_vencido:
+                        semaforo_codigo = "VENCIDO"
+                        semaforo_color = "ROJO"
+                        semaforo_etiqueta = f"🚨 VENCIDO (+{abs(dias_restantes_90)}d)"
+                        semaforo_detalle = f"Venció el {fecha_venc_iso} • Faltan {clases_faltantes_a} clases ({pct_faltante_a}%)"
+                        urgencia_score = 1000.0 + abs(dias_restantes_90) + pct_faltante_a
+                        if not es_runt_cargado:
+                            semaforo_rojo_cnt += 1
+                    elif es_critico:
+                        semaforo_codigo = "CRITICO"
+                        semaforo_color = "ROJO"
+                        semaforo_etiqueta = f"🔴 CRÍTICO ({dias_restantes_90}d rest.)"
+                        semaforo_detalle = f"Falta {pct_faltante_a}% ({clases_faltantes_a} cl.) • Req. {ritmo_clases_dia} cl/día"
+                        urgencia_score = 500.0 + (90 - dias_restantes_90) + pct_faltante_a
+                        if not es_runt_cargado:
+                            semaforo_rojo_cnt += 1
+                    elif es_alerta:
+                        semaforo_codigo = "ALERTA"
+                        semaforo_color = "AMARILLO"
+                        semaforo_etiqueta = f"🟡 ALERTA ({dias_restantes_90}d rest.)"
+                        semaforo_detalle = f"Falta {pct_faltante_a}% ({clases_faltantes_a} cl.) • Vence {fecha_venc_iso}"
+                        urgencia_score = 200.0 + (90 - dias_restantes_90) + (pct_faltante_a * 0.5)
+                        if not es_runt_cargado:
+                            semaforo_amarillo_cnt += 1
+                    else:
+                        semaforo_codigo = "A_TIEMPO"
+                        semaforo_color = "VERDE"
+                        semaforo_etiqueta = f"🟢 A TIEMPO ({dias_restantes_90}d rest.)"
+                        semaforo_detalle = f"Falta {pct_faltante_a}% ({clases_faltantes_a} cl.) • Vence {fecha_venc_iso}"
+                        urgencia_score = float(90 - dias_restantes_90)
+                        if not es_runt_cargado:
+                            semaforo_verde_cnt += 1
+                except Exception:
+                    pass
 
             alerta_code = "AL_DIA"
             alerta_txt = (
@@ -3748,10 +3895,24 @@ class SheetsService:
                 "formato_codigo": cfg_a.get("codigo_formato", "A.O.C.E.A - F - 61"),
                 "clases_completadas": comp_a,
                 "total_requerido": req_a,
+                "clases_faltantes": clases_faltantes_a,
                 "porcentaje_avance": pct_a,
+                "porcentaje_faltante": pct_faltante_a,
                 "estado_curso": "FINALIZADO" if alu.get("Curso_Completado") else "EN CURSO",
                 "estado_runt": est_runt_a,
                 "fecha_runt": fecha_runt_a,
+                "fecha_primera_clase": fecha_primera_iso,
+                "fecha_ultima_clase": fecha_ultima_iso,
+                "origen_fecha_90": origen_fecha_90,
+                "fecha_vencimiento_90": fecha_venc_iso,
+                "dias_transcurridos_90": dias_transcurridos_90,
+                "dias_restantes_90": dias_restantes_90,
+                "ritmo_clases_dia": ritmo_clases_dia,
+                "semaforo_codigo": semaforo_codigo,
+                "semaforo_color": semaforo_color,
+                "semaforo_etiqueta": semaforo_etiqueta,
+                "semaforo_detalle": semaforo_detalle,
+                "urgencia_score": urgencia_score,
                 "alerta_cartera": alerta_code,
                 "alerta_texto": alerta_txt,
                 "saldo_cartera": saldo_c,
@@ -3938,6 +4099,9 @@ class SheetsService:
                     "finalizados": alumnos_finalizados_cnt,
                     "runt_pendientes": runt_pendientes_cnt,
                     "runt_cargados": runt_cargados_cnt,
+                    "semaforo_rojo": semaforo_rojo_cnt,
+                    "semaforo_amarillo": semaforo_amarillo_cnt,
+                    "semaforo_verde": semaforo_verde_cnt,
                     "total_sesiones_registradas": nomina.get("total_reportes", 0),
                     "alumnos_con_mora_en_clase": mora_en_clase_cnt,
                     "alumnos_abono_cero_en_clase": cero_en_clase_cnt,
