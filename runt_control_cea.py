@@ -216,6 +216,7 @@ class RuntControlService:
         self._memoria_hojas: Dict[str, List[List[str]]] = {}
         self._ultimo_fallo_ts: float = 0.0
         self._ultimo_error_msg: str = ""
+        self._historial_lotes_masivos: List[List[Dict[str, Any]]] = []
         self._inicializar_memoria_local()
 
     def _inicializar_memoria_local(self) -> None:
@@ -815,6 +816,7 @@ class RuntControlService:
         practica_list = self.listar_practica_runt(forzar=False)
         actualizados = 0
         nombres_act: List[str] = []
+        snapshot_lote: List[Dict[str, Any]] = []
 
         for item in practica_list:
             if item["estado_runt"] == "CARGADO RUNT":
@@ -852,6 +854,23 @@ class RuntControlService:
                 etiqueta_diaria = "TALLER" if nuevo_teo == teo_actual else "TEORIA+TALLER"
 
             if nuevo_teo != teo_actual or nuevo_tal != tal_actual:
+                snapshot_lote.append({
+                    "fila": item["fila"],
+                    "nombre": item["nombre"],
+                    "cedula": item["cedula"],
+                    "categoria": item["categoria"],
+                    "fecha_matricula": item["fecha_matricula"],
+                    "prioridad": item["prioridad"],
+                    "vence_90_dias": item["vence_90_dias"],
+                    "fecha_registro_runt": item["fecha_registro_runt"],
+                    "teoria": teo_actual,
+                    "taller": tal_actual,
+                    "practica": item["practica"],
+                    "instructor": item["instructor"],
+                    "estado_runt": item["estado_runt"],
+                    "fecha_cargue": item["fecha_cargue"],
+                    "cargue_diario": item["cargue_diario"],
+                })
                 self.guardar_o_actualizar_practica_runt({
                     "fila": item["fila"],
                     "nombre": item["nombre"],
@@ -873,6 +892,9 @@ class RuntControlService:
                 if len(nombres_act) < 6:
                     nombres_act.append(f"{item['nombre']} ({nuevo_teo}/{meta_teo}T, {nuevo_tal}/{meta_tal}Tl)")
 
+        if snapshot_lote:
+            self._historial_lotes_masivos.append(snapshot_lote)
+
         resumen_noms = ", ".join(nombres_act) + (f" y {actualizados - len(nombres_act)} más" if actualizados > len(nombres_act) else "")
         return {
             "ok": True,
@@ -881,6 +903,129 @@ class RuntControlService:
                 f"🚀 Cargue Masivo de {tipo} ({categoria_filtro} • {'Tope +8h/día' if modo_cupo == 'MAX_8' else 'Completar Meta'}) "
                 f"aplicado con fecha {fecha_reporte} a {actualizados} alumno(s)"
                 + (f": {resumen_noms}." if resumen_noms else ".")
+            ),
+        }
+
+    def deshacer_o_restaurar_cargue_masivo(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Permite revertir un cargue masivo realizado por error:
+        - modo == 'DESHACER_ULTIMO': revierte el último lote guardado en _historial_lotes_masivos
+          (y si no hay historial en memoria porque ocurrió antes de reiniciar, restaura los 14 alumnos A2 desde el archivo base original).
+        - modo == 'RESTAURAR_14_A2_ORIGINAL': restaura exactamente los 14 alumnos A2 de Teoría a sus valores originales del archivo subido (16h, 8h, 24h, 0h).
+        - modo == 'RESTAR_8_TEORIA': resta 8 horas de teoría a las filas seleccionadas (o a los 14 alumnos A2).
+        """
+        modo = str(payload.get("modo", "DESHACER_ULTIMO")).strip().upper()
+        filas_objetivo = payload.get("filas") or []
+        filas_set = {int(x) for x in filas_objetivo if str(x).isdigit()}
+
+        if modo == "DESHACER_ULTIMO" and self._historial_lotes_masivos:
+            lote_previo = self._historial_lotes_masivos.pop()
+            restaurados = 0
+            noms: List[str] = []
+            for snap in lote_previo:
+                self.guardar_o_actualizar_practica_runt(snap)
+                restaurados += 1
+                if len(noms) < 6:
+                    noms.append(f"{snap['nombre']} ({snap['teoria']}T/{snap['taller']}Tl)")
+            resumen = ", ".join(noms) + (f" y {restaurados - len(noms)} más" if restaurados > len(noms) else "")
+            return {
+                "ok": True,
+                "restaurados": restaurados,
+                "message": f"↩️ Se deshizo el último cargue masivo y se restauraron {restaurados} alumno(s) a sus horas anteriores: {resumen}.",
+            }
+
+        # Respaldo original desde control_runt_digital.xlsx (copia intacta de BD_Americana_2__(2).xlsx)
+        hojas_base = cargar_hojas_desde_xlsx_local(RUNT_LOCAL_XLSX)
+        rows_base = hojas_base.get("Practica", [])
+        mapa_base_por_fila: Dict[int, Dict[str, Any]] = {}
+        mapa_base_por_ced_cat: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for idx, r in enumerate(rows_base[1:], start=2):
+            nom_b = str(r[0]).strip() if len(r) > 0 else ""
+            ced_b = _limpiar_cedula(r[1] if len(r) > 1 else "")
+            cat_b = _normalizar_cat_runt(str(r[2]).strip().upper() if len(r) > 2 else "A2")
+            if not nom_b and not ced_b:
+                continue
+            info_b = {
+                "fila": idx,
+                "nombre": nom_b,
+                "cedula": ced_b,
+                "categoria": cat_b,
+                "teoria": _limpiar_entero(r[8] if len(r) > 8 else 0, 0),
+                "taller": _limpiar_entero(r[9] if len(r) > 9 else 0, 0),
+                "practica": _limpiar_entero(r[10] if len(r) > 10 else 0, 0),
+                "fecha_cargue": _excel_serial_a_iso(r[16] if len(r) > 16 else ""),
+                "cargue_diario": str(r[17]).strip().upper() if len(r) > 17 else "",
+            }
+            mapa_base_por_fila[idx] = info_b
+            if ced_b:
+                mapa_base_por_ced_cat[(ced_b, cat_b)] = info_b
+
+        # Los 14 alumnos A2 afectados por el cargue masivo de Teoría por error:
+        cedulas_14_a2 = {
+            "1098649376", "1096702152", "1003251307", "1007899397", "1098660472",
+            "1097194141", "71790854", "1099743289", "1095302560", "1099742651",
+            "1098644892", "1005324619", "1043653731", "1116508657",
+        }
+        filas_14_a2 = {6, 7, 8, 10, 12, 15, 16, 17, 18, 19, 42, 46, 88, 132}
+
+        practica_actual = self.listar_practica_runt(forzar=False)
+        restaurados = 0
+        noms_rest: List[str] = []
+
+        for item in practica_actual:
+            if filas_set:
+                if item["fila"] not in filas_set:
+                    continue
+            else:
+                if item["fila"] not in filas_14_a2 and item["cedula"] not in cedulas_14_a2:
+                    continue
+                if item["categoria"] != "A2" or item["estado_runt"] == "CARGADO RUNT":
+                    continue
+
+            orig = mapa_base_por_fila.get(item["fila"]) or mapa_base_por_ced_cat.get((item["cedula"], item["categoria"]))
+            if modo == "RESTAR_8_TEORIA":
+                nuevo_teo = max(0, item["teoria"] - 8)
+                nuevo_tal = item["taller"]
+                nueva_fecha = item["fecha_cargue"]
+                nuevo_diario = item["cargue_diario"]
+            elif orig:
+                nuevo_teo = orig["teoria"]
+                nuevo_tal = orig["taller"]
+                nueva_fecha = orig["fecha_cargue"]
+                nuevo_diario = orig["cargue_diario"]
+            else:
+                nuevo_teo = max(0, item["teoria"] - 8)
+                nuevo_tal = item["taller"]
+                nueva_fecha = item["fecha_cargue"]
+                nuevo_diario = item["cargue_diario"]
+
+            self.guardar_o_actualizar_practica_runt({
+                "fila": item["fila"],
+                "nombre": item["nombre"],
+                "cedula": item["cedula"],
+                "categoria": item["categoria"],
+                "fecha_matricula": item["fecha_matricula"],
+                "prioridad": item["prioridad"],
+                "vence_90_dias": item["vence_90_dias"],
+                "fecha_registro_runt": item["fecha_registro_runt"],
+                "teoria": nuevo_teo,
+                "taller": nuevo_tal,
+                "practica": item["practica"],
+                "instructor": item["instructor"],
+                "estado_runt": item["estado_runt"],
+                "fecha_cargue": nueva_fecha,
+                "cargue_diario": nuevo_diario,
+            })
+            restaurados += 1
+            if len(noms_rest) < 7:
+                noms_rest.append(f"{item['nombre']} ({nuevo_teo}/{item['meta_teoria']}T)")
+
+        resumen = ", ".join(noms_rest) + (f" y {restaurados - len(noms_rest)} más" if restaurados > len(noms_rest) else "")
+        return {
+            "ok": True,
+            "restaurados": restaurados,
+            "message": (
+                f"✅ Se corrigieron y restauraron a su valor original {restaurados} alumno(s) en Google Sheets y en el sistema: {resumen}."
             ),
         }
 

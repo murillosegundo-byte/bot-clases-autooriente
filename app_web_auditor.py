@@ -1594,12 +1594,23 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         <!-- ================================================================= -->
         <div class="panel" style="margin-bottom:14px; background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(15,23,42,0.95)); border-color:#10b981;">
           <div class="panel-title">
-            <span>🚀 Centro de Cargue Masivo de Teoría y Taller + Programación por Fecha (Tope Reglamentario: Máx. 8 Clases/Día por Alumno)</span>
-            <span class="badge badge-success">Copia Cédulas para Plataforma RUNT + Actualiza Conteo en Lote</span>
+            <span>🚀 Centro de Cargue Masivo de Teoría y Taller (Guía Paso a Paso + Botón Deshacer Errores)</span>
+            <span class="badge badge-success">Con Confirmación Segura y Selección por Casillas ☑️</span>
           </div>
-          <p style="font-size:11.5px; color:#cbd5e1; margin-bottom:10px;">
-            💡 <b>Cómo agilizar tu trabajo diario:</b> Elige la <b>Fecha a Reportar</b> (puede ser de días anteriores, hoy o mañana; ej. el lunes puedes reportar hoy y mañana), filtra con 1 clic los alumnos de <b>Moto A2 que no tienen las 25h de Teoría</b> o los que <b>no tienen las 3h de Taller</b>, copia sus cédulas para el cargue masivo en RUNT y súmales <b>+8 horas (tope diario)</b> o completa su meta al instante:
-          </p>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:8px; margin-bottom:12px;">
+            <div style="background:rgba(15,23,42,0.85); border:1px solid #334155; border-left:4px solid #a855f7; border-radius:8px; padding:8px 10px; font-size:11.5px; color:#e2e8f0;">
+              <b>1️⃣ PASO 1: Elige el Filtro abajo y Marca ☑️</b><br/>
+              Haz clic en la pestaña que necesitas (ej. <b>🏍️ Moto A2 sin 25h Teoría</b> o <b>🔧 Moto A2 sin 3h Taller</b>) y marca con chulito <b>☑️</b> en la tabla los alumnos que vas a reportar.
+            </div>
+            <div style="background:rgba(15,23,42,0.85); border:1px solid #334155; border-left:4px solid #fde047; border-radius:8px; padding:8px 10px; font-size:11.5px; color:#e2e8f0;">
+              <b>2️⃣ PASO 2: Copia sus Cédulas para RUNT</b><br/>
+              Haz clic en <b>📋 Copiar Cédulas</b> para llevarte las cédulas de los alumnos marcados y pegarlas en el cargue masivo de la plataforma RUNT.
+            </div>
+            <div style="background:rgba(15,23,42,0.85); border:1px solid #334155; border-left:4px solid #10b981; border-radius:8px; padding:8px 10px; font-size:11.5px; color:#e2e8f0;">
+              <b>3️⃣ PASO 3: Registra las Horas o Deshaz</b><br/>
+              Elige la fecha (<b>Ayer / Hoy / Mañana</b>) y pulsa <b>📘 Sumar Teoría</b> o <b>🔧 Sumar Taller</b>. El sistema te pedirá confirmación antes de guardar, y si te equivocas puedes pulsar <b>↩️ Deshacer / Corregir</b>.
+            </div>
+          </div>
           <div class="form-grid-4">
             <div>
               <label class="field-label">📅 Fecha del Reporte / Cargue (Ayer / Hoy / Mañana)</label>
@@ -1633,11 +1644,13 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               <input type="number" id="rn_sancion_valor" value="50000" step="5000" min="0" title="Valor de la sanción económica cuando se vence el curso de 90 días y toca reiniciar el reporte en RUNT" />
             </div>
           </div>
-          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
-            <button type="button" class="btn btn-primary" onclick="ejecutarCargueMasivoRunt('TEORIA')" title="Suma +8h de Teoría (o completa las 25h/30h) a todos los alumnos pendientes de la categoría seleccionada">📘 Cargue Masivo TEORÍA (Categoría Seleccionada)</button>
-            <button type="button" class="btn btn-primary" style="background:#0284c7; border-color:#38bdf8;" onclick="ejecutarCargueMasivoRunt('TALLER')" title="Suma las horas de Taller (3h en Moto / 5h en Carro) a todos los alumnos pendientes de la categoría seleccionada">🔧 Cargue Masivo TALLER (Categoría Seleccionada)</button>
-            <button type="button" class="btn btn-success" onclick="ejecutarCargueMasivoRunt('TEORIA_Y_TALLER')" title="Actualiza Teoría + Taller en lote para la categoría seleccionada">✨ Cargue Masivo TEORÍA + TALLER</button>
-            <button type="button" class="btn btn-outline" style="border-color:#fde047; color:#fde047;" onclick="copiarCedulasFiltroActualRunt()" title="Copia al portapapeles la lista de Cédulas y Nombres de la pestaña actual para pegarlos rápidamente en RUNT">📋 Copiar Cédulas de este Filtro para RUNT</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; align-items:center;">
+            <button type="button" class="btn btn-outline" style="border-color:#fde047; color:#fde047; font-weight:700;" onclick="copiarCedulasFiltroActualRunt()" title="Copia al portapapeles las Cédulas de los alumnos marcados ☑️ (o de toda la pestaña actual) para pegarlas en RUNT">📋 1. Copiar Cédulas (Seleccionados ☑️ o Filtro)</button>
+            <button type="button" class="btn btn-primary" onclick="ejecutarCargueMasivoRunt('TEORIA')" title="Suma +8h de Teoría (o completa las 25h/30h) a los alumnos seleccionados ☑️ (pide confirmación antes de aplicar)">📘 2. Cargue Masivo TEORÍA</button>
+            <button type="button" class="btn btn-primary" style="background:#0284c7; border-color:#38bdf8;" onclick="ejecutarCargueMasivoRunt('TALLER')" title="Suma las horas de Taller (3h en Moto / 5h en Carro) a los alumnos seleccionados ☑️ (pide confirmación antes de aplicar)">🔧 2. Cargue Masivo TALLER</button>
+            <button type="button" class="btn btn-success" onclick="ejecutarCargueMasivoRunt('TEORIA_Y_TALLER')" title="Actualiza Teoría + Taller en lote para los alumnos seleccionados ☑️">✨ Cargue Masivo TEORÍA + TALLER</button>
+            <button type="button" class="btn btn-danger" style="background:#dc2626; border-color:#f87171; font-weight:700;" onclick="deshacerCargueMasivoRunt('RESTAURAR_14_A2_ORIGINAL')" title="Corrige inmediatamente el cargue masivo hecho por error y devuelve los 14 alumnos de Moto A2 a sus horas originales (16h, 8h, 24h, 0h)">↩️ Deshacer / Corregir Cargue Masivo por Error (Restaurar 14 Alumnos A2)</button>
+            <button type="button" class="btn btn-outline" style="border-color:#f97316; color:#fdba74;" onclick="deshacerCargueMasivoRunt('RESTAR_8_TEORIA')" title="Resta -8 horas de Teoría a los alumnos marcados con ☑️">➖ Restar -8h Teoría (a Seleccionados ☑️)</button>
           </div>
         </div>
 
@@ -3572,6 +3585,22 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
     let RUNT_SHEET_DATA = null;
     let ACTIVE_RUNT_TAB = 'PENDIENTES_PRACTICA';
+    let RUNT_SELECTED_FILAS = new Set();
+
+    function toggleSeleccionFilaRunt(filaIdx, checked) {
+      const f = Number(filaIdx);
+      if (checked) RUNT_SELECTED_FILAS.add(f);
+      else RUNT_SELECTED_FILAS.delete(f);
+    }
+
+    function toggleSeleccionarTodosRunt(checked) {
+      const rows = obtenerFilasFiltradasPracticaRunt();
+      rows.forEach(r => {
+        if (checked) RUNT_SELECTED_FILAS.add(Number(r.fila));
+        else RUNT_SELECTED_FILAS.delete(Number(r.fila));
+      });
+      renderizarTablaHojaRunt();
+    }
 
     function ajustarFechaBatchRunt(offsetDias = 0) {
       const d = new Date();
@@ -3833,9 +3862,50 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const modo_cupo = (document.getElementById('rn_batch_modo') || {}).value || 'MAX_8';
       const fecha_cargue = (document.getElementById('rn_batch_fecha') || {}).value || '';
       const toast = document.getElementById('runtSheetToast');
+
+      const todasFilas = (RUNT_SHEET_DATA && RUNT_SHEET_DATA.practica) ? RUNT_SHEET_DATA.practica : [];
+      const seleccionadasArr = Array.from(RUNT_SELECTED_FILAS);
+      let candidatos = [];
+      if (seleccionadasArr.length > 0) {
+        candidatos = todasFilas.filter(r => RUNT_SELECTED_FILAS.has(Number(r.fila)) && r.estado_runt !== 'CARGADO RUNT');
+      } else {
+        candidatos = todasFilas.filter(r => {
+          if (r.estado_runt === 'CARGADO RUNT') return false;
+          if (categoria !== 'TODAS' && r.categoria !== categoria) return false;
+          if (tipo === 'TEORIA') return r.teoria < r.meta_teoria;
+          if (tipo === 'TALLER') return r.taller < r.meta_taller;
+          return (r.teoria < r.meta_teoria) || (r.taller < r.meta_taller);
+        });
+      }
+
+      if (!candidatos.length) {
+        alert('⚠️ No hay alumnos seleccionados o pendientes que necesiten horas de ' + tipo + ' en la categoría ' + categoria + '.');
+        return;
+      }
+
+      const previewLineas = candidatos.slice(0, 8).map(r => {
+        const nTeo = (tipo === 'TEORIA' || tipo === 'TEORIA_Y_TALLER')
+          ? (modo_cupo === 'COMPLETAR_META' ? r.meta_teoria : Math.min(r.meta_teoria, r.teoria + 8))
+          : r.teoria;
+        const nTal = (tipo === 'TALLER' || tipo === 'TEORIA_Y_TALLER')
+          ? (modo_cupo === 'COMPLETAR_META' ? r.meta_taller : Math.min(r.meta_taller, r.taller + 8))
+          : r.taller;
+        return `• ${r.nombre} (${r.cedula}): Teoría ${r.teoria}→${nTeo}/${r.meta_teoria} | Taller ${r.taller}→${nTal}/${r.meta_taller}`;
+      }).join('\n');
+
+      const okConfirm = confirm(
+        `🚀 CONFIRMAR CARGUE MASIVO DE ${tipo}\n\n` +
+        `• Fecha de Cargue: ${fecha_cargue || 'Hoy'}\n` +
+        `• Regla: ${modo_cupo === 'MAX_8' ? 'Sumar máx. +8 clases hoy (Tope RUNT)' : 'Completar 100% meta'}\n` +
+        `• Total alumnos a actualizar: ${candidatos.length} ${seleccionadasArr.length > 0 ? '(Marcados con chulito ☑️)' : '(Categoría ' + categoria + ')'}\n\n` +
+        `Vista previa:\n${previewLineas}${candidatos.length > 8 ? '\n...y ' + (candidatos.length - 8) + ' alumno(s) más.' : ''}\n\n` +
+        `¿Confirmas aplicar este cargue masivo?`
+      );
+      if (!okConfirm) return;
+
       if (toast) {
         toast.className = 'status-toast ok';
-        toast.textContent = `⏳ Ejecutando Cargue Masivo de ${tipo} para categoría ${categoria} (${modo_cupo === 'MAX_8' ? 'Tope +8h/día' : 'Completar Meta'})...`;
+        toast.textContent = `⏳ Ejecutando Cargue Masivo de ${tipo} para ${candidatos.length} alumno(s)...`;
       }
       try {
         const res = await fetch('/api/bot/action', {
@@ -3846,7 +3916,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             tipo,
             categoria,
             modo_cupo,
-            fecha_cargue
+            fecha_cargue,
+            filas: candidatos.map(r => r.fila)
           })
         });
         const data = await res.json();
@@ -3854,11 +3925,56 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
           toast.textContent = data.message || 'Cargue masivo ejecutado.';
         }
+        RUNT_SELECTED_FILAS.clear();
         await cargarPanoramaRuntDigital(false);
       } catch (err) {
         if (toast) {
           toast.className = 'status-toast err';
           toast.textContent = '❌ Error en cargue masivo: ' + err;
+        }
+      }
+    }
+
+    async function deshacerCargueMasivoRunt(modo = 'RESTAURAR_14_A2_ORIGINAL') {
+      const seleccionadasArr = Array.from(RUNT_SELECTED_FILAS);
+      let msgConfirm = '';
+      if (modo === 'RESTAR_8_TEORIA') {
+        msgConfirm = seleccionadasArr.length > 0
+          ? `¿Deseas restar -8 horas de Teoría a los ${seleccionadasArr.length} alumno(s) marcados con ☑️?`
+          : `¿Deseas restar -8 horas de Teoría a los 14 alumnos de Moto A2 que recibieron el cargue masivo?`;
+      } else {
+        msgConfirm = `↩️ CORREGIR CARGUE MASIVO POR ERROR\n\n` +
+          `Esto devolverá inmediatamente en Google Sheets y en el sistema a los 14 alumnos de Moto A2 (Diana Marcela Vivienscas, Angel Cárdenas, Cristo Humberto Llain, Jonathan González, Jesús Sebastián Suárez, Rosalía Plata, etc.) a sus horas originales exactas (16h, 8h, 24h, 0h) tal como estaban antes del cargue masivo.\n\n` +
+          `¿Confirmas restaurar sus horas originales ahora?`;
+      }
+      if (!confirm(msgConfirm)) return;
+
+      const toast = document.getElementById('runtSheetToast');
+      if (toast) {
+        toast.className = 'status-toast ok';
+        toast.textContent = '⏳ Restaurando horas originales de los alumnos en Google Sheets y en el sistema...';
+      }
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'runt_deshacer_masivo',
+            modo,
+            filas: seleccionadasArr
+          })
+        });
+        const data = await res.json();
+        if (toast) {
+          toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+          toast.textContent = data.message || 'Horas restauradas.';
+        }
+        RUNT_SELECTED_FILAS.clear();
+        await cargarPanoramaRuntDigital(false);
+      } catch (err) {
+        if (toast) {
+          toast.className = 'status-toast err';
+          toast.textContent = '❌ Error restaurando horas: ' + err;
         }
       }
     }
@@ -3968,9 +4084,13 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     }
 
     async function copiarCedulasFiltroActualRunt() {
-      const rows = obtenerFilasFiltradasPracticaRunt();
+      let rows = obtenerFilasFiltradasPracticaRunt();
+      if (RUNT_SELECTED_FILAS.size > 0) {
+        const selRows = rows.filter(r => RUNT_SELECTED_FILAS.has(Number(r.fila)));
+        if (selRows.length > 0) rows = selRows;
+      }
       if (!rows.length) {
-        alert('⚠️ No hay alumnos en el filtro actual para copiar.');
+        alert('⚠️ No hay alumnos seleccionados o en el filtro actual para copiar.');
         return;
       }
       const lineas = rows.map(r => `${r.cedula}\t${r.nombre}\t${r.categoria}\tTeo:${r.teoria}/${r.meta_teoria}\tTal:${r.taller}/${r.meta_taller}\tPrac:${r.practica}/${r.meta_practica}`).join('\n');
@@ -4151,7 +4271,11 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       };
       infoEl.innerHTML = `${titulosTabRunt[ACTIVE_RUNT_TAB] || 'Pestaña "Practica"'} — Mostrando <b>${listP.length}</b> alumnos`;
 
+      const todosMarcados = listP.length > 0 && listP.every(r => RUNT_SELECTED_FILAS.has(Number(r.fila)));
       thead.innerHTML = `<tr>
+        <th style="width:36px; text-align:center;">
+          <input type="checkbox" ${todosMarcados ? 'checked' : ''} title="Seleccionar / Desmarcar todos los alumnos de este filtro" onchange="toggleSeleccionarTodosRunt(this.checked)" style="width:16px; height:16px; cursor:pointer;" />
+        </th>
         <th>Alumno</th>
         <th>Cédula</th>
         <th>Cat.</th>
@@ -4210,8 +4334,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         const btnReinicioSancion = (!esCarg && (r.semaforo_90 === 'VENCIDO' || r.semaforo_90 === 'POR_VENCER' || ACTIVE_RUNT_TAB === 'POR_VENCER_90'))
           ? `<button type="button" class="btn btn-danger" style="padding:3px 7px; font-size:10.5px;" title="El curso venció: Reinicia las horas RUNT a 0, crea nuevo plazo de 90 días y registra la sanción económica al alumno" onclick="reiniciarCursoVencidoRunt(${r.fila}, '${safeNom}', '${r.categoria}')">💸 Reiniciar + Sanción</button>`
           : '';
+        const isChecked = RUNT_SELECTED_FILAS.has(Number(r.fila));
 
         return `<tr class="${trClass}">
+          <td style="text-align:center;">
+            <input type="checkbox" ${isChecked ? 'checked' : ''} onchange="toggleSeleccionFilaRunt(${r.fila}, this.checked)" style="width:16px; height:16px; cursor:pointer;" />
+          </td>
           <td><b>${r.nombre}</b></td>
           <td><code>${r.cedula}</code></td>
           <td><span class="badge badge-info">${r.categoria_raw || r.categoria}</span></td>
@@ -7134,6 +7262,16 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                     res_cm.get("message", "Cargue masivo Teoría/Taller RUNT")
                 )
                 self._send_json(res_cm)
+                return
+
+            if action == "runt_deshacer_masivo":
+                res_dm = runt_control_cea.runt_service.deshacer_o_restaurar_cargue_masivo(payload)
+                _registrar_bitacora_empleado(
+                    u_sesion["username"], u_sesion["nombre"], u_sesion["rol"],
+                    "DESHACER_MASIVO_RUNT",
+                    res_dm.get("message", "Revirtió cargue masivo RUNT")
+                )
+                self._send_json(res_dm)
                 return
 
             if action == "runt_sumar_practica_individual":
