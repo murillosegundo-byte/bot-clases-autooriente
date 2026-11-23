@@ -688,25 +688,11 @@ HTML_OBSERVATORIO_STANDALONE = r"""<!DOCTYPE html>
   </style>
 </head>
 <body>
-  <!-- BARRA LATERAL (ST.SIDEBAR) -->
+  <!-- BARRA LATERAL (SOLO CONSULTA PÚBLICA SEGURA) -->
   <aside class="sidebar">
     <div class="sidebar-logo">
       <img src="/api/observatorio/logo" alt="Logo Institucional" onerror="this.style.display='none'" />
     </div>
-
-    <hr class="st-hr" />
-
-    <details class="st-expander">
-      <summary>⚙️ Gestión y Actualización de Datos <span>▾</span></summary>
-      <div class="st-expander-body">
-        <button type="button" class="st-btn" id="btnSyncAnsv" onclick="sincronizarAnsvAhora()">🔄 Sincronizar con ANSV ahora</button>
-        <div>
-          <label class="st-label">O cargar nuevo CSV manualmente:</label>
-          <input type="file" id="csvManualInput" accept=".csv" class="st-file" onchange="subirCsvManualAnsv(this)" />
-        </div>
-        <div id="syncStatusMsg" class="status-msg"></div>
-      </div>
-    </details>
 
     <hr class="st-hr" />
     <h3 style="font-size:17px; font-weight:700;">🔍 Filtros de Consulta</h3>
@@ -749,8 +735,8 @@ HTML_OBSERVATORIO_STANDALONE = r"""<!DOCTYPE html>
     <button type="button" class="st-btn" style="margin-top:6px;" onclick="limpiarFiltrosObservatorio()">🧹 Restablecer Filtros</button>
 
     <div style="margin-top:auto; padding-top:14px; font-size:11.5px; color:var(--muted); border-top:1px solid var(--border);">
-      🟢 <b>Servicio en Línea 24/7</b><br/>
-      No requiere PC encendido.<br/>
+      🛡️ <b>Modo Consulta Oficial Protegida</b><br/>
+      La actualización de datos está protegida en el panel interno de Gerencia CEA.<br/>
       <span id="lblUltimaCarga">Cargando matriz ANSV...</span>
     </div>
   </aside>
@@ -1001,49 +987,6 @@ HTML_OBSERVATORIO_STANDALONE = r"""<!DOCTYPE html>
           <td>${r.Zona}</td>
         </tr>
       `).join('');
-    }
-
-    async function sincronizarAnsvAhora() {
-      const btn = document.getElementById('btnSyncAnsv');
-      const msg = document.getElementById('syncStatusMsg');
-      btn.disabled = true;
-      btn.textContent = '⏳ Descargando últimos datos oficiales...';
-      msg.className = 'status-msg ok';
-      msg.textContent = 'Conectando con portal de Datos Abiertos ANSV...';
-      try {
-        const res = await fetch('/api/observatorio/sync', { method: 'POST' });
-        const data = await res.json();
-        msg.className = data.ok ? 'status-msg ok' : 'status-msg err';
-        msg.textContent = data.message || 'Sincronización terminada.';
-        INICIALIZADO = false;
-        await cargarDatosObservatorio(true);
-      } catch (e) {
-        msg.className = 'status-msg err';
-        msg.textContent = 'Error al sincronizar: ' + e;
-      } finally {
-        btn.disabled = false;
-        btn.textContent = '🔄 Sincronizar con ANSV ahora';
-      }
-    }
-
-    async function subirCsvManualAnsv(inputEl) {
-      if (!inputEl.files || !inputEl.files.length) return;
-      const msg = document.getElementById('syncStatusMsg');
-      msg.className = 'status-msg ok';
-      msg.textContent = '⏳ Subiendo y procesando archivo CSV...';
-      const fd = new FormData();
-      fd.append('file', inputEl.files[0]);
-      try {
-        const res = await fetch('/api/observatorio/upload_csv', { method: 'POST', body: fd });
-        const data = await res.json();
-        msg.className = data.ok ? 'status-msg ok' : 'status-msg err';
-        msg.textContent = data.message || 'Archivo guardado.';
-        INICIALIZADO = false;
-        await cargarDatosObservatorio(true);
-      } catch (e) {
-        msg.className = 'status-msg err';
-        msg.textContent = 'Error cargando CSV: ' + e;
-      }
     }
 
     window.addEventListener('DOMContentLoaded', () => cargarDatosObservatorio(true));
