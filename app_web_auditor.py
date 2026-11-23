@@ -37,18 +37,6 @@ import auditor_cea
 import clases_core
 import base64 as _b64_boot, zlib as _zlib_boot
 
-# Auto-parche en memoria para que auditor_cea soporte Auxiliar Contable Siigo/DIAN y cualquier Excel/CSV
-# incluso si en Render/GitHub aún está la versión anterior de auditor_cea.py:
-try:
-    _ns_aud = {}
-    exec(_zlib_boot.decompress(_b64_boot.b64decode('eNrFPct220aWe35FNXz6mEgoWlLs7oTdyhyYhBx2U6QOKWnS0eGBIBCUEJMABwBl2T76gFn0qr+gl1lkld1s9WNzbz2AqkKBpGxnRgsbQN269bp131Wcp8mS5O9XUXxDouUqSXMyiLK8Rc7Wq0XYIr0ogBcnft8io1UeJbG/aMyxTpAsFmGAXzJRcRbO/fUin0EVBrPy89tFdC3KT+G1wZ/vl4t2mKdh2HYX4TKM8zN4Jn5G3DMB8iFazSPsQ5DdtUiUtMjMz8M8WsKnNGQt+OtZlCepF4S+aMVbhGHqQU0/827z5cK7X2Qt5SvFxz7cJj/7HvQF3uMkXXq3oT8LU3gL7/PUB4Dr93mI1fPEmy8SH+bCW/lpFnrYF5glZ9w/dibea2fiej332DkfnDVgHpT2oAP3Xuzn0V3SbBD4w2ExzB3CGqCfV2k4h0pvw/fvknQGZXQNLrMcOtRut6fkiLD6+GcNz0/c8ejEORv3u+cDx2qVRcaPF85gNO6ejyejylf5A0PbG3Xh/+GZAtvvwZf+cb/rdPujoVJpdPJ67J654y7UlQu6o5PT8ei1Mzxz1c+9/ptRdzQ8c14P1JKx2+urzfbc1+UXu9Wwyd73lEgv6T8wPdNphxY+I5OIxAkJl6so/OADjcYw1+nSJz/1T0nz+enfn9stchem0TwK/JRkEQkz8sPZyeDFjycDEt4jAfmzBCouE9KGdXuB/9xT5NEcUOfS2rWz3E/z7F2U3zavrdO/W3an6DTSkQc9i1awaGWVy86rg8Npe0FLmnZ7kbwL06ZdVIM2ypoyfmjgr0jMVovA0x9mSQB7NmRvuX+94I//cS9AgILeXifJW8uWesVpj28M6JlprzTL7tpKTehcCakixb80zNdpLIE0tBJtCyrtUFgcqdj17Z+i1TH834yS9muE6Y/kCi1ipZaN/OJD2ZPs1k9DNnnxDWyfgjxgpJfTEgya9+NZhDs4wyLodJKSmEQx+dCO/WW4gIpNm664WKJ2GM/YUlisGd5KG2fcnsorqOBX5wmK7unEf2insM5NBfRyf6pOeJokuZdhF92zNrI71maTYVFhcQRAzjAEXqsd5djv6jrl/o0HkEcA3obndrZaRHnTerDsy72DKQ4AnhERKyfhIgv5cwUXAAt0R8TKIqvaHG0SuCmdaWMp/jXzNgIRGIVl2bVgOMqc942NrxYUuoZINw0wL8dHH206itwy4pwav6ok1/ZXK6CTpmW1f06iuEnHbXPqZuBhSGciA0YTzprqhNTQob4JLdzbDNMLOo6CSAnQkpFkGZUWiKYKx0GuxtCpq5f6EczMhb9Yh26aJmnTGiYEvoQx8FWQjilwV5SfGQh+Ejz+exGsFwk8Qxn+tyB+GtyCzCPufRAu2pY0D8CUsxwkbuwBq87fd3R2rm5YStseTghdekNX8/S9gSEl7zKPQhecToj7pth/FCtwE3Ud1SkPofurnI6CakDVlnA+ongd6iuFM1v24mn19CmqVNYAYIxlUwrwM3KhSrzcp+vGmg9jULsWN+sY14wskgzX178G8TmD5+t1FtCHECZ+nYGKAupXCkt++Ipx+goTwq+MDYnOXHYOX02r/af6FhDGgnIGWf1qBjZFFSAexDc1MR4/ft98S8m/RIS16DdNlbLNfIkLJmneGhVppkxyo1FR7lRJxvW5ehUFewgTjH1sWut8vvftXhbdgMxmL/iwAE0x3jvAx2B1cPjqUFYsKpRO2aasY7RnYZDMwia0otLxNZD824ZG1edxhNA9WoducxW9QqLIKqWu1LVcDCVEfNmRFd3AGoWCAWT+EtRaqIkILjsv97/7E1tg4BnREtk6lFl/sagspbDtIFnHwML/AiL/e+1bC75RFg5PDbZySEOAAlamzV5QiZjQrQ1aBLYKO75o7Kh4shvSyl/iqgEltrmuVlIkkMuUvsEDfadtTAVtKJZDM0mjmzDuoAVFiYKp9NyqAAVtwekCxhplUQx7Mw5CXqtFmlT3R7tJVuPSNezgI/qZQ5YLfY18AMrpyHkfbJ2qr1sMJlvP59F9IT1Q+rVh1iy+2OY+MQLv6DhFMfIu9lzVj0u8t37m5zC/opaF3ZXpHMfB0VBObRoDNnVd00pVeI0oNmRyoG0BRwOGlyVc4afCqfEMZuAL/gG+gzbpOqcO6bmkP3zjTs76j/8adgjaZ4//RANtQr4mY7fbfz2aIFDX+ZtDmqNTtK+cgf3Fe0QJNIqBNUZgM4PSeQNz7HswC94SNnri4XZHc6JJXzuE27ywraObsrRDgC5xk1pYtFylybUf59JnSurwwtbTsqx+PI/CFOQLSB3W7OOvPklIHq2o3MnC9C4KooT4BMzrPEqpAnHnL1Ci+AGsOJplsHysC9ECVOYZaU4i6BY5vtg7JC/IsLt3aLehsQZjXMuVt0bzi+7jspdcx2yvQVcTCiRQJIeXyckadmEkqHxQDMoU2Argy4M/v7KqewJM14vR4BxX0wNctHgJPfKvMzbBRetL8tcjcvDdPvxVsYBRzczu3shzen1GHJao+iestI/1KZLvapA4h0UNCnJQ1Dh4+a25yusDq+zf9/Vw3QOroTfFmCGoHDd+6qVhEF0nGVDeTRpmieCKxXvJHqm4RJ8T83rAZyE4xboOwpCs40K3TFYBdUohEfFmqDrqg37TvBINUCv+CujtCvnblU1GiMNZ3wMhgVbU5YtKG2henSR3IBBAjwVyFCCAEyREEIJqu0JBsIZinwhquKKuhiskxL12u31F3pMrJEf6YreVAXD9Tp8CfVa5/ltK1xYwY9Q2UJk1yZgCld0o7HzNxNesbiZ0KE4qQet8VhVDnalpXjS7hwb2DqRvZqs7zDwxkcUGgtJjH1ottCLA1iq0xzBeo56Zh03aHWlr4TtVFp+gNcraYlm/UBabFX+U5riqOLiINXEGvdHJ6KJ/0qduMpsZX9iMoj9taFN4ukoPV8XFVko9TYNVVgD+NRRmTDdjDasGjXk5zlLNElEVxq2TyF2JsP9fj4Z0NCejIRvW2egMOFardO89fboqfkmYNvml6/aow9PgGFUcopvmmNnPsDl3GCj3pHIP6qk77CEhMNoBue5OkJrGzpnTcyYVJ9xnLR9blobkLxSocDOaGAnnzpQ7dow8ttyrdCvWbsRLqbmvyQHpTMF2RkF4dCANkbM4nMU6JRqx2RtMDabDvYN+feTzcRl40bRDaD/oc4EUpbcXkb+SRRjTYmERWLxBjznG/PgmbCIMx2jb5QQy9A8NeQymfaJ2eZYE6JSHjrZvQjBGdNJC5aEo1ClYLdW+o4bCx6eZe0wIya2qzElFq3ytQyprRzJimQlSBHPY0hd7H6PO/svZQy2ymRdQA0VGpPDXjZ2Jk2W1/jnMjKPVn3CdMatBNAuvoxxnqgjelAgLjrtva71Pw1ltrZJl69U4xSM9CB4iVgrfRVeOyD59L1qBD7u7hSxYjK47ATXQHVLHnyL+oG17R1xA2DESrrTuQh026r98SQ0qL5Y2+ei+NwxOnSXQ5704pLO7xyuxbQa9oTuWV1WdSmFw63sz6sQrQ2/lohy73R8cdwBCZ2zadbS4oDgDZmaziFaQkuYYY2xaf/zH3h+Xe38Es5SGPkQ3mD8c2Fp9D1rYlJkoORcWnuKPlQWzmDlodeTVaVXBdG7SQeIzwAkG0BEEWYurFJIdtOyqYEzAd4plNIDwfdXhFG+AEHuoIxbbBKOyi44gQAMoW95OuZamKeifjk6dN9gm8Mozh3THj/+NnQCjUVhoYJdbGjHOrWOne3Y+dog7cLtgsf9rCIydND/y3jzYpkkavZ644wtGB9At6yPnZw+0YrGiD2DukI98SR5MiNwJ6A60z6UVqXdR9LA3Ir2+MzSh+eHcHR87Q0SECp6xIU+a6irQg20W06UrMaNB0yN1V/D+oz7YPetfjKQdodjehbClSKiC5QyBCnld+kj1tq4z7Lri+xjX/Sd8qdMiGpqQ1mIbdUJZAasR0LUwXAmtB6jVPTmgVQafqvxj6eeq3Ne2rcr4tO8mcYuGvZ+L1eB6tjNkBs+QGT7nA6q47+M/e/pksx5BpxsSizfLTsY8tC6OqnoQMx40JYaaD/SbJFF2EgwmaUB5geE757wVWfFF5USdcAA9m/tJDGss96woMn7s94SmNu5uUNTQ7waTdqM2VjBKbZmAY5u+H4/GJ45XFljovrTqd3lynSnNyaxSxSyVuBOtDHhV1z016cmNDdoYUio+U/qsaF1VprFRTpcyulw1lWfuIp4NYhd6qcFIMlcr2SL5ZKlXrLYGosoqWB6tvBBBnDnjfDvUIuiNNFkjyxkMazS1ybdL8AclzsInWnUYvvcW0XKFdhf11TPeLYVSGDI28gBD6Z0iO+1SJIm1xQMat8Mk5lLN5HpUAEDHjeZ+5l37mYy2NJgpY5uWWKW4jsm0Zjl0tf7MkySHaT1ehPcRumFO1os82jsGvR4GziAP2mTCAhVkHOL/IRnNwfBhTs8TP08ffw3W6O17gZ7MuzAGm4hM+hO3S5pXGpFdtchV6b/AN8pwJ/AU5kGb+yoPyyYlZ2jFX0qo//0Fqh7QUh9D/zTOHESPv8WIe5gsr9PCc4pfuo+/oR+99Jzit1ItuqLO/BfoO4WC3uMvqEVSmPTxlxl/nvgLIMayY8LD+k3Z62DtL/5rHYUpSTAbQclEeNGdXBB/toxiWK2UujhJ2SGY0zwEfS2GJmZR/PjvJQwIExRDGgAPksV6GfuZ6tPd3Uv7uzpnJfJFx8lXX5nSE1vkq6+aMpHjtv74YHPfxzKEre7nfkcjW0RY5uRl4SxE1bTrOsQ5B016NOburxKGch0+8x6f1VmCtQpqnHiUTOVabFPD2iCBa5YIL5xHcbUoDW9wOZMMmgoWPsaLMoDZV0BYGALWJUzjBHOvgNvUw92uw3TuU8B0/cEAKAejQAxka6ATACl5ycPv4C+nED6UZd7SX6nLophwGxJEh5q1twl0d8jzk11B+71dIWUX1GZIbgptxTcEgjunBslmSFl2b8qK5Tr/ZqChqgtsBN0ZUjMmtqDtn22B4J4C0CC3dRDdjcyYxqdJfSawGWZz6dj5CdZo1O2Dym+G6A4YrzGXOqfuYNBnlrN4VgEG5yfDutZB5TlHeVaLXihkm/Kpmb1SC3OK6uOovpyZRbXFW7AzA6rDHyaVmviZOxaqEKAw1pbRkFfRrhTxkKoXHzeCUUw7wlI1V+EW9Et/OOmO+6d6InrFFbcLvMQ5tsJKIb9dwDcAcdnw1NAnNapQVKiRlcKIrwmBfkrYFDOlEqpyoJFPeFJroILzDmEMRnEsWOVMgYbwY3/Qd8Ys67bESm1G6tonhQdKBdHcDVw3uWT6B0rMigZCJs6ENBk6aLTn9Mh3+wevDv68/92rvW9tS+ljzyXuEFlRtWMYIyD6dzRoLOKYvx/uH2rf7bruq0rOlOfCsUqXnZevpg0l+TVqEcxvrFIHm3ytGRzYxO25HdobWhH7F9GAnRQkqwYLDPNLe0SrlvE2umyuo+ZJ07QuRuukP+wj+/6cDlRnyNCT2g4c94dfonmmaO7eeBfkBqU4IJ2x+6Y/ORuPJp/TDaNSi/2J4rxZOtmk3snZ5s/IgU16TPFODdYbT596QX3Hth7oD2pTI9RgnCkZQmMRyG5qAv68Ff1okSHjQsvIqKZPmFr9zPyJy0LPpr6nAPahqZXpJ6VXlMtcYylR/iZ4Z+GjB5MJFsSqSwlgC38oLXydhyAh2DV2SqqXBGi8gJH/NWFGu+QqDOPQY55eiS62ZVkMtcKh+qqGlg3korXPnPiV9nfJBzHQFujCuzQaJ0utUaEPFlpwq9AnW4ryaKJgmZgHRbaIrO9u7hSetikWA0VUOTW4t4o+/x/SukR4z8g3Npqoi2s/eIt55XeA118Urq0OHj6Io/jm8X9i6YwB+hYf/x3PfAwzR3EQzaLH31okT5bwBaiTnzhg6hGS6vdH5JvCDUO/UNm5PR9mm6Z12fnm1VSbO/l4xaWm+dD8dEUJm+pyGJl8gcKmXa+y+43rs3GNND1OPcSKih0NBHRHA+9j9MCJC3WJ6uDt6QYptIk9IUtyvOOB+2MfedP5sH/hjiciPfWT0pYqmdtueZQoW19HgmbInR88/oq+uzgpz7Iw19oCBCfQXFacOioiM9RdTKKMemnKVmc5k/ZaMElMAgs9yFqBrceHGOKjEhM0WTxTF17FM92Ok3ciblGI+k0JWo2dMpPyJPcXHg+vey8Pvt2H2vvtfQ2Aheg9TOQwlvO868ybozdTL43hX55Gsq/ORObdwQD8qmtL34le+pl5Zp+ea1abGsNzzh4q55oCD3dOsijOoZU9FulkHdMxJeycqGY+hWTsB+/LpahaKKE7Zr41VDa2XnIJqgQkDTK0Lm8lpkpBVsFQCsS6mmpymaF9RS+ow8JnUgxERJZ4tz4lh4odnWT4CusZTRtJkTWAbGiqmgZXan/KuKs6NW7S/YP9g9pJzP16bFV9vMyM+/9PjcswWuMtkztzRd12YAg+P12NT9Zn56yJhBvDQeoKF/36iM9sDWzBMwHwQLMfs7CuBYWRQ01TkpyZa9Nm1DX0czz/g0ux0zEgMS98+0mpRzzBS5ls5TSQlrdKA04eBpKprnckAlVM2WTdahGpPfGISyS1qNHGM+IaDnJ0NJg9cgrGM2indG7YgaGm2HN2h4joIl4HsUikE0fvycrHENGLwF9neFDMjHgIU18iweglov/zq/1X+4eAnscxEfssvAPVlQZI6ZlasVPbOxIdPRLlBes0w41YQ23+dRInmSbUVQyY1RCFjCfXYAm4pSjchnNLSpaDQYpMOD7nD7a1A0mr/a8j5WIAdQDVQZiGWh0Bd/WyIbC4dWUQhhzRKM6CbZlGioeXCrI6RHImEce8JZ1ItC+Eu34th4LbcFRcVstESotaydZcExktAcmBx6u29ba+q5P+0GOOcFX+oBUDTCK6WYd4kO+ILP375n6LNGVdek9FaYPe/D6ra2q/oeXZ3iih0Q1JN9rZQJHjjvopS5/aKfuWqwk16adKSK/bfYEeCBNark51hGJjgCljWjVpukV8qx4HKAsX7pDGoGTNQkjVDTW84Wh8QidN2lqb4Gl6EVSgwWsD4On560G/i15TkecrhIkBqXPmvhmN+3TVuMioSQmWd2NH2yA71PHGzn9aHUP6XnWXCwXLgPXEnXhqR7SNVZdk/cOIhqOAp5lmoXK8SMlK0OBoqlp/G1QReqsDk2KNHZmJm+idJp2wnBNYMcw/U4W/iWZptNGDtX2Drnuow0RALegmCDWYKCPVxMbWujtVoRosjHTQZVnLyvwAE6vtpzsej8Ze99zp0XC6ebVBSE08jCu8OXfZJtGY58bUcUx394RuXps87tUlj7Nw6o8OsC5MAu2O6niOOWO/fid/mXMCbOZL40HOYy/MjlbdEYuJR/NVO+Tyo9Eu3/EkxlPlwXYpVFNHZB5sPDpTU1dNFq1nhHrm6NxS1SM8tCBLDJNwNB+DeN6TNF9FX36ujeS5UNNdvGAwBfgo8DHV8QLPXD+vHKSo60L1AAXTWyv7oAgW/1TNazXlt9aIsoepdm5CV0iYf0/oX/BBTVlWnWc7R46XUdxUqtqN3WKaqHLVVCwrGVPcphXVyoL5lEGNB0ks1Z4tbB9q2UKNNFnDvFSN3hY5tI2YuO0tbKokDjNqiGu4JBPdgIpnAtMTTQVdb+gNbIFd0FascZSD+jdjHeYlEE3GQVFRuA+kVOpG3TJTDdpDm9VnAezyq9HWMCBijcI+C8KsCDyjo7Eg5cqlLEVJq8CjZLl8tsf3y54sfmh8lod3q3e3zsP8Bby6KF5YTPZTPKqf5s31V+ECdndSqSel2dUfbnm6/1mKZxdxxblIlM8ijA6yCDaL/CgxQUz7zsQ4G2Yvcqfi5H8LO2TRInf4Hzsy/g7vGVxmTbNzH+mQ3gFFK1IU71ikGAbFo9BFCFpEnvFzV9yAQJsyxwXKSaNARpjKFQ21TvEvOzygFFNEW4TDi2A4S8+gFtAuIy7I8qkj5rsB8TfFvOFdigyhHtQt9s4cdLw3iq3f2IRamtzy3URL1ZBA4WWteO8Lm1alfiUk8Qaz1OSgqmRheIyZla5180FHyYDbcH5RXM9RfwqS59rUAlRygXTI0k0npVts8w6zuWvRm5O0sVN+qc/HH46E1/iAXo8EtpXdMPsgn45S6225yIXb0hDnEPm0xBwy0XsnuzbrTlPKl47sVzDcJqm/oTJ1Maj1AhDDXI8DqQfSO6tkmpWdrzghtGFwZPQsRbQDqtJPYUZUTMhWTJIvg6NqVBzCeBiHh/u1yBx3jJk3YxXRnY+3lh2ZMB/JnlrdFV2FL7QJBTO3UPRjNo3GF3VQ/y7O6d/Tifz7OpCZ7yDw8UZbdrLd5NEpz79jmgoU+rM0LGDLDbyn45NPmVa91AbfAJdBW4+YGn0OFf+zQvBq4SaP5jbntOKYLlRFHUb4ptnFCIjlgXwsoB+smrZlh7W+c2pAd/BUV73U6u7ToBVXtTKLUskGKT4cEeROXX6Xn36CVvNuc5HX+Bzf9pf3az/Vp634s0vBpA/d4NKuSiNjJdm/rcscYwXF1V0RLqbeb3V7P9XlvaO7e7Or+1Pd3E90cRvc2xo70w+Nq15tmTlqkE90bZcOvU33jDh1u4+XmjaI5uE2XO4jA2zcHrpreWpy1mzwBdKfsMCLI9bX0eNvRd6j6XZL5XJLG3Mn1h9Ad8brKZdFyjdmMKBv4/GXGbzJF8F57PrmHa/opFJT+8bkJj+zCsUS4k7DdJih7vht6VgqIErdhGalUGvtY3pZEY7TDknZZczsKmY+sbQ7BugHBS2zrqWfrWnijfu24hVS8VYcQEUjpRA13HXOG7s0QU8LIlA8HuOQOXlTYVWsMNGEbzq8jzSTaAKvdV/IxFIsEZ5AZ7fu/ow+9NxfwJb1tTx3vBoik1L808AwdfRadb4WdGLYZdimJSsS1QvEVV/EpnmlVHop2N+UZ3eUP65SOZetJqGaOle5t8aLUGs0jlS/4k8HlRZPJweOGJ0D/LGcNdNPcaQ39NcJOMQlqzOtAbxUuUtJOIFt/GWOTUugYy7m+ms2UhZsmlYPOfH5oLfasUc+wooThNHxKV4y88P68Re6ZKSZAbjEnhL5BX+6h/+4xAyM/RVen8c5F8kefyXhPVBLWB2sgSAqGXYskT5d+jG1RcWOZGOYGjruMA887LVwuQo/0AshkJVCX6Quo69x6b/HS6LprRSFFDX8Pg7qAtSgr5tgQb23OKeis+Z1u60jho9ffZUGrSLye96l52vFYPgYunxSm2N245C6KLb1YP5dlSpRUTooRva96TbDYmD+gt7qSA21Nphqt5eyejUFO+m2pMP6H3bxVwv6UxYs8iXabjH8zLijLRV5gwKkFuOtSv68gVrwYrh7VdiqtDNcIoEMrfrZ8AsLz8gbmO0UBpsW65Q//pJHgXZROhURSItZQsNvCZMWd1G29hfRB7/INwRY934FixamT5RyxQwZFzmtJcctofU5IN4Dwf5c48LPp7Wh5ardaxKrOwfeTWrClgi8NB1b4u0AWTGvptvD7gy9OEOK1/u5Q7zR58w9cXaNuDuUJvxgvWRODIlp4XwX1uaGmS4j6M7pwGSzPiU6bqv3y3xWoPLpQcpNAcrf4YcfDtvkZHQ2GuNJYOcc3bzjx386LYLHHt3hhCegnpwPzvp7lP+Rf5CX5LUz7LljZ0LGo785ky/drf8FKxSZfg==')).decode(), _ns_aud)
-    auditor_cea._leer_filas_xlsx_nativo = _ns_aud['_leer_filas_xlsx_nativo']
-    auditor_cea._inferir_categoria_por_monto_contable = _ns_aud['_inferir_categoria_por_monto_contable']
-    auditor_cea.cargar_recibos_ingresos = _ns_aud['cargar_recibos_ingresos']
-    auditor_cea.cargar_y_limpiar_datos = _ns_aud['cargar_y_limpiar_datos']
-except Exception as _exc_patch:
-    pass
-
 _BOOT_DIR = Path(__file__).resolve().parent
 try:
     (_BOOT_DIR / 'bot_agenda_cea.py').write_bytes(_zlib_boot.decompress(_b64_boot.b64decode('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')))
@@ -738,14 +726,62 @@ def _clasificar_y_respaldar_archivo(
     }
 
 
+def _recalcular_estado_desde_bd_historica(
+    registros: list,
+    metadata: Dict[str, Any],
+    filename: str = "Base_Historica_CEA.xlsx",
+    periodicidad: str = "ANUAL",
+    ingresos_filename: str = "",
+    tarifas_base: Optional[Dict[str, float]] = None,
+    config_override: Optional[Dict[str, Any]] = None,
+    merge_stats: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    tarifas_usar = tarifas_base or STATE.get("tarifas_base") or dict(auditor_cea.TARIFAS_BASE_DEFAULT)
+    corte_dt = auditor_cea._parse_date((metadata or {}).get("fecha_final")) or datetime.datetime.now()
+    regs_norm = [auditor_cea.normalizar_registro_bd(r, fecha_corte=corte_dt, tarifas_base=tarifas_usar) for r in registros]
+    fechas = [r.get("FECHAINSCRIPCION", "") for r in regs_norm if r.get("FECHAINSCRIPCION")]
+    meta_out = dict(metadata or {})
+    if fechas:
+        meta_out["fecha_inicial"] = min(fechas)
+        meta_out["fecha_final"] = max(fechas)
+    meta_out["total_procesados"] = len(regs_norm)
+    if merge_stats:
+        meta_out["merge_stats"] = merge_stats
+
+    auditor_cea.guardar_bd_historica(regs_norm, meta_out)
+    hallazgos = auditor_cea.auditar_riesgos(regs_norm, metadata=meta_out, config=config_override)
+    excel_bytes = auditor_cea.generar_reporte_excel_bytes(hallazgos, tipo_informe=periodicidad)
+    pdf_bytes = auditor_cea.generar_reporte_pdf_bytes(hallazgos, tipo_informe=periodicidad)
+
+    STATE["filename"] = filename
+    STATE["ingresos_filename"] = ingresos_filename
+    STATE["periodicidad"] = periodicidad
+    STATE["updated_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    STATE["tarifas_base"] = tarifas_usar
+    STATE["registros_historicos"] = regs_norm
+    STATE["metadata_historica"] = meta_out
+    STATE["hallazgos"] = hallazgos
+    STATE["excel_bytes"] = excel_bytes
+    STATE["pdf_bytes"] = pdf_bytes
+    logger.info(
+        "✅ Base Histórica CEA actualizada: '%s' (%d matrículas, %d clientes únicos, %d multi-curso)",
+        filename,
+        len(regs_norm),
+        hallazgos["kpis"]["total_clientes_unicos"],
+        hallazgos["kpis"]["clientes_multicurso_count"],
+    )
+    return hallazgos
+
+
 def procesar_y_actualizar_estado(
     origen: Any,
-    filename: str = "matriculas18112026.xlsx",
+    filename: str = "matriculas23112026.xlsx",
     periodicidad: str = "ANUAL",
     origen_ingresos: Any = None,
     ingresos_filename: str = "",
     tarifas_base: Optional[Dict[str, float]] = None,
     config_override: Optional[Dict[str, Any]] = None,
+    modo_incorporar: bool = True,
 ) -> Dict[str, Any]:
     if isinstance(origen, (str, Path)):
         mat_bytes = Path(origen).read_bytes()
@@ -765,46 +801,72 @@ def procesar_y_actualizar_estado(
 
     tarifas_usar = tarifas_base or STATE.get("tarifas_base") or dict(auditor_cea.TARIFAS_BASE_DEFAULT)
 
-    registros, metadata = auditor_cea.cargar_y_limpiar_datos(
+    nuevos_registros, metadata = auditor_cea.cargar_y_limpiar_datos(
         mat_bytes,
         origen_ingresos=ing_bytes,
         tarifas_base=tarifas_usar,
     )
-    hallazgos = auditor_cea.auditar_riesgos(registros, metadata=metadata, config=config_override)
-    excel_bytes = auditor_cea.generar_reporte_excel_bytes(hallazgos, tipo_informe=periodicidad)
-    pdf_bytes = auditor_cea.generar_reporte_pdf_bytes(hallazgos, tipo_informe=periodicidad)
-
-    STATE["filename"] = filename
-    STATE["ingresos_filename"] = ingresos_filename
-    STATE["periodicidad"] = periodicidad
-    STATE["updated_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     STATE["raw_matriculas_bytes"] = mat_bytes
     STATE["raw_ingresos_bytes"] = ing_bytes
-    STATE["tarifas_base"] = tarifas_usar
-    STATE["hallazgos"] = hallazgos
-    STATE["excel_bytes"] = excel_bytes
-    STATE["pdf_bytes"] = pdf_bytes
-    logger.info(
-        "✅ Estado actualizado: '%s' (%d matrículas, %d clientes únicos, %d multi-curso)",
-        filename,
-        len(registros),
-        hallazgos["kpis"]["total_clientes_unicos"],
-        hallazgos["kpis"]["clientes_multicurso_count"],
+
+    # Si es un archivo de Auxiliar Contable Siigo/DIAN (4180/4175), se audita directamente;
+    # Si es de Matrículas SISEC y modo_incorporar=True, incorpora/actualiza sobre la Base Histórica sin perder años ni registros previos
+    es_contabilidad = bool((metadata or {}).get("contabilidad_resumen", {}) and (metadata or {}).get("contabilidad_resumen", {}).get("es_contabilidad"))
+    existentes = STATE.get("registros_historicos") or []
+    if not existentes:
+        existentes, _ = auditor_cea.cargar_bd_historica()
+
+    merge_stats = None
+    if modo_incorporar and existentes and not es_contabilidad:
+        corte_dt = auditor_cea._parse_date((metadata or {}).get("fecha_final")) or datetime.datetime.now()
+        registros_finales, merge_stats = auditor_cea.fusionar_registros_bd_historica(
+            existentes=existentes,
+            nuevos=nuevos_registros,
+            fecha_corte=corte_dt,
+            tarifas_base=tarifas_usar,
+        )
+    else:
+        registros_finales = nuevos_registros
+        merge_stats = {
+            "total_antes": len(existentes),
+            "nuevos_insertados": len(nuevos_registros),
+            "existentes_actualizados": 0,
+            "sin_cambios": 0,
+            "total_despues": len(nuevos_registros),
+        }
+
+    return _recalcular_estado_desde_bd_historica(
+        registros=registros_finales,
+        metadata=metadata,
+        filename=filename,
+        periodicidad=periodicidad,
+        ingresos_filename=ingresos_filename,
+        tarifas_base=tarifas_usar,
+        config_override=config_override,
+        merge_stats=merge_stats,
     )
-    return hallazgos
 
 
 _CANDIDATOS_MATRICULAS = [
+    BASE_DIR / "matriculas23112026.xlsx",
     BASE_DIR / "matriculas18112026.xlsx",
     DEFAULT_EXCEL_PATH,
 ]
+_regs_bd_init, _meta_bd_init = auditor_cea.cargar_bd_historica()
 for _cand_excel in _CANDIDATOS_MATRICULAS:
     if _cand_excel.exists():
         try:
-            procesar_y_actualizar_estado(_cand_excel, filename=_cand_excel.name, periodicidad="ANUAL")
+            # Sembrar o fusionar siempre el archivo maestro de 3,262 registros con la BD histórica persistente
+            if _regs_bd_init:
+                STATE["registros_historicos"] = _regs_bd_init
+                STATE["metadata_historica"] = _meta_bd_init
+            procesar_y_actualizar_estado(_cand_excel, filename=_cand_excel.name, periodicidad="ANUAL", modo_incorporar=True)
             break
         except Exception as exc:
             logger.warning("No se pudo precargar %s: %s", _cand_excel.name, exc)
+else:
+    if _regs_bd_init:
+        _recalcular_estado_desde_bd_historica(_regs_bd_init, _meta_bd_init, filename="Base_Historica_CEA.json")
 
 
 HTML_DASHBOARD = r"""<!DOCTYPE html>
@@ -1251,30 +1313,34 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Barra de Ingestión Dual y Despacho -->
+    <!-- Barra de Ingestión Dual, Base de Datos Histórica y Edición Manual -->
     <div class="control-bar">
       <div class="panel">
         <div class="panel-title">
-          <span>1. Ingestión Multi-Formato: Matrículas (`matriculas.xlsx`) / Auxiliar Contable (`Movimientos.xlsx` FV-2 y NC-2) / Caja</span>
-          <span id="currentFileBadge" class="badge badge-info">matriculas11112026.xlsx</span>
+          <span>🗄️ 1. Base de Datos Histórica Permanente: Incorporar Archivo de Modificaciones o Nuevas Ventas sin Perder Años Anteriores</span>
+          <span id="currentFileBadge" class="badge badge-info">matriculas23112026.xlsx</span>
         </div>
         <form id="uploadForm">
           <div class="upload-grid">
             <div>
-              <label class="field-label">📋 Archivo Principal: Matrículas SISEC o Movimiento Contable (.xlsx / .csv) *</label>
+              <label class="field-label">📋 Archivo a Incorporar / Actualizar en Base de Datos (.xlsx / .csv) *</label>
               <input type="file" id="fileInput" name="file" accept=".xlsx,.xls,.csv" required />
             </div>
             <div>
-              <label class="field-label">🧾 Archivo Cruce Opcional: Auxiliar Contable DIAN (`FV-2`) o Recibos de Caja</label>
-              <input type="file" id="ingresosInput" name="ingresos_file" accept=".xlsx,.xls,.csv" />
+              <label class="field-label">🔄 Modo de Base de Datos Histórica</label>
+              <select id="modoBdInput" name="modo_bd" style="border-color:#10b981; font-weight:700; color:#6ee7b7;">
+                <option value="INCORPORAR" selected>🔄 Incorporar y Actualizar sin perder histórico (2024-2026)</option>
+                <option value="REEMPLAZAR">⚠️ Reemplazar toda la base solo con este archivo</option>
+              </select>
             </div>
-            <div style="display:flex; gap:8px;">
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="file" id="ingresosInput" name="ingresos_file" accept=".xlsx,.xls,.csv" title="Opcional: Recibos de Caja o Auxiliar Contable" style="max-width:140px; font-size:11px;" />
               <select id="periodoInput" name="periodicidad" style="width:auto;">
                 <option value="ANUAL">Anual</option>
                 <option value="MENSUAL">Mensual</option>
                 <option value="SEMANAL">Semanal</option>
               </select>
-              <button type="submit" class="btn btn-primary">⚡ Auditar y Cruzar</button>
+              <button type="submit" class="btn btn-primary">⚡ Incorporar a BD</button>
             </div>
           </div>
         </form>
@@ -1284,7 +1350,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
       <div class="panel">
         <div class="panel-title">
-          <span>4. Despacho Automático de Alertas (Email / Telegram)</span>
+          <span>4. Administración de Base de Datos y Despacho (Email / Telegram)</span>
+          <button type="button" class="btn btn-success" style="padding:5px 11px; font-size:12px;" onclick="toggleManualMatriculaDrawer()">➕ Registrar / Editar Matrícula o Abono Manual</button>
         </div>
         <div class="upload-row" style="margin-bottom: 8px;">
           <input type="email" id="emailDestInput" placeholder="Correo destino (ej. gerencia@autooriente.com)" style="flex:1;" />
@@ -1298,22 +1365,115 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
     </div>
 
+    <!-- Panel de Registro / Actualización Manual de Matrículas y Abonos en Base de Datos Histórica -->
+    <div id="manualMatriculaDrawer" class="tarifas-drawer" style="border-color:#10b981; background:linear-gradient(135deg, rgba(16,185,129,0.10), rgba(15,23,42,0.96));">
+      <div class="panel-title">
+        <span>✏️ Registrar Nueva Venta o Actualizar Matrícula / Abono Directamente en la Base de Datos Histórica</span>
+        <span class="badge badge-success">Persistencia Inmediata • También puedes hacer clic en "✏️ Editar / Abonar" en cualquier fila de la tabla</span>
+      </div>
+      <div class="form-grid-4" style="grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));">
+        <div>
+          <label class="field-label">N° Matrícula (Vacío = Auto)</label>
+          <input type="text" id="man_mat" placeholder="Ej: 2026011200" oninput="autocompletarMatriculaManualPorNumero()" />
+        </div>
+        <div>
+          <label class="field-label">Cédula / Documento *</label>
+          <input type="text" id="man_doc" placeholder="Ej: 1098617270" />
+        </div>
+        <div style="grid-column: span 2;">
+          <label class="field-label">Nombre Completo del Cliente / Alumno *</label>
+          <input type="text" id="man_alumno" placeholder="Ej: JUAN PEREZ GOMEZ" />
+        </div>
+        <div>
+          <label class="field-label">Categoría *</label>
+          <select id="man_cat">
+            <option value="A2">A2 (Moto)</option>
+            <option value="B1">B1 (Carro Particular)</option>
+            <option value="C1">C1 (Servicio Público)</option>
+            <option value="A1">A1</option>
+            <option value="C2">C2</option>
+          </select>
+        </div>
+        <div>
+          <label class="field-label">Convenio / Canal</label>
+          <input type="text" id="man_convenio" value="CEA AUTO ORIENTE" placeholder="Ej: JAVIER TORRES / CEA AUTO ORIENTE" />
+        </div>
+        <div>
+          <label class="field-label">Fecha Inscripción</label>
+          <input type="date" id="man_fecha" />
+        </div>
+        <div>
+          <label class="field-label">Valor Curso ($ COP) *</label>
+          <input type="number" id="man_valor_curso" value="1000000" step="10000" />
+        </div>
+        <div>
+          <label class="field-label">Total Abonado ($ COP)</label>
+          <input type="number" id="man_abonos" value="0" step="10000" />
+        </div>
+        <div>
+          <label class="field-label">+ Sumar Nuevo Abono ($)</label>
+          <input type="number" id="man_abono_extra" value="0" step="10000" placeholder="Ej: 200000" />
+        </div>
+        <div>
+          <label class="field-label">Estado</label>
+          <select id="man_estado">
+            <option value="ACTIVA">ACTIVA</option>
+            <option value="FINALIZADA">FINALIZADA</option>
+            <option value="INACTIVA">INACTIVA</option>
+          </select>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="btn btn-success" style="flex:1; justify-content:center;" onclick="guardarMatriculaManualBD()">💾 Guardar en BD</button>
+          <button type="button" class="btn btn-outline" onclick="limpiarFormularioMatriculaManual()" title="Limpiar campos">🧹</button>
+        </div>
+      </div>
+      <div id="manualMatriculaToast" class="status-toast"></div>
+    </div>
+
+    <!-- Panel Comparativo Multianual: Claridad de Ventas, Ingresos y Cartera Pendiente por Año (2024, 2025, 2026 y Total) -->
+    <div class="panel" style="margin-bottom:18px; border-color:#3b82f6; background:linear-gradient(180deg, rgba(30,58,138,0.20), rgba(19,29,49,0.96));">
+      <div class="panel-title" style="flex-wrap:wrap; gap:10px;">
+        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+          <span>📅 Histórico Financiero por Años (Ventas Facturadas, Ingresos Recaudados y Cartera Pendiente que Quedó por Año)</span>
+          <span class="badge badge-info" id="badgeAnioActivo">Viendo: Histórico Completo (Todos los Años)</span>
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;" id="botonesFiltroAnioTop"></div>
+      </div>
+      <div class="kpi-grid" id="anualCardsGrid" style="margin-bottom:0; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));"></div>
+    </div>
+
     <!-- Tarjetas de KPIs Ejecutivos -->
     <div class="kpi-grid" id="kpiGrid"></div>
 
-    <!-- Fila Superior de Gráficos -->
-    <div class="charts-grid">
+    <!-- Fila Superior de Gráficos Interactivos por Año y Comparativa Entre Años -->
+    <div class="charts-grid" style="grid-template-columns: 1.35fr 1fr;">
       <div class="panel">
-        <div class="panel-title">
-          <span>Gráfico 1: Matrículas vs. Cartera Pendiente por Mes (Enero a Noviembre 2026)</span>
+        <div class="panel-title" style="flex-wrap:wrap; gap:8px;">
+          <span id="chart1Title">Gráfico 1: Evolución y Comparativa de Ventas, Matrículas y Cartera</span>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+            <select id="chart1ModeSelect" onchange="renderizarGraficas(AUDIT_DATA ? AUDIT_DATA.hallazgos : null)" style="width:auto; font-weight:700; border-color:#3b82f6; background:#0b1324;">
+              <option value="ANIO_ACTUAL" selected>📅 Año en Curso (2026 Mes a Mes)</option>
+              <option value="ANIO_2025">📅 Año 2025 (Enero a Diciembre 2025)</option>
+              <option value="ANIO_2024">📅 Año 2024 (Enero a Diciembre 2024)</option>
+              <option value="COMPARAR_VENTAS_ANIOS">📊 Comparar Ventas entre Años ($ Millones: 2024 vs 2025 vs 2026)</option>
+              <option value="COMPARAR_MATRICULAS_ANIOS">📈 Comparar N° Matrículas entre Años (2024 vs 2025 vs 2026)</option>
+              <option value="COMPARAR_CARTERA_ANIOS">⚠️ Comparar Cartera Pendiente entre Años (2024 vs 2025 vs 2026)</option>
+              <option value="HISTORICO_TODOS_MESES">🗄️ Línea de Tiempo Completa (Todos los Meses 2024–2026)</option>
+            </select>
+          </div>
         </div>
         <div class="chart-box">
           <canvas id="chartMensual"></canvas>
         </div>
       </div>
       <div class="panel">
-        <div class="panel-title">
-          <span>Gráfico 2: Distribución de la Cartera por Antigüedad de Mora</span>
+        <div class="panel-title" style="flex-wrap:wrap; gap:8px;">
+          <span id="chart2Title">Gráfico 2: Crecimiento Anual de Ventas, Ingresos y Cartera por Año</span>
+          <select id="chart2ModeSelect" onchange="renderizarGraficas(AUDIT_DATA ? AUDIT_DATA.hallazgos : null)" style="width:auto; font-weight:700; border-color:#10b981; background:#0b1324;">
+            <option value="CRECIMIENTO_ANUAL_DINERO" selected>📈 Crecimiento Ventas vs. Ingresos vs. Cartera por Año ($M)</option>
+            <option value="CRECIMIENTO_ANUAL_MATRICULAS">🎓 Crecimiento N° Matrículas y Clientes Únicos por Año</option>
+            <option value="MORA_DONUT">🍩 Distribución de Cartera por Antigüedad de Mora</option>
+          </select>
         </div>
         <div class="chart-box">
           <canvas id="chartCartera"></canvas>
@@ -1321,14 +1481,17 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
     </div>
 
-    <!-- Fila de Filtros Rápidos (Pills Interactivos) + Tabla Maestra -->
+    <!-- Fila de Filtros Rápidos (Pills Interactivos: Primero Todos los Registros) + Tabla Maestra -->
     <div class="panel">
       <div class="tabs-header" id="tabsHeader">
-        <button class="tab-btn active" id="tabBtnJT" onclick="cambiarTab('jt_cartera', this)">
-          💛 Cartera Javier Torres <span class="badge badge-warning" id="cnt_jt">0</span>
+        <button class="tab-btn active" id="tabBtnTodas" onclick="cambiarTab('todas_matriculas', this)">
+          📑 Todos los Registros (Base Histórica) <span class="badge badge-info" id="cnt_all">0</span>
         </button>
-        <button class="tab-btn" id="tabBtnTodas" onclick="cambiarTab('todas_matriculas', this)">
-          📑 Todos los Movimientos / Facturas <span class="badge badge-info" id="cnt_all">0</span>
+        <button class="tab-btn" id="tabBtnAnual" onclick="cambiarTab('anual', this)">
+          📅 Resumen y Crecimiento por Años <span class="badge badge-success" id="cnt_anual">0</span>
+        </button>
+        <button class="tab-btn" id="tabBtnJT" onclick="cambiarTab('jt_cartera', this)">
+          💛 Cartera Javier Torres <span class="badge badge-warning" id="cnt_jt">0</span>
         </button>
         <button class="tab-btn" onclick="cambiarTab('abono_cero_real', this)">
           🚨 Riesgo $0 REAL (Suspensión) <span class="badge badge-danger" id="cnt_cero_real">0</span>
@@ -1358,21 +1521,28 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
       <div class="table-toolbar">
         <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; flex:1;">
-          <input type="search" id="searchInput" autocomplete="off" placeholder="🔎 Buscar en vivo por cédula, nombre, matrícula, categoría o convenio..." oninput="renderizarTablaActiva()" style="max-width: 390px; flex:1;" />
-          <select id="sortCarteraSelect" onchange="renderizarTablaActiva()" style="width:auto; min-width:235px; font-weight:600; border-color:#3b82f6;">
+          <input type="search" id="searchInput" autocomplete="off" placeholder="🔎 Buscar en vivo por cédula, nombre, matrícula, año, categoría o convenio..." oninput="renderizarTablaActiva()" style="max-width: 350px; flex:1;" />
+          <select id="filterAnioCarteraSelect" onchange="cambiarFiltroAnioGlobal(this.value)" style="width:auto; min-width:175px; font-weight:700; border-color:#10b981; color:#6ee7b7;">
+            <option value="TODOS" selected>📅 Año: Todos (Histórico 2024-2026)</option>
+            <option value="2026">📅 Solo Año 2026 (Año en Curso)</option>
+            <option value="2025">📅 Solo Año 2025</option>
+            <option value="2024">📅 Solo Año 2024</option>
+          </select>
+          <select id="sortCarteraSelect" onchange="renderizarTablaActiva()" style="width:auto; min-width:225px; font-weight:600; border-color:#3b82f6;">
             <option value="RECIENTES" selected>📅 Orden: Más Recientes a Más Antiguos</option>
             <option value="ANTIGUOS">⏳ Orden: Más Antiguos a Más Recientes</option>
             <option value="CON_ABONO_PRIMERO">💛 Con Abono Registrado Primero (Amarillo)</option>
             <option value="SIN_ABONO_PRIMERO">🚨 Sin Abono ($0 Global) Primero (Rojo)</option>
             <option value="MAYOR_SALDO">💰 Mayor Saldo Pendiente Primero</option>
           </select>
-          <select id="filterAbonoCarteraSelect" onchange="renderizarTablaActiva()" style="width:auto; min-width:195px; font-weight:600;">
+          <select id="filterAbonoCarteraSelect" onchange="renderizarTablaActiva()" style="width:auto; min-width:185px; font-weight:600;">
             <option value="TODOS" selected>👁️ Ver Todos (Con y Sin Abono)</option>
+            <option value="SOLO_CON_SALDO">⚠️ Solo con Saldo Pendiente (&gt; $0)</option>
             <option value="SOLO_CON_ABONO">💛 Solo con Abono (En este o en otro curso)</option>
             <option value="SOLO_CERO_GLOBAL">🚨 Solo $0 Global (Sin abono en ningún curso)</option>
           </select>
         </div>
-        <span id="tableCountInfo" style="font-size: 12.5px; color: var(--muted);">💡 Haz clic sobre cualquier alumno para desplegar sus cursos hermanos y recibos de caja</span>
+        <span id="tableCountInfo" style="font-size: 12.5px; color: var(--muted);">💡 Haz clic sobre cualquier alumno para desplegar sus cursos hermanos o en ✏️ Editar para actualizar su matrícula</span>
       </div>
 
       <div class="table-wrap">
@@ -2760,12 +2930,159 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   <script>
     let AUDIT_DATA = null;
     let BOT_DATA = null;
-    let ACTIVE_TAB = 'jt_cartera';
+    let ACTIVE_TAB = 'todas_matriculas';
     let ACTIVE_MODULE = 'mod_cartera';
+    let FILTRO_ANIO_GLOBAL = 'TODOS';
     let chartMensualInstance = null;
     let chartCarteraInstance = null;
 
     const fmtCOP = (val) => '$' + Math.round(Number(val || 0)).toLocaleString('es-CO');
+
+    function obtenerAnioDeRegistro(r) {
+      if (!r) return 'SIN_ANIO';
+      if (r.ANIO && r.ANIO !== 'SIN_ANIO') return String(r.ANIO);
+      const f = String(r.FECHAINSCRIPCION || r.FECHA_PRIMERA_INSC || r.mes || '');
+      if (f.length >= 4 && /^\d{4}/.test(f)) return f.slice(0, 4);
+      return 'SIN_ANIO';
+    }
+
+    function toggleManualMatriculaDrawer(forceOpen) {
+      const dr = document.getElementById('manualMatriculaDrawer');
+      if (!dr) return;
+      if (typeof forceOpen === 'boolean') {
+        dr.classList.toggle('open', forceOpen);
+      } else {
+        dr.classList.toggle('open');
+      }
+      const fIn = document.getElementById('man_fecha');
+      if (fIn && !fIn.value) {
+        fIn.value = new Date().toISOString().slice(0, 10);
+      }
+    }
+
+    function limpiarFormularioMatriculaManual() {
+      ['man_mat', 'man_doc', 'man_alumno'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      const catEl = document.getElementById('man_cat');
+      if (catEl) catEl.value = 'A2';
+      const convEl = document.getElementById('man_convenio');
+      if (convEl) convEl.value = 'CEA AUTO ORIENTE';
+      const fecEl = document.getElementById('man_fecha');
+      if (fecEl) fecEl.value = new Date().toISOString().slice(0, 10);
+      const vcEl = document.getElementById('man_valor_curso');
+      if (vcEl) vcEl.value = '1000000';
+      const abEl = document.getElementById('man_abonos');
+      if (abEl) abEl.value = '0';
+      const exEl = document.getElementById('man_abono_extra');
+      if (exEl) exEl.value = '0';
+      const estEl = document.getElementById('man_estado');
+      if (estEl) estEl.value = 'ACTIVA';
+    }
+
+    function cargarMatriculaEnEditorManual(numMatricula) {
+      if (!AUDIT_DATA || !AUDIT_DATA.hallazgos) return;
+      const lista = AUDIT_DATA.hallazgos.todas_matriculas || [];
+      const reg = lista.find(x => String(x.NUMEROMATRICULA || '') === String(numMatricula || ''));
+      if (!reg) return;
+      toggleManualMatriculaDrawer(true);
+      document.getElementById('man_mat').value = reg.NUMEROMATRICULA || '';
+      document.getElementById('man_doc').value = reg.NUMERODOCUMENTO || '';
+      document.getElementById('man_alumno').value = reg.ALUMNO || '';
+      document.getElementById('man_cat').value = reg.CATEGORIA || 'A2';
+      document.getElementById('man_convenio').value = reg.CONVENIO_NORM || reg.CONVENIO || 'CEA AUTO ORIENTE';
+      document.getElementById('man_fecha').value = reg.FECHAINSCRIPCION || new Date().toISOString().slice(0, 10);
+      document.getElementById('man_valor_curso').value = Math.round(Number(reg.VALORCURSO || 0));
+      document.getElementById('man_abonos').value = Math.round(Number(reg.ABONOS || 0));
+      document.getElementById('man_abono_extra').value = '0';
+      document.getElementById('man_estado').value = reg.ESTADO || 'ACTIVA';
+      const dr = document.getElementById('manualMatriculaDrawer');
+      if (dr) dr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function autocompletarMatriculaManualPorNumero() {
+      if (!AUDIT_DATA || !AUDIT_DATA.hallazgos) return;
+      const matVal = (document.getElementById('man_mat').value || '').trim();
+      if (!matVal) return;
+      const lista = AUDIT_DATA.hallazgos.todas_matriculas || [];
+      const reg = lista.find(x => String(x.NUMEROMATRICULA || '').toLowerCase() === matVal.toLowerCase());
+      if (reg) {
+        document.getElementById('man_doc').value = reg.NUMERODOCUMENTO || '';
+        document.getElementById('man_alumno').value = reg.ALUMNO || '';
+        document.getElementById('man_cat').value = reg.CATEGORIA || 'A2';
+        document.getElementById('man_convenio').value = reg.CONVENIO_NORM || reg.CONVENIO || 'CEA AUTO ORIENTE';
+        document.getElementById('man_fecha').value = reg.FECHAINSCRIPCION || '';
+        document.getElementById('man_valor_curso').value = Math.round(Number(reg.VALORCURSO || 0));
+        document.getElementById('man_abonos').value = Math.round(Number(reg.ABONOS || 0));
+        document.getElementById('man_estado').value = reg.ESTADO || 'ACTIVA';
+      }
+    }
+
+    async function guardarMatriculaManualBD() {
+      const payload = {
+        action: 'cartera_guardar_matricula_manual',
+        numero_matricula: (document.getElementById('man_mat').value || '').trim(),
+        cedula: (document.getElementById('man_doc').value || '').trim(),
+        alumno: (document.getElementById('man_alumno').value || '').trim(),
+        categoria: document.getElementById('man_cat').value,
+        convenio: (document.getElementById('man_convenio').value || 'CEA AUTO ORIENTE').trim(),
+        fecha_inscripcion: document.getElementById('man_fecha').value,
+        valor_curso: Number(document.getElementById('man_valor_curso').value || 0),
+        abonos: Number(document.getElementById('man_abonos').value || 0),
+        abono_adicional: Number(document.getElementById('man_abono_extra').value || 0),
+        estado: document.getElementById('man_estado').value,
+      };
+      const toast = document.getElementById('manualMatriculaToast');
+      if (!payload.cedula && !payload.alumno && !payload.numero_matricula) {
+        toast.className = 'status-toast err';
+        toast.textContent = '⚠️ Ingresa al menos la Cédula y el Nombre del Alumno (o el N° de Matrícula).';
+        return;
+      }
+      toast.className = 'status-toast ok';
+      toast.textContent = '⏳ Guardando y recalculando Base de Datos Histórica...';
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.ok && data.hallazgos) {
+          AUDIT_DATA = data;
+          actualizarVista();
+          document.getElementById('man_abono_extra').value = '0';
+          if (data.registro) {
+            document.getElementById('man_mat').value = data.registro.NUMEROMATRICULA || '';
+            document.getElementById('man_abonos').value = Math.round(Number(data.registro.ABONOS || 0));
+          }
+          toast.className = 'status-toast ok';
+          toast.textContent = data.message || '✅ Base de Datos Histórica actualizada.';
+        } else {
+          toast.className = 'status-toast err';
+          toast.textContent = '❌ ' + (data.message || data.error || 'No se pudo guardar.');
+        }
+      } catch (err) {
+        toast.className = 'status-toast err';
+        toast.textContent = '❌ Error de red: ' + err;
+      }
+    }
+
+    function cambiarFiltroAnioGlobal(anioSel) {
+      FILTRO_ANIO_GLOBAL = anioSel || 'TODOS';
+      const selEl = document.getElementById('filterAnioCarteraSelect');
+      if (selEl && selEl.value !== FILTRO_ANIO_GLOBAL) {
+        selEl.value = FILTRO_ANIO_GLOBAL;
+      }
+      const c1Sel = document.getElementById('chart1ModeSelect');
+      if (c1Sel) {
+        if (FILTRO_ANIO_GLOBAL === '2026') c1Sel.value = 'ANIO_ACTUAL';
+        else if (FILTRO_ANIO_GLOBAL === '2025') c1Sel.value = 'ANIO_2025';
+        else if (FILTRO_ANIO_GLOBAL === '2024') c1Sel.value = 'ANIO_2024';
+        else if (FILTRO_ANIO_GLOBAL === 'TODOS' && c1Sel.value.startsWith('ANIO_202')) c1Sel.value = 'COMPARAR_VENTAS_ANIOS';
+      }
+      actualizarVista();
+    }
 
     function obtenerBusquedaLimpia(inputId) {
       const el = document.getElementById(inputId);
@@ -2828,14 +3145,16 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const h = AUDIT_DATA.hallazgos;
       const k = h.kpis;
       const m = h.metadata || {};
+      const listaAnual = h.anual || [];
 
       const badgeTxt = AUDIT_DATA.ingresos_filename
         ? `${AUDIT_DATA.filename} + ${AUDIT_DATA.ingresos_filename}`
-        : (AUDIT_DATA.filename || 'matriculas.xlsx');
-      document.getElementById('currentFileBadge').textContent = badgeTxt;
+        : (AUDIT_DATA.filename || 'matriculas23112026.xlsx');
+      document.getElementById('currentFileBadge').textContent = `${badgeTxt} (${k.total_matriculas} reg.)`;
 
+      const aniosDisponibles = listaAnual.map(a => a.anio).join(', ') || '2024-2026';
       document.getElementById('headerMeta').textContent =
-        `Sede: ${m.sede || 'CEA'} • Periodo: ${m.fecha_inicial || '01/01/2026'} al ${m.fecha_final || '11/11/2026'} • ${k.total_matriculas} Registros (${k.total_clientes_unicos} Terceros/Clientes Únicos | ${k.clientes_multicurso_count} Multi-Movimiento)`;
+        `Sede: ${m.sede || 'CEA'} • Base Histórica (${aniosDisponibles}): ${m.fecha_inicial || '2024-02-01'} al ${m.fecha_final || '2026-11-23'} • ${k.total_matriculas} Matrículas (${k.total_clientes_unicos} Clientes Únicos | ${k.clientes_multicurso_count} Multi-Curso)`;
 
       const contBanner = document.getElementById('contabilidadBanner');
       if (contBanner) {
@@ -2843,63 +3162,149 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           const cr = m.contabilidad_resumen;
           contBanner.style.display = 'block';
           contBanner.innerHTML = `📑 <b>MODO AUXILIAR CONTABLE DIAN/SIIGO DETECTADO:</b> Facturación Servicios Cuenta <code>41800101</code> (${cr.total_facturas_fv} Facturas <b>FV-2</b>): <b>${fmtCOP(cr.total_credito_servicios_4180)}</b> • Devoluciones Cuenta <code>41750502</code> (${cr.total_notas_credito_nc} Notas Crédito <b>NC-2</b>): <b style="color:#fca5a5;">-${fmtCOP(cr.total_debito_devoluciones_4175)}</b> • <b>Ingreso Neto Contable: ${fmtCOP(cr.ingreso_neto_contable)}</b>`;
+        } else if (m.merge_stats && (m.merge_stats.nuevos_insertados > 0 || m.merge_stats.existentes_actualizados > 0)) {
+          const ms = m.merge_stats;
+          contBanner.style.display = 'block';
+          contBanner.innerHTML = `🗄️ <b>BASE DE DATOS HISTÓRICA ACTIVA Y SINCRONIZADA:</b> Total conservado: <b>${ms.total_despues} registros</b> (${aniosDisponibles}) • Nuevos incorporados: <b>+${ms.nuevos_insertados}</b> • Existentes actualizados: <b>${ms.existentes_actualizados}</b> • Sin pérdida de años anteriores.`;
         } else if (m.recibos_externos_cargados > 0) {
           contBanner.style.display = 'block';
           contBanner.innerHTML = `🔗 <b>CRUCE MULTIFORMATO ACTIVO:</b> Se cruzaron <b>${m.recibos_externos_cargados} comprobantes/recibos externos</b> (${m.recibos_huerfanos_cruzados} acreditados automáticamente por Cédula/NIT).`;
         } else {
-          contBanner.style.display = 'none';
+          contBanner.style.display = 'block';
+          contBanner.innerHTML = `🗄️ <b>BASE DE DATOS HISTÓRICA PERMANENTE ACTIVA:</b> Conservando <b>${k.total_matriculas} matrículas históricas</b> de los años <b>${aniosDisponibles}</b>. Cualquier archivo nuevo que subas incorporará modificaciones sin borrar años anteriores.`;
         }
       }
 
-      // Contadores de pestañas
-      document.getElementById('cnt_jt').textContent = h.jt_cartera.length;
-      const cntAllEl = document.getElementById('cnt_all');
-      if (cntAllEl) cntAllEl.textContent = (h.todas_matriculas || []).length;
-      document.getElementById('cnt_cero_real').textContent = h.abono_cero_real.length;
-      document.getElementById('cnt_cero_mc').textContent = h.abono_cero_multicurso.length;
-      document.getElementById('cnt_mc_all').textContent = h.clientes_multicurso.length;
-      document.getElementById('cnt_mora90').textContent = h.cartera_critica_90.length;
-      document.getElementById('cnt_mora30').textContent = (h.mora_media_60.length + h.mora_temprana_30.length);
-      document.getElementById('cnt_err').textContent = h.errores_digitacion.length;
-
-      if (h.jt_cartera.length === 0 && (h.todas_matriculas || []).length > 0 && ACTIVE_TAB === 'jt_cartera') {
-        ACTIVE_TAB = 'todas_matriculas';
-        document.querySelectorAll('#tabsHeader .tab-btn').forEach(b => b.classList.remove('active'));
-        const btnAll = document.getElementById('tabBtnTodas');
-        if (btnAll) btnAll.classList.add('active');
+      // Renderizar Botones y Tarjetas Comparativas por Año (2024, 2025, 2026 + Histórico Total)
+      const badgeAnioEl = document.getElementById('badgeAnioActivo');
+      if (badgeAnioEl) {
+        badgeAnioEl.textContent = FILTRO_ANIO_GLOBAL === 'TODOS'
+          ? `Viendo: Histórico Completo (${aniosDisponibles})`
+          : `Viendo: Solo Año ${FILTRO_ANIO_GLOBAL}`;
       }
 
-      // Renderizar KPIs
+      const btnsAnioTop = document.getElementById('botonesFiltroAnioTop');
+      if (btnsAnioTop) {
+        const btns = [
+          `<button type="button" class="btn ${FILTRO_ANIO_GLOBAL === 'TODOS' ? 'btn-primary' : 'btn-outline'}" style="padding:5px 11px; font-size:12px;" onclick="cambiarFiltroAnioGlobal('TODOS')">🗄️ Todos los Años (${k.total_matriculas})</button>`
+        ];
+        listaAnual.forEach(a => {
+          const isAct = FILTRO_ANIO_GLOBAL === String(a.anio);
+          btns.push(
+            `<button type="button" class="btn ${isAct ? 'btn-primary' : 'btn-outline'}" style="padding:5px 11px; font-size:12px;" onclick="cambiarFiltroAnioGlobal('${a.anio}')">📅 Año ${a.anio} (${a.matriculas})</button>`
+          );
+        });
+        btnsAnioTop.innerHTML = btns.join('');
+      }
+
+      const anualGrid = document.getElementById('anualCardsGrid');
+      if (anualGrid) {
+        const cardsAnios = listaAnual.map(a => {
+          const isSel = FILTRO_ANIO_GLOBAL === String(a.anio);
+          const borderStyle = isSel ? 'border:2px solid #3b82f6; box-shadow:0 0 16px rgba(59,130,246,0.35);' : 'cursor:pointer;';
+          const crecBadge = a.es_primer_anio
+            ? `<span class="badge badge-info">Año Base Histórico</span>`
+            : `<span class="badge ${a.crecimiento_ventas_pct >= 0 ? 'badge-success' : 'badge-danger'}">${a.crecimiento_ventas_pct >= 0 ? '▲ +' : '▼ '}${a.crecimiento_ventas_pct}% Ventas vs año ant.</span>`;
+          return `
+            <div class="kpi-card ${a.anio === '2026' ? 'success' : (a.anio === '2025' ? 'purple' : 'orange')}" style="${borderStyle} cursor:pointer;" onclick="cambiarFiltroAnioGlobal('${isSel ? 'TODOS' : a.anio}')" title="Haz clic para filtrar el dashboard y la tabla por el año ${a.anio}">
+              <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
+                <span class="kpi-label" style="font-size:13px; color:#fff;">📅 AÑO ${a.anio} (${a.matriculas} Mat.)</span>
+                ${crecBadge}
+              </div>
+              <div style="font-size:12.5px; color:#cbd5e1; line-height:1.65; margin-top:4px;">
+                <div>💰 <b>Ventas Facturadas:</b> <span style="color:#93c5fd; font-weight:700;">${fmtCOP(a.facturado)}</span></div>
+                <div>✅ <b>Ingresos Recaudados:</b> <span style="color:#34d399; font-weight:700;">${fmtCOP(a.recaudado)}</span> <span style="font-size:11px; color:var(--muted);">(${a.tasa_recaudo_pct}%)</span></div>
+                <div>⚠️ <b>Cartera que Quedó Pendiente:</b> <span style="color:#f87171; font-weight:800;">${fmtCOP(a.pendiente)}</span> <span style="font-size:11px; color:#fca5a5;">(${a.con_saldo} mat.)</span></div>
+              </div>
+            </div>
+          `;
+        });
+        const isAllSel = FILTRO_ANIO_GLOBAL === 'TODOS';
+        cardsAnios.push(`
+          <div class="kpi-card" style="${isAllSel ? 'border:2px solid #3b82f6; box-shadow:0 0 16px rgba(59,130,246,0.35);' : ''} cursor:pointer;" onclick="cambiarFiltroAnioGlobal('TODOS')" title="Ver consolidado histórico de todos los años">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:4px;">
+              <span class="kpi-label" style="font-size:13px; color:#fff;">🗄️ TOTAL HISTÓRICO (${aniosDisponibles})</span>
+              <span class="badge badge-info">${k.total_matriculas} Matrículas</span>
+            </div>
+            <div style="font-size:12.5px; color:#cbd5e1; line-height:1.65; margin-top:4px;">
+              <div>💰 <b>Ventas Totales:</b> <span style="color:#93c5fd; font-weight:700;">${fmtCOP(k.total_facturado)}</span></div>
+              <div>✅ <b>Ingresos Totales:</b> <span style="color:#34d399; font-weight:700;">${fmtCOP(k.total_abonos)}</span> <span style="font-size:11px; color:var(--muted);">(${k.tasa_recaudo_pct}%)</span></div>
+              <div>⚠️ <b>Cartera Total Acumulada:</b> <span style="color:#f87171; font-weight:800;">${fmtCOP(k.total_pendiente)}</span> <span style="font-size:11px; color:#fca5a5;">(${k.alumnos_con_saldo} mat.)</span></div>
+            </div>
+          </div>
+        `);
+        anualGrid.innerHTML = cardsAnios.join('');
+      }
+
+      const matchAnio = (r) => FILTRO_ANIO_GLOBAL === 'TODOS' || obtenerAnioDeRegistro(r) === FILTRO_ANIO_GLOBAL;
+      const todasFiltradasAnio = (h.todas_matriculas || []).filter(matchAnio);
+      const jtFiltradasAnio = (h.jt_cartera || []).filter(matchAnio);
+      const ceroRealFiltradasAnio = (h.abono_cero_real || []).filter(matchAnio);
+      const ceroMcFiltradasAnio = (h.abono_cero_multicurso || []).filter(matchAnio);
+      const mcFiltradasAnio = (h.clientes_multicurso || []).filter(c => FILTRO_ANIO_GLOBAL === 'TODOS' || (c.CURSOS_DETALLE || []).some(cd => String(cd.FECHAINSCRIPCION || '').startsWith(FILTRO_ANIO_GLOBAL)));
+      const mora90FiltradasAnio = (h.cartera_critica_90 || []).filter(matchAnio);
+      const mora30FiltradasAnio = [...(h.mora_media_60 || []), ...(h.mora_temprana_30 || [])].filter(matchAnio);
+      const errFiltradasAnio = (h.errores_digitacion || []).filter(matchAnio);
+
+      // Contadores de pestañas sincronizados con el filtro de año activo
+      const cntAllEl = document.getElementById('cnt_all');
+      if (cntAllEl) cntAllEl.textContent = todasFiltradasAnio.length;
+      const cntAnualEl = document.getElementById('cnt_anual');
+      if (cntAnualEl) cntAnualEl.textContent = listaAnual.length;
+      document.getElementById('cnt_jt').textContent = jtFiltradasAnio.length;
+      document.getElementById('cnt_cero_real').textContent = ceroRealFiltradasAnio.length;
+      document.getElementById('cnt_cero_mc').textContent = ceroMcFiltradasAnio.length;
+      document.getElementById('cnt_mc_all').textContent = mcFiltradasAnio.length;
+      document.getElementById('cnt_mora90').textContent = mora90FiltradasAnio.length;
+      document.getElementById('cnt_mora30').textContent = mora30FiltradasAnio.length;
+      document.getElementById('cnt_err').textContent = errFiltradasAnio.length;
+
+      // Calcular KPIs dinámicos según el año seleccionado (o Total Histórico si TODOS)
+      const factKpi = todasFiltradasAnio.reduce((acc, r) => acc + Number(r.VALORCURSO || 0), 0);
+      const recKpi = todasFiltradasAnio.reduce((acc, r) => acc + Number(r.ABONOS || 0), 0);
+      const pendKpi = todasFiltradasAnio.reduce((acc, r) => acc + Math.max(0, Number(r.VALORPENDIENTE || 0)), 0);
+      const conSaldoKpi = todasFiltradasAnio.filter(r => Number(r.VALORPENDIENTE || 0) > 0).length;
+      const pazSalvoKpi = todasFiltradasAnio.length - conSaldoKpi;
+      const tasaRecKpi = factKpi > 0 ? ((recKpi / factKpi) * 100).toFixed(2) : '0.00';
+      const tasaMoraKpi = factKpi > 0 ? ((pendKpi / factKpi) * 100).toFixed(2) : '0.00';
+      const cedulasUnicasKpi = new Set(todasFiltradasAnio.map(r => r.NUMERODOCUMENTO || r.NUMEROMATRICULA)).size;
+      const montoCeroRealKpi = ceroRealFiltradasAnio.reduce((acc, r) => acc + Math.max(0, Number(r.VALORPENDIENTE || 0)), 0);
+      const clientesCeroRealKpi = new Set(ceroRealFiltradasAnio.map(r => r.NUMERODOCUMENTO)).size;
+      const jtTotalMatAnio = (h.jt_todos || []).filter(matchAnio).length;
+      const jtPendKpi = jtFiltradasAnio.reduce((acc, r) => acc + Math.max(0, Number(r.VALORPENDIENTE || 0)), 0);
+      const jtCeroRealKpi = jtFiltradasAnio.filter(r => r.TIPO_RIESGO_CERO === 'RIESGO_CERO_REAL').length;
+      const tagPeriodoKpi = FILTRO_ANIO_GLOBAL === 'TODOS' ? 'Histórico' : `Año ${FILTRO_ANIO_GLOBAL}`;
+
       const kpisHtml = `
         <div class="kpi-card">
-          <div class="kpi-label">Total Facturado</div>
-          <div class="kpi-value">${fmtCOP(k.total_facturado)}</div>
-          <div class="kpi-sub"><b>${k.total_matriculas} matrículas</b> (${k.total_clientes_unicos} cédulas únicas)</div>
+          <div class="kpi-label">Total Facturado (${tagPeriodoKpi})</div>
+          <div class="kpi-value">${fmtCOP(factKpi)}</div>
+          <div class="kpi-sub"><b>${todasFiltradasAnio.length} matrículas</b> (${cedulasUnicasKpi} cédulas únicas)</div>
         </div>
         <div class="kpi-card success">
-          <div class="kpi-label">Recaudo Efectivo en Caja</div>
-          <div class="kpi-value" style="color:#34d399;">${fmtCOP(k.total_abonos)}</div>
-          <div class="kpi-sub">Tasa Recaudo: <b>${k.tasa_recaudo_pct}%</b> (${k.alumnos_paz_y_salvo} al día)</div>
+          <div class="kpi-label">Ingresos / Recaudo (${tagPeriodoKpi})</div>
+          <div class="kpi-value" style="color:#34d399;">${fmtCOP(recKpi)}</div>
+          <div class="kpi-sub">Tasa Recaudo: <b>${tasaRecKpi}%</b> (${pazSalvoKpi} al día)</div>
         </div>
         <div class="kpi-card danger">
-          <div class="kpi-label">Cartera Pendiente Total</div>
-          <div class="kpi-value" style="color:#f87171;">${fmtCOP(k.total_pendiente)}</div>
-          <div class="kpi-sub"><b>${k.alumnos_con_saldo} matrículas</b> con saldo (${k.tasa_morosidad_pct}%)</div>
+          <div class="kpi-label">Cartera Pendiente (${tagPeriodoKpi})</div>
+          <div class="kpi-value" style="color:#f87171;">${fmtCOP(pendKpi)}</div>
+          <div class="kpi-sub"><b>${conSaldoKpi} matrículas</b> con saldo pendiente (${tasaMoraKpi}%)</div>
         </div>
         <div class="kpi-card danger">
-          <div class="kpi-label">🚨 Riesgo $0 REAL (Suspender)</div>
-          <div class="kpi-value" style="color:#fca5a5;">${k.abono_cero_real_count} Mat. (${k.abono_cero_real_clientes} Clientes)</div>
-          <div class="kpi-sub">$0 en todos sus cursos: <b>${fmtCOP(k.abono_cero_real_monto)}</b></div>
+          <div class="kpi-label">🚨 Riesgo $0 REAL (${tagPeriodoKpi})</div>
+          <div class="kpi-value" style="color:#fca5a5;">${ceroRealFiltradasAnio.length} Mat. (${clientesCeroRealKpi} Clientes)</div>
+          <div class="kpi-sub">$0 en todos sus cursos: <b>${fmtCOP(montoCeroRealKpi)}</b></div>
         </div>
         <div class="kpi-card purple">
-          <div class="kpi-label">🔄 Clientes Multi-Curso (2+ Cursos)</div>
-          <div class="kpi-value" style="color:#c4b5fd;">${k.clientes_multicurso_count} Clientes</div>
-          <div class="kpi-sub"><b>${k.abono_cero_multicurso_count} falsos $0</b> (abonaron en su 1ra matrícula)</div>
+          <div class="kpi-label">🔄 Clientes Multi-Curso (${tagPeriodoKpi})</div>
+          <div class="kpi-value" style="color:#c4b5fd;">${mcFiltradasAnio.length} Clientes</div>
+          <div class="kpi-sub"><b>${ceroMcFiltradasAnio.length} falsos $0</b> (abonaron en su 1ra matrícula)</div>
         </div>
         <div class="kpi-card orange">
-          <div class="kpi-label">💛 Cartera Javier Torres</div>
-          <div class="kpi-value" style="color:#fdba74;">${fmtCOP(k.jt_pendiente)}</div>
-          <div class="kpi-sub"><b>${k.jt_con_saldo_count} mat.</b> de ${k.jt_total_matriculas} (${k.jt_abono_cero_real_count} en $0 real)</div>
+          <div class="kpi-label">💛 Cartera Javier Torres (${tagPeriodoKpi})</div>
+          <div class="kpi-value" style="color:#fdba74;">${fmtCOP(jtPendKpi)}</div>
+          <div class="kpi-sub"><b>${jtFiltradasAnio.length} mat.</b> con saldo de ${jtTotalMatAnio} (${jtCeroRealKpi} en $0 real)</div>
         </div>
       `;
       document.getElementById('kpiGrid').innerHTML = kpisHtml;
@@ -2909,90 +3314,291 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     }
 
     function renderizarGraficas(h) {
-      const mesesValidos = h.mensual.filter(x => x.mes !== 'SIN_FECHA');
-      const labels = mesesValidos.map(x => x.nombre_mes);
-      const dataMat = mesesValidos.map(x => x.total_matriculas);
-      const dataJT = mesesValidos.map(x => x.matriculas_jt);
-      const dataCarteraMillones = mesesValidos.map(x => Math.round(x.pendiente / 1000000 * 10) / 10);
+      if (!h) return;
+      const mode1 = (document.getElementById('chart1ModeSelect') || {}).value || 'ANIO_ACTUAL';
+      const mode2 = (document.getElementById('chart2ModeSelect') || {}).value || 'CRECIMIENTO_ANUAL_DINERO';
+      const mesesValidos = (h.mensual || []).filter(x => x.mes !== 'SIN_FECHA');
+      const listaAnual = h.anual || [];
 
       if (chartMensualInstance) chartMensualInstance.destroy();
       const ctx1 = document.getElementById('chartMensual').getContext('2d');
-      chartMensualInstance = new Chart(ctx1, {
-        type: 'bar',
-        data: {
-          labels,
-          datasets: [
-            {
-              label: 'Matrículas Totales Mes (Meta: 100)',
-              data: dataMat,
-              backgroundColor: 'rgba(59, 130, 246, 0.82)',
-              borderColor: '#3b82f6',
-              borderWidth: 1,
-              borderRadius: 5,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Matrículas Javier Torres (Meta: 30)',
-              data: dataJT,
-              backgroundColor: 'rgba(139, 92, 246, 0.85)',
-              borderColor: '#8b5cf6',
-              borderWidth: 1,
-              borderRadius: 5,
-              yAxisID: 'y',
-            },
-            {
-              label: 'Cartera Pendiente Mes ($ Millones COP)',
-              data: dataCarteraMillones,
-              type: 'line',
-              borderColor: '#ff7f0e',
-              backgroundColor: 'rgba(255, 127, 14, 0.2)',
-              borderWidth: 2.5,
-              pointRadius: 4,
-              tension: 0.3,
-              yAxisID: 'y1',
-            }
-          ]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          plugins: { legend: { labels: { color: '#cbd5e1', font: { size: 11.5 } } } },
-          scales: {
-            x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.04)' } },
-            y: { position: 'left', ticks: { color: '#93c5fd' }, grid: { color: 'rgba(255,255,255,0.06)' }, title: { display: true, text: 'N° Matrículas', color: '#93c5fd' } },
-            y1: { position: 'right', ticks: { color: '#fdba74', callback: v => '$' + v + 'M' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Cartera ($ Millones)', color: '#fdba74' } }
-          }
-        }
-      });
+      const NOMBRES_MESES_CORTOS = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+      const COLORES_ANIO = {
+        '2024': { bg: 'rgba(245, 158, 11, 0.78)', border: '#f59e0b' },
+        '2025': { bg: 'rgba(139, 92, 246, 0.82)', border: '#8b5cf6' },
+        '2026': { bg: 'rgba(16, 185, 129, 0.85)', border: '#10b981' },
+      };
 
-      const k = h.kpis;
+      if (mode1.startsWith('COMPARAR_')) {
+        // Comparativa Mes a Mes (Enero a Diciembre) entre Años (2024 vs 2025 vs 2026)
+        const aniosUnicos = [...new Set(mesesValidos.map(m => (m.mes || '').slice(0, 4)).filter(Boolean))].sort();
+        const esVentas = mode1 === 'COMPARAR_VENTAS_ANIOS';
+        const esCartera = mode1 === 'COMPARAR_CARTERA_ANIOS';
+        const datasetsComp = aniosUnicos.map(anio => {
+          const col = COLORES_ANIO[anio] || { bg: 'rgba(59, 130, 246, 0.8)', border: '#3b82f6' };
+          const valores12 = [];
+          for (let mIdx = 1; mIdx <= 12; mIdx++) {
+            const mm = String(mIdx).padStart(2, '0');
+            const found = mesesValidos.find(x => x.mes === `${anio}-${mm}`);
+            if (!found) {
+              valores12.push(0);
+            } else if (esVentas) {
+              valores12.push(Math.round((found.facturado || 0) / 1000000 * 10) / 10);
+            } else if (esCartera) {
+              valores12.push(Math.round(Math.max(0, found.pendiente || 0) / 1000000 * 10) / 10);
+            } else {
+              valores12.push(found.total_matriculas || 0);
+            }
+          }
+          return {
+            label: esVentas ? `Ventas ${anio} ($ Millones)` : (esCartera ? `Cartera Pendiente ${anio} ($M)` : `Matrículas ${anio}`),
+            data: valores12,
+            backgroundColor: col.bg,
+            borderColor: col.border,
+            borderWidth: 2,
+            borderRadius: 4,
+            tension: 0.25,
+          };
+        });
+
+        const titleEl = document.getElementById('chart1Title');
+        if (titleEl) {
+          titleEl.textContent = esVentas
+            ? 'Gráfico 1: Comparativa de Ventas Facturadas Entre Años (Enero a Diciembre: 2024 vs 2025 vs 2026)'
+            : (esCartera
+                ? 'Gráfico 1: Comparativa de Cartera Pendiente Entre Años (2024 vs 2025 vs 2026)'
+                : 'Gráfico 1: Comparativa de N° Matrículas Mensuales Entre Años (2024 vs 2025 vs 2026)');
+        }
+
+        chartMensualInstance = new Chart(ctx1, {
+          type: 'bar',
+          data: { labels: NOMBRES_MESES_CORTOS, datasets: datasetsComp },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#cbd5e1', font: { size: 11.5 } } } },
+            scales: {
+              x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.04)' } },
+              y: {
+                position: 'left',
+                beginAtZero: true,
+                ticks: {
+                  color: '#93c5fd',
+                  callback: v => (esVentas || esCartera) ? ('$' + v + 'M') : v
+                },
+                grid: { color: 'rgba(255,255,255,0.06)' },
+                title: {
+                  display: true,
+                  text: (esVentas || esCartera) ? 'Millones COP ($M)' : 'N° Matrículas',
+                  color: '#93c5fd'
+                }
+              }
+            }
+          }
+        });
+      } else {
+        // Vista de un año específico (2026, 2025, 2024) o línea de tiempo completa
+        let anioTarget = '';
+        if (mode1 === 'ANIO_ACTUAL') anioTarget = '2026';
+        else if (mode1 === 'ANIO_2025') anioTarget = '2025';
+        else if (mode1 === 'ANIO_2024') anioTarget = '2024';
+
+        let mesesGraf = anioTarget
+          ? mesesValidos.filter(x => String(x.mes || '').startsWith(anioTarget))
+          : mesesValidos;
+        if (mesesGraf.length === 0) mesesGraf = mesesValidos;
+
+        const titleEl = document.getElementById('chart1Title');
+        if (titleEl) {
+          titleEl.textContent = anioTarget
+            ? `Gráfico 1: Ventas, Matrículas y Cartera Pendiente por Mes — Año ${anioTarget}`
+            : 'Gráfico 1: Evolución Histórica Mensual (2024 a 2026)';
+        }
+
+        const labels = mesesGraf.map(x => x.nombre_mes);
+        const dataMat = mesesGraf.map(x => x.total_matriculas);
+        const dataJT = mesesGraf.map(x => x.matriculas_jt);
+        const dataCarteraMillones = mesesGraf.map(x => Math.round(Math.max(0, x.pendiente || 0) / 1000000 * 10) / 10);
+
+        chartMensualInstance = new Chart(ctx1, {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [
+              {
+                label: 'Matrículas Totales Mes (Meta: 100)',
+                data: dataMat,
+                backgroundColor: 'rgba(59, 130, 246, 0.82)',
+                borderColor: '#3b82f6',
+                borderWidth: 1,
+                borderRadius: 5,
+                yAxisID: 'y',
+              },
+              {
+                label: 'Matrículas Javier Torres (Meta: 30)',
+                data: dataJT,
+                backgroundColor: 'rgba(139, 92, 246, 0.85)',
+                borderColor: '#8b5cf6',
+                borderWidth: 1,
+                borderRadius: 5,
+                yAxisID: 'y',
+              },
+              {
+                label: 'Cartera Pendiente Real Mes ($ Millones COP)',
+                data: dataCarteraMillones,
+                type: 'line',
+                borderColor: '#ff7f0e',
+                backgroundColor: 'rgba(255, 127, 14, 0.2)',
+                borderWidth: 2.5,
+                pointRadius: 4,
+                tension: 0.3,
+                yAxisID: 'y1',
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { labels: { color: '#cbd5e1', font: { size: 11.5 } } } },
+            scales: {
+              x: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(255,255,255,0.04)' } },
+              y: { position: 'left', beginAtZero: true, ticks: { color: '#93c5fd' }, grid: { color: 'rgba(255,255,255,0.06)' }, title: { display: true, text: 'N° Matrículas', color: '#93c5fd' } },
+              y1: { position: 'right', beginAtZero: true, ticks: { color: '#fdba74', callback: v => '$' + v + 'M' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Cartera Pendiente ($M)', color: '#fdba74' } }
+            }
+          }
+        });
+      }
+
+      // GRÁFICO 2: Crecimiento Anual por Años (Ventas vs Ingresos vs Cartera) o Antigüedad de Mora
       if (chartCarteraInstance) chartCarteraInstance.destroy();
       const ctx2 = document.getElementById('chartCartera').getContext('2d');
-      chartCarteraInstance = new Chart(ctx2, {
-        type: 'doughnut',
-        data: {
-          labels: [
-            `Crítica > 90 días (${k.mora_90_count})`,
-            `Mora Media 61-90 días (${k.mora_60_count})`,
-            `Mora Temprana 31-60 días (${k.mora_30_count})`,
-            `Reciente <= 30 días (${k.mora_aldia_count})`
-          ],
-          datasets: [{
-            data: [k.mora_90_monto, k.mora_60_monto, k.mora_30_monto, k.mora_aldia_monto],
-            backgroundColor: ['#ef4444', '#ff7f0e', '#eab308', '#3b82f6'],
-            borderWidth: 2,
-            borderColor: '#131d31'
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          cutout: '62%',
-          plugins: {
-            legend: { position: 'bottom', labels: { color: '#cbd5e1', font: { size: 11 } } }
+      const title2El = document.getElementById('chart2Title');
+
+      if (mode2 === 'CRECIMIENTO_ANUAL_DINERO' && listaAnual.length > 0) {
+        if (title2El) title2El.textContent = 'Gráfico 2: Crecimiento Anual de Ventas, Ingresos y Cartera por Año';
+        const labelsAnios = listaAnual.map(a => `Año ${a.anio}`);
+        const factMill = listaAnual.map(a => Math.round((a.facturado || 0) / 1000000 * 10) / 10);
+        const recMill = listaAnual.map(a => Math.round((a.recaudado || 0) / 1000000 * 10) / 10);
+        const pendMill = listaAnual.map(a => Math.round(Math.max(0, a.pendiente || 0) / 1000000 * 10) / 10);
+
+        chartCarteraInstance = new Chart(ctx2, {
+          type: 'bar',
+          data: {
+            labels: labelsAnios,
+            datasets: [
+              {
+                label: 'Ventas Facturadas ($M)',
+                data: factMill,
+                backgroundColor: 'rgba(59, 130, 246, 0.85)',
+                borderColor: '#3b82f6',
+                borderWidth: 1,
+                borderRadius: 6,
+              },
+              {
+                label: 'Ingresos Recaudados ($M)',
+                data: recMill,
+                backgroundColor: 'rgba(16, 185, 129, 0.85)',
+                borderColor: '#10b981',
+                borderWidth: 1,
+                borderRadius: 6,
+              },
+              {
+                label: 'Cartera Pendiente ($M)',
+                data: pendMill,
+                backgroundColor: 'rgba(239, 68, 68, 0.88)',
+                borderColor: '#ef4444',
+                borderWidth: 1,
+                borderRadius: 6,
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom', labels: { color: '#cbd5e1', font: { size: 11 } } } },
+            scales: {
+              x: { ticks: { color: '#e2e8f0', font: { weight: 'bold' } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+              y: {
+                beginAtZero: true,
+                ticks: { color: '#93c5fd', callback: v => '$' + v + 'M' },
+                grid: { color: 'rgba(255,255,255,0.06)' },
+                title: { display: true, text: 'Millones COP ($M)', color: '#93c5fd' }
+              }
+            }
           }
-        }
-      });
+        });
+      } else if (mode2 === 'CRECIMIENTO_ANUAL_MATRICULAS' && listaAnual.length > 0) {
+        if (title2El) title2El.textContent = 'Gráfico 2: Crecimiento de Matrículas y Clientes por Año';
+        chartCarteraInstance = new Chart(ctx2, {
+          type: 'bar',
+          data: {
+            labels: listaAnual.map(a => `Año ${a.anio}`),
+            datasets: [
+              {
+                label: 'Total Matrículas del Año',
+                data: listaAnual.map(a => a.matriculas),
+                backgroundColor: 'rgba(139, 92, 246, 0.85)',
+                borderColor: '#8b5cf6',
+                borderWidth: 1,
+                borderRadius: 6,
+              },
+              {
+                label: 'Clientes Únicos (Cédulas)',
+                data: listaAnual.map(a => a.clientes_unicos),
+                backgroundColor: 'rgba(59, 130, 246, 0.82)',
+                borderColor: '#3b82f6',
+                borderWidth: 1,
+                borderRadius: 6,
+              },
+              {
+                label: 'Matrículas con Saldo Pendiente',
+                data: listaAnual.map(a => a.con_saldo),
+                backgroundColor: 'rgba(245, 158, 11, 0.88)',
+                borderColor: '#f59e0b',
+                borderWidth: 1,
+                borderRadius: 6,
+              }
+            ]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'bottom', labels: { color: '#cbd5e1', font: { size: 11 } } } },
+            scales: {
+              x: { ticks: { color: '#e2e8f0', font: { weight: 'bold' } }, grid: { color: 'rgba(255,255,255,0.04)' } },
+              y: { beginAtZero: true, ticks: { color: '#c4b5fd' }, grid: { color: 'rgba(255,255,255,0.06)' } }
+            }
+          }
+        });
+      } else {
+        if (title2El) title2El.textContent = 'Gráfico 2: Distribución de la Cartera por Antigüedad de Mora';
+        const k = h.kpis;
+        chartCarteraInstance = new Chart(ctx2, {
+          type: 'doughnut',
+          data: {
+            labels: [
+              `Crítica > 90 días (${k.mora_90_count})`,
+              `Mora Media 61-90 días (${k.mora_60_count})`,
+              `Mora Temprana 31-60 días (${k.mora_30_count})`,
+              `Reciente <= 30 días (${k.mora_aldia_count})`
+            ],
+            datasets: [{
+              data: [k.mora_90_monto, k.mora_60_monto, k.mora_30_monto, k.mora_aldia_monto],
+              backgroundColor: ['#ef4444', '#ff7f0e', '#eab308', '#3b82f6'],
+              borderWidth: 2,
+              borderColor: '#131d31'
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '62%',
+            plugins: {
+              legend: { position: 'bottom', labels: { color: '#cbd5e1', font: { size: 11 } } }
+            }
+          }
+        });
+      }
     }
 
     function cambiarTab(tabKey, btnEl) {
@@ -3016,6 +3622,40 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const thead = document.getElementById('auditThead');
       const tbody = document.getElementById('auditTbody');
 
+      // Pestaña de Resumen y Crecimiento por Años (2024, 2025, 2026)
+      if (ACTIVE_TAB === 'anual') {
+        thead.innerHTML = `<tr>
+          <th>Año</th><th>Matrículas Totales</th><th>Crecimiento Matrículas</th><th>Clientes Únicos</th>
+          <th>Total Facturado (Ventas)</th><th>Crecimiento Ventas</th><th>Ingresos / Recaudo Efectivo</th>
+          <th>% Recaudo</th><th>Cartera Pendiente que Quedó</th><th>Matrículas con Saldo</th><th>Riesgo $0 Real</th><th>Acción</th>
+        </tr>`;
+        const rowsAnual = (h.anual || []).filter(a => !q || String(a.anio).includes(q));
+        document.getElementById('tableCountInfo').textContent = `Mostrando ${rowsAnual.length} años históricos en la Base de Datos`;
+        tbody.innerHTML = rowsAnual.map(a => {
+          const crecV = a.es_primer_anio
+            ? '<span class="badge badge-info">Año Base</span>'
+            : `<span class="badge ${a.crecimiento_ventas_pct >= 0 ? 'badge-success' : 'badge-danger'}">${a.crecimiento_ventas_pct >= 0 ? '▲ +' : '▼ '}${a.crecimiento_ventas_pct}%</span>`;
+          const crecM = a.es_primer_anio
+            ? '<span class="badge badge-info">Año Base</span>'
+            : `<span class="badge ${a.crecimiento_matriculas_pct >= 0 ? 'badge-success' : 'badge-danger'}">${a.crecimiento_matriculas_pct >= 0 ? '▲ +' : '▼ '}${a.crecimiento_matriculas_pct}%</span>`;
+          return `<tr>
+            <td><b style="font-size:14px; color:#93c5fd;">📅 Año ${a.anio}</b></td>
+            <td><b>${a.matriculas}</b></td>
+            <td>${crecM}</td>
+            <td>${a.clientes_unicos}</td>
+            <td><b>${fmtCOP(a.facturado)}</b></td>
+            <td>${crecV}</td>
+            <td class="money-pos"><b>${fmtCOP(a.recaudado)}</b></td>
+            <td><span class="badge badge-success">${a.tasa_recaudo_pct}%</span></td>
+            <td class="${a.pendiente > 0 ? 'money-neg' : 'money-pos'}"><b>${fmtCOP(a.pendiente)}</b></td>
+            <td><b>${a.con_saldo}</b> mat. (${a.tasa_morosidad_pct}%)</td>
+            <td><span class="badge badge-danger">${a.abono_cero_real}</span></td>
+            <td><button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11.5px;" onclick="cambiarFiltroAnioGlobal('${a.anio}'); cambiarTab('todas_matriculas', document.getElementById('tabBtnTodas'));">🔎 Ver Registros ${a.anio}</button></td>
+          </tr>`;
+        }).join('');
+        return;
+      }
+
       // Pestaña de Cumplimiento Mensual
       if (ACTIVE_TAB === 'mensual') {
         thead.innerHTML = `<tr>
@@ -3023,7 +3663,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <th>Matrículas Javier Torres</th><th>Meta JT</th><th>Estado JT</th>
           <th>Total Facturado</th><th>Total Recaudado</th><th>Cartera Pendiente</th><th>Riesgo $0 Real</th>
         </tr>`;
-        const rows = h.mensual.filter(m => !q || m.nombre_mes.toLowerCase().includes(q));
+        const rows = h.mensual.filter(m => {
+          if (FILTRO_ANIO_GLOBAL !== 'TODOS' && !String(m.mes || '').startsWith(FILTRO_ANIO_GLOBAL)) return false;
+          return !q || m.nombre_mes.toLowerCase().includes(q);
+        });
         document.getElementById('tableCountInfo').textContent = `Mostrando ${rows.length} periodos mensuales`;
         tbody.innerHTML = rows.map(m => `<tr>
           <td><b>${m.nombre_mes}</b></td>
@@ -3071,7 +3714,13 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       // Pestaña de Clientes Multi-Curso Consolidados por Cédula
       if (ACTIVE_TAB === 'clientes_multicurso') {
         let rows = h.clientes_multicurso.filter(c => {
+          if (FILTRO_ANIO_GLOBAL !== 'TODOS') {
+            const tieneCursoEnAnio = (c.CURSOS_DETALLE || []).some(cd => String(cd.FECHAINSCRIPCION || '').startsWith(FILTRO_ANIO_GLOBAL));
+            if (!tieneCursoEnAnio) return false;
+          }
           const totAb = Number(c.TOTAL_ABONADO || 0);
+          const salCl = Number(c.SALDO_REAL_CLIENTE || 0);
+          if (filterAbono === 'SOLO_CON_SALDO' && salCl <= 0) return false;
           if (filterAbono === 'SOLO_CON_ABONO' && totAb <= 0) return false;
           if (filterAbono === 'SOLO_CERO_GLOBAL' && totAb > 0) return false;
           if (!q) return true;
@@ -3173,13 +3822,16 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
 
       let filtered = sourceList.filter(r => {
+        if (FILTRO_ANIO_GLOBAL !== 'TODOS' && obtenerAnioDeRegistro(r) !== FILTRO_ANIO_GLOBAL) return false;
         const abMat = Number(r.ABONOS || 0);
         const abGlobal = Number(r.TOTAL_ABONADO_CLIENTE || abMat || 0);
+        const vpMat = Number(r.VALORPENDIENTE || 0);
         const tieneAbonoEnAlgunCurso = abMat > 0 || abGlobal > 0;
+        if (filterAbono === 'SOLO_CON_SALDO' && vpMat <= 0) return false;
         if (filterAbono === 'SOLO_CON_ABONO' && !tieneAbonoEnAlgunCurso) return false;
         if (filterAbono === 'SOLO_CERO_GLOBAL' && tieneAbonoEnAlgunCurso) return false;
         if (!q) return true;
-        const txt = `${r.NUMEROMATRICULA} ${r.NUMERODOCUMENTO} ${r.ALUMNO} ${r.CONVENIO_NORM} ${r.CATEGORIA} ${r.ETIQUETA_MULTICURSO || ''} ${r.MOTIVO_ERROR || ''}`.toLowerCase();
+        const txt = `${r.NUMEROMATRICULA} ${r.NUMERODOCUMENTO} ${r.ALUMNO} ${r.CONVENIO_NORM} ${r.CATEGORIA} ${r.FECHAINSCRIPCION || ''} ${r.ETIQUETA_MULTICURSO || ''} ${r.MOTIVO_ERROR || ''}`.toLowerCase();
         return txt.includes(q);
       });
 
@@ -3209,21 +3861,24 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         return fb.localeCompare(fa) || (numMatOf(b) - numMatOf(a));
       });
 
-      const totalSaldo = filtered.reduce((acc, r) => acc + Number(r.VALORPENDIENTE || 0), 0);
+      const totalSaldo = filtered.reduce((acc, r) => acc + Math.max(0, Number(r.VALORPENDIENTE || 0)), 0);
       const cntConAbono = filtered.filter(r => Number(r.ABONOS || 0) > 0 || Number(r.TOTAL_ABONADO_CLIENTE || 0) > 0).length;
       const cntCeroGlobal = filtered.length - cntConAbono;
+      const LIMIT_RENDER = 600;
+      const displayRows = filtered.slice(0, LIMIT_RENDER);
+      const avisoLimit = filtered.length > LIMIT_RENDER ? ` (Mostrando primeros ${LIMIT_RENDER} — usa el buscador o filtro de año para acotar)` : '';
       document.getElementById('tableCountInfo').innerHTML =
-        `Mostrando <b>${filtered.length}</b> registros (<span style="color:#fde047; font-weight:700;">💛 ${cntConAbono} con abono</span> • <span style="color:#fca5a5; font-weight:700;">🚨 ${cntCeroGlobal} en $0 global</span>) | Suma Saldo: <b>${fmtCOP(totalSaldo)}</b>`;
+        `Total en vista: <b>${filtered.length}</b> registros${avisoLimit} (<span style="color:#fde047; font-weight:700;">💛 ${cntConAbono} con abono</span> • <span style="color:#fca5a5; font-weight:700;">🚨 ${cntCeroGlobal} en $0 global</span>) | Cartera Pendiente Real: <b>${fmtCOP(totalSaldo)}</b>`;
 
       thead.innerHTML = `<tr>
         <th>Matrícula</th><th>Cédula / Doc</th><th>Alumno</th><th>Convenio</th>
         <th>Fecha Insc.</th><th>Cat.</th><th>Valor Curso</th><th>Abono Mat.</th>
         <th>Saldo Mat.</th><th>Contexto Cliente (Multi-Curso / Caja Global)</th>
-        <th>Antigüedad</th><th>Estado</th>
+        <th>Antigüedad</th><th>Estado / Editar</th>
         ${showMotivo ? '<th>Hallazgo / Error Detectado</th>' : ''}
       </tr>`;
 
-      tbody.innerHTML = filtered.map((r, idx) => {
+      tbody.innerHTML = displayRows.map((r, idx) => {
         const expId = `exp_row_${idx}`;
         const abMat = Number(r.ABONOS || 0);
         const abGlobal = Number(r.TOTAL_ABONADO_CLIENTE || abMat || 0);
@@ -3282,10 +3937,15 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             <td><span class="badge">${r.CATEGORIA}</span></td>
             <td>${fmtCOP(r.VALORCURSO)}</td>
             <td>${abonoCellHtml}</td>
-            <td class="money-neg">${fmtCOP(r.VALORPENDIENTE)}</td>
+            <td class="${Number(r.VALORPENDIENTE || 0) > 0 ? 'money-neg' : 'money-pos'}">${fmtCOP(Math.max(0, Number(r.VALORPENDIENTE || 0)))}</td>
             <td>${badgeCtx}</td>
             <td><span class="badge ${r.DIAS_ANTIGUEDAD > 90 ? 'badge-danger' : (r.DIAS_ANTIGUEDAD > 30 ? 'badge-warning' : '')}">${r.DIAS_ANTIGUEDAD} días</span></td>
-            <td>${r.ESTADO}</td>
+            <td>
+              <div style="display:flex; align-items:center; gap:6px;">
+                <span>${r.ESTADO}</span>
+                <button type="button" class="btn btn-outline" style="padding:2px 7px; font-size:11px; border-color:#10b981; color:#6ee7b7;" onclick="event.stopPropagation(); cargarMatriculaEnEditorManual('${String(r.NUMEROMATRICULA || '').replace(/'/g, '')}')" title="Editar o registrar abono para esta matrícula">✏️ Editar</button>
+              </div>
+            </td>
             ${showMotivo ? `<td style="color:#fca5a5;font-weight:600;">${r.MOTIVO_ERROR}</td>` : ''}
           </tr>
           <tr id="${expId}" class="expander-row">
@@ -3328,10 +3988,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         fd.append('ingresos_file', ingEl.files[0]);
       }
       fd.append('periodicidad', document.getElementById('periodoInput').value);
+      const modoBdEl = document.getElementById('modoBdInput');
+      fd.append('modo_bd', modoBdEl ? modoBdEl.value : 'INCORPORAR');
 
       const toast = document.getElementById('uploadToast');
       toast.className = 'status-toast ok';
-      toast.textContent = '⏳ Ejecutando motor contable y cruce por Cédula...';
+      toast.textContent = '⏳ Incorporando archivo en la Base de Datos Histórica y recalculando...';
 
       try {
         const res = await fetch('/api/upload', { method: 'POST', body: fd });
@@ -3342,7 +4004,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           await cargarBotOverview();
           toast.className = 'status-toast ok';
           const k = data.hallazgos.kpis;
-          toast.textContent = `✅ Auditado: ${k.total_matriculas} matrículas (${k.total_clientes_unicos} clientes únicos, ${k.clientes_multicurso_count} multi-curso).`;
+          const ms = data.merge_stats || {};
+          if (ms.total_despues) {
+            toast.textContent = `✅ Base Histórica actualizada: ${ms.total_despues} matrículas conservadas (+${ms.nuevos_insertados || 0} nuevas, ${ms.existentes_actualizados || 0} modificadas).`;
+          } else {
+            toast.textContent = `✅ Auditado: ${k.total_matriculas} matrículas (${k.total_clientes_unicos} clientes únicos, ${k.clientes_multicurso_count} multi-curso).`;
+          }
         } else {
           toast.className = 'status-toast err';
           toast.textContent = `❌ Error: ${data.error}`;
@@ -6700,6 +7367,13 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                     if val_p:
                         periodicidad = val_p.decode("utf-8", errors="ignore").strip() or "ANUAL"
 
+                modo_bd = "INCORPORAR"
+                if "modo_bd" in parts:
+                    _, val_m = parts["modo_bd"]
+                    if val_m:
+                        modo_bd = val_m.decode("utf-8", errors="ignore").strip().upper() or "INCORPORAR"
+                modo_incorporar = modo_bd != "REEMPLAZAR"
+
                 if not file_bytes:
                     self._send_json({"ok": False, "error": "No se recibió el archivo de matrículas."}, 400)
                     return
@@ -6710,12 +7384,16 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                     periodicidad=periodicidad,
                     origen_ingresos=ingresos_bytes,
                     ingresos_filename=ingresos_filename,
+                    modo_incorporar=modo_incorporar,
                 )
+                m_stats = (hallazgos.get("metadata") or {}).get("merge_stats") or {}
                 self._send_json({
                     "ok": True,
                     "filename": filename,
                     "ingresos_filename": ingresos_filename,
                     "periodicidad": periodicidad,
+                    "modo_bd": modo_bd,
+                    "merge_stats": m_stats,
                     "updated_at": STATE["updated_at"],
                     "hallazgos": hallazgos,
                 })
@@ -6798,6 +7476,45 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
             action = str(payload.get("action", "")).strip()
             u_sesion = self._get_current_user() or {"username": AUDITOR_USER, "nombre": "Administrador", "rol": "ADMIN_TOTAL"}
             u_tag = f"{u_sesion.get('nombre', 'Usuario')} ({u_sesion.get('username', '')})"
+
+            if action == "cartera_guardar_matricula_manual":
+                existentes = STATE.get("registros_historicos") or []
+                if not existentes:
+                    existentes, _ = auditor_cea.cargar_bd_historica()
+                meta_actual = dict(STATE.get("metadata_historica") or (STATE.get("hallazgos") or {}).get("metadata") or {})
+                corte_dt = auditor_cea._parse_date(meta_actual.get("fecha_final")) or datetime.datetime.now()
+                tarifas_usar = STATE.get("tarifas_base") or dict(auditor_cea.TARIFAS_BASE_DEFAULT)
+
+                nuevos_regs, reg_guardado, msg_acc = auditor_cea.guardar_o_actualizar_matricula_manual(
+                    datos=payload,
+                    existentes=existentes,
+                    fecha_corte=corte_dt,
+                    tarifas_base=tarifas_usar,
+                )
+                hallazgos = _recalcular_estado_desde_bd_historica(
+                    registros=nuevos_regs,
+                    metadata=meta_actual,
+                    filename=STATE.get("filename") or "Base_Historica_CEA.xlsx",
+                    periodicidad=STATE.get("periodicidad") or "ANUAL",
+                    ingresos_filename=STATE.get("ingresos_filename") or "",
+                    tarifas_base=tarifas_usar,
+                )
+                _registrar_bitacora_empleado(
+                    u_sesion["username"], u_sesion["nombre"], u_sesion["rol"],
+                    "ACTUALIZAR_BD_CARTERA",
+                    msg_acc,
+                )
+                self._send_json({
+                    "ok": True,
+                    "message": msg_acc,
+                    "registro": reg_guardado,
+                    "filename": STATE["filename"],
+                    "ingresos_filename": STATE["ingresos_filename"],
+                    "periodicidad": STATE["periodicidad"],
+                    "updated_at": STATE["updated_at"],
+                    "hallazgos": hallazgos,
+                })
+                return
 
             if action == "empleado_guardar":
                 if u_sesion.get("rol") != "ADMIN_TOTAL":

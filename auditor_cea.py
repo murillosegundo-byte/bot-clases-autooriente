@@ -779,6 +779,7 @@ def cargar_y_limpiar_datos(
         fecha_insc_dt = _parse_date(raw.get("FECHAINSCRIPCION", ""))
         fecha_insc_str = fecha_insc_dt.strftime("%Y-%m-%d") if fecha_insc_dt else ""
         mes_inscripcion = fecha_insc_dt.strftime("%Y-%m") if fecha_insc_dt else "SIN_FECHA"
+        anio_inscripcion = fecha_insc_dt.strftime("%Y") if fecha_insc_dt else "SIN_ANIO"
         dias_antiguedad = max(0, (fecha_corte - fecha_insc_dt).days) if fecha_insc_dt else 0
 
         saldo_calculado = valor_curso - abonos
@@ -799,6 +800,7 @@ def cargar_y_limpiar_datos(
             "FECHAINSCRIPCION": fecha_insc_str,
             "FECHAINSCRIPCION_RAW": str(raw.get("FECHAINSCRIPCION", "")).strip(),
             "MES_INSCRIPCION": mes_inscripcion,
+            "ANIO": anio_inscripcion,
             "VALORHORA": valor_hora,
             "CLASESCONTRATADAS": clases_contratadas,
             "CLASESRECIBIDAS": clases_recibidas,
@@ -876,6 +878,347 @@ def cargar_y_limpiar_datos(
     metadata["fecha_corte_usada"] = fecha_corte.strftime("%Y-%m-%d")
     metadata["total_procesados"] = len(registros)
     return registros, metadata
+
+
+# =============================================================================
+# 1B. BASE DE DATOS HISTÓRICA PERSISTENTE + MEZCLA INCREMENTAL (UPSERT) + CRUD
+# =============================================================================
+BD_HISTORICA_JSON_PATH = BASE_DIR / "bd_historica_matriculas_cea.json"
+
+
+def _clave_unica_registro(reg: Dict[str, Any]) -> str:
+    """Genera la clave primaria única para conservar e incorporar registros sin duplicar."""
+    mat = str(reg.get("NUMEROMATRICULA", "") or "").strip().upper()
+    if mat and not mat.startswith("REG-"):
+        return f"MAT:{mat}"
+    doc = str(reg.get("NUMERODOCUMENTO", "") or "").strip().upper()
+    cat = str(reg.get("CATEGORIA", "") or "").strip().upper()
+    fec = str(reg.get("FECHAINSCRIPCION", "") or "").strip()
+    nom = str(reg.get("ALUMNO", "") or "").strip().upper()
+    return f"DOC:{doc}|CAT:{cat}|FEC:{fec}|NOM:{nom}"
+
+
+def normalizar_registro_bd(
+    r: Dict[str, Any],
+    fecha_corte: Optional[datetime.datetime] = None,
+    tarifas_base: Optional[Dict[str, float]] = None,
+) -> Dict[str, Any]:
+    """Recalcula campos derivados (ANIO, MES_INSCRIPCION, DIAS_ANTIGUEDAD, VALORPENDIENTE, RECIBOS_CAJA) sobre un registro."""
+    corte = fecha_corte or datetime.datetime.now()
+    tarifas = {**TARIFAS_BASE_DEFAULT, **(tarifas_base or {})}
+    cat = str(r.get("CATEGORIA", "A2") or "A2").strip().upper()
+    tarifa_est = tarifas.get(cat, 1000000.0)
+
+    vc = _to_float(r.get("VALORCURSO", 0))
+    if vc <= 0:
+        vc = tarifa_est
+    ab = _to_float(r.get("ABONOS", 0))
+    # Si se editó manualmente o si viene de archivo, si VALORPENDIENTE no coincide y fue edición manual, recalcular
+    if r.get("_EDITADO_MANUAL"):
+        vp = vc - ab
+    else:
+        vp_raw = r.get("VALORPENDIENTE")
+        vp = _to_float(vp_raw) if vp_raw is not None and str(vp_raw) != "" else (vc - ab)
+
+    f_dt = _parse_date(r.get("FECHAINSCRIPCION") or r.get("FECHAINSCRIPCION_RAW") or "")
+    f_str = f_dt.strftime("%Y-%m-%d") if f_dt else str(r.get("FECHAINSCRIPCION", "") or "").strip()
+    mes_str = f_dt.strftime("%Y-%m") if f_dt else (f_str[:7] if len(f_str) >= 7 else "SIN_FECHA")
+    anio_str = f_dt.strftime("%Y") if f_dt else (f_str[:4] if len(f_str) >= 4 and f_str[:4].isdigit() else "SIN_ANIO")
+    dias_ant = max(0, (corte - f_dt).days) if f_dt else int(r.get("DIAS_ANTIGUEDAD", 0) or 0)
+
+    nombres = str(r.get("NOMBRES", "") or "").strip()
+    apellidos = str(r.get("APELLIDOS", "") or "").strip()
+    alumno = str(r.get("ALUMNO", "") or f"{nombres} {apellidos}".strip()).strip()
+    if alumno and not nombres:
+        nombres = alumno
+
+    conv_orig = str(r.get("CONVENIO") if r.get("CONVENIO") is not None else r.get("CONVENIO_NORM", "")).strip().upper()
+    if conv_orig == "CEA AUTO ORIENTE" and r.get("CONVENIO_VACIO"):
+        conv_orig = ""
+    conv_vacio = conv_orig == ""
+    conv_norm = conv_orig if not conv_vacio else "CEA AUTO ORIENTE"
+
+    num_mat = str(r.get("NUMEROMATRICULA", "") or "").strip()
+    num_doc = str(r.get("NUMERODOCUMENTO", "") or "").strip()
+
+    recibos = list(r.get("RECIBOS_CAJA") or [])
+    if not recibos and ab > 0:
+        recibos = [{
+            "RECIBO": f"AB-{num_mat}",
+            "NUMERODOCUMENTO": num_doc,
+            "NUMEROMATRICULA": num_mat,
+            "VALOR": ab,
+            "FECHA": f_str,
+            "TIPOPAGO": "ABONO REGISTRADO EN SISTEMA",
+            "OBSERVACION": f"Abono acumulado matrícula {cat}",
+            "ESTADO": "APLICADO",
+            "HUERFANO": False,
+        }]
+    elif recibos and r.get("_EDITADO_MANUAL"):
+        recibos[0]["VALOR"] = ab
+        recibos[0]["FECHA"] = f_str
+
+    return {
+        **r,
+        "NUMEROMATRICULA": num_mat,
+        "NUMERODOCUMENTO": num_doc,
+        "TIPODOCUMENTO": str(r.get("TIPODOCUMENTO", "CC") or "CC").strip(),
+        "NOMBRES": nombres,
+        "APELLIDOS": apellidos,
+        "ALUMNO": alumno,
+        "CONVENIO": conv_orig,
+        "CONVENIO_NORM": conv_norm,
+        "CONVENIO_VACIO": conv_vacio,
+        "PUBLICIDAD": str(r.get("PUBLICIDAD", "NO ESPECIFICADO") or "NO ESPECIFICADO").strip().upper(),
+        "CATEGORIA": cat,
+        "FECHAINSCRIPCION": f_str,
+        "FECHAINSCRIPCION_RAW": str(r.get("FECHAINSCRIPCION_RAW") or f_str).strip(),
+        "MES_INSCRIPCION": mes_str,
+        "ANIO": anio_str,
+        "VALORCURSO": vc,
+        "TARIFA_BASE_CAT": tarifa_est,
+        "ABONOS_ORIGINAL": ab,
+        "ABONOS": ab,
+        "VALORPENDIENTE_ORIGINAL": vp,
+        "VALORPENDIENTE": vp,
+        "SALDO_CALCULADO": vc - ab,
+        "ERROR_CUADRE": vp - (vc - ab),
+        "DIAS_ANTIGUEDAD": dias_ant,
+        "ESTADO": str(r.get("ESTADO", "ACTIVA") or "ACTIVA").strip().upper(),
+        "RECIBOS_CAJA": recibos,
+    }
+
+
+def _limpiar_registro_para_json(r: Dict[str, Any]) -> Dict[str, Any]:
+    """Extrae solo los campos base persistibles de una matrícula para guardar en bd_historica_matriculas_cea.json."""
+    campos_base = (
+        "NUMEROMATRICULA", "NUMERODOCUMENTO", "TIPODOCUMENTO", "NOMBRES", "APELLIDOS",
+        "ALUMNO", "CONVENIO", "CONVENIO_NORM", "CONVENIO_VACIO", "PUBLICIDAD",
+        "CATEGORIA", "FECHAINSCRIPCION", "FECHAINSCRIPCION_RAW", "MES_INSCRIPCION", "ANIO",
+        "VALORHORA", "CLASESCONTRATADAS", "CLASESRECIBIDAS", "CLASESPENDIENTES",
+        "VALORCURSO", "TARIFA_BASE_CAT", "ABONOS_ORIGINAL", "ABONOS",
+        "VALORPENDIENTE_ORIGINAL", "VALORPENDIENTE", "SALDO_CALCULADO", "ERROR_CUADRE",
+        "DIAS_ANTIGUEDAD", "ESTADO", "FECHAEXAMENMEDICO", "_EDITADO_MANUAL", "ULTIMA_ACTUALIZACION",
+    )
+    return {k: r.get(k) for k in campos_base if k in r}
+
+
+def cargar_bd_historica() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """Carga la base de datos histórica persistente desde JSON si existe."""
+    if BD_HISTORICA_JSON_PATH.exists():
+        try:
+            data = json.loads(BD_HISTORICA_JSON_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("registros"), list) and len(data["registros"]) > 0:
+                regs_raw = data["registros"]
+                meta = data.get("metadata") or {}
+                corte_dt = _parse_date(meta.get("fecha_final")) or datetime.datetime.now()
+                regs_norm = [normalizar_registro_bd(r, fecha_corte=corte_dt) for r in regs_raw]
+                return regs_norm, meta
+        except Exception:
+            pass
+    return [], {}
+
+
+def guardar_bd_historica(registros: List[Dict[str, Any]], metadata: Dict[str, Any]) -> None:
+    """Guarda todos los registros históricos en bd_historica_matriculas_cea.json."""
+    try:
+        fechas = [r.get("FECHAINSCRIPCION", "") for r in registros if r.get("FECHAINSCRIPCION")]
+        meta_out = dict(metadata or {})
+        if fechas:
+            meta_out["fecha_inicial_historica"] = min(fechas)
+            meta_out["fecha_final_historica"] = max(fechas)
+        meta_out["total_procesados"] = len(registros)
+        meta_out["updated_at"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        payload = {
+            "metadata": meta_out,
+            "registros": [_limpiar_registro_para_json(r) for r in registros],
+        }
+        BD_HISTORICA_JSON_PATH.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def guardar_o_actualizar_matricula_manual(
+    datos: Dict[str, Any],
+    existentes: List[Dict[str, Any]],
+    fecha_corte: Optional[datetime.datetime] = None,
+    tarifas_base: Optional[Dict[str, float]] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any], str]:
+    """
+    Crea o actualiza manualmente un registro de matrícula o abono en la Base de Datos Histórica.
+    - Si `numero_matricula` existe en la base, actualiza sus datos (abono, valor_curso, convenio, categoría, estado, fecha, alumno, cédula).
+    - Si no existe, genera o usa el `numero_matricula` dado e inserta el nuevo registro conservando todo el histórico.
+    """
+    corte = fecha_corte or datetime.datetime.now()
+    tarifas = {**TARIFAS_BASE_DEFAULT, **(tarifas_base or {})}
+
+    num_mat = str(datos.get("numero_matricula") or datos.get("NUMEROMATRICULA") or "").strip()
+    num_doc = str(datos.get("cedula") or datos.get("NUMERODOCUMENTO") or "").strip()
+    alumno = str(datos.get("alumno") or datos.get("ALUMNO") or "").strip().upper()
+    categoria = str(datos.get("categoria") or datos.get("CATEGORIA") or "A2").strip().upper()
+    convenio = str(datos.get("convenio") or datos.get("CONVENIO") or "CEA AUTO ORIENTE").strip().upper()
+    estado = str(datos.get("estado") or datos.get("ESTADO") or "ACTIVA").strip().upper()
+    fecha_raw = str(datos.get("fecha_inscripcion") or datos.get("FECHAINSCRIPCION") or "").strip()
+    f_dt = _parse_date(fecha_raw) or corte
+    f_str = f_dt.strftime("%Y-%m-%d")
+
+    vc_in = _to_float(datos.get("valor_curso") if datos.get("valor_curso") is not None else datos.get("VALORCURSO", 0))
+    if vc_in <= 0:
+        vc_in = tarifas.get(categoria, 1000000.0)
+    ab_in = _to_float(datos.get("abonos") if datos.get("abonos") is not None else datos.get("ABONOS", 0))
+    ab_adicional = _to_float(datos.get("abono_adicional", 0))
+
+    # Buscar si ya existe por número de matrícula (o por cédula+categoría si no enviaron matrícula)
+    target_idx = -1
+    if num_mat:
+        for idx, r in enumerate(existentes):
+            if str(r.get("NUMEROMATRICULA", "")).strip().upper() == num_mat.upper():
+                target_idx = idx
+                break
+    elif num_doc and categoria:
+        for idx, r in enumerate(existentes):
+            if (
+                str(r.get("NUMERODOCUMENTO", "")).strip() == num_doc
+                and str(r.get("CATEGORIA", "")).strip().upper() == categoria
+            ):
+                target_idx = idx
+                num_mat = str(r.get("NUMEROMATRICULA", "")).strip()
+                break
+
+    ahora_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if target_idx >= 0:
+        prev = dict(existentes[target_idx])
+        ab_final = ( _to_float(prev.get("ABONOS", 0)) + ab_adicional ) if ab_adicional != 0 else ab_in
+        vc_final = vc_in if datos.get("valor_curso") is not None and str(datos.get("valor_curso", "")).strip() != "" else _to_float(prev.get("VALORCURSO", vc_in))
+        reg_edit = {
+            **prev,
+            "NUMEROMATRICULA": num_mat or prev.get("NUMEROMATRICULA", ""),
+            "NUMERODOCUMENTO": num_doc or prev.get("NUMERODOCUMENTO", ""),
+            "ALUMNO": alumno or prev.get("ALUMNO", ""),
+            "NOMBRES": alumno or prev.get("NOMBRES", ""),
+            "APELLIDOS": "" if alumno else prev.get("APELLIDOS", ""),
+            "CATEGORIA": categoria or prev.get("CATEGORIA", "A2"),
+            "CONVENIO": convenio,
+            "CONVENIO_NORM": convenio or "CEA AUTO ORIENTE",
+            "CONVENIO_VACIO": False,
+            "FECHAINSCRIPCION": f_str if fecha_raw else prev.get("FECHAINSCRIPCION", f_str),
+            "VALORCURSO": vc_final,
+            "ABONOS": ab_final,
+            "VALORPENDIENTE": vc_final - ab_final,
+            "ESTADO": estado or prev.get("ESTADO", "ACTIVA"),
+            "_EDITADO_MANUAL": True,
+            "ULTIMA_ACTUALIZACION": ahora_str,
+        }
+        reg_norm = normalizar_registro_bd(reg_edit, fecha_corte=corte, tarifas_base=tarifas)
+        nuevos_regs = list(existentes)
+        nuevos_regs[target_idx] = reg_norm
+        accion_msg = f"✅ Matrícula {reg_norm['NUMEROMATRICULA']} ({reg_norm['ALUMNO']} - {reg_norm['CATEGORIA']}) actualizada en la Base de Datos Histórica (Curso: ${reg_norm['VALORCURSO']:,.0f} | Abono: ${reg_norm['ABONOS']:,.0f} | Saldo: ${reg_norm['VALORPENDIENTE']:,.0f})."
+        return nuevos_regs, reg_norm, accion_msg
+
+    # Si es nueva matrícula y no especificaron número, generar consecutivo del año
+    if not num_mat:
+        pref_anio = f_dt.strftime("%Y") + "01"
+        max_seq = 1000
+        for r in existentes:
+            m_s = str(r.get("NUMEROMATRICULA", "")).strip()
+            if m_s.startswith(pref_anio) and m_s[len(pref_anio):].isdigit():
+                max_seq = max(max_seq, int(m_s[len(pref_anio):]))
+        num_mat = f"{pref_anio}{max_seq + 1}"
+
+    ab_final = ab_in + ab_adicional
+    nuevo_raw = {
+        "NUMEROMATRICULA": num_mat,
+        "NUMERODOCUMENTO": num_doc,
+        "TIPODOCUMENTO": "CC",
+        "NOMBRES": alumno,
+        "APELLIDOS": "",
+        "ALUMNO": alumno,
+        "CONVENIO": convenio,
+        "CONVENIO_NORM": convenio or "CEA AUTO ORIENTE",
+        "CONVENIO_VACIO": False,
+        "PUBLICIDAD": "REGISTRO MANUAL WEB",
+        "CATEGORIA": categoria,
+        "FECHAINSCRIPCION": f_str,
+        "FECHAINSCRIPCION_RAW": f_str,
+        "VALORHORA": 0.0,
+        "CLASESCONTRATADAS": 0,
+        "CLASESRECIBIDAS": 0,
+        "CLASESPENDIENTES": 0,
+        "VALORCURSO": vc_in,
+        "ABONOS": ab_final,
+        "VALORPENDIENTE": vc_in - ab_final,
+        "ESTADO": estado,
+        "_EDITADO_MANUAL": True,
+        "ULTIMA_ACTUALIZACION": ahora_str,
+    }
+    reg_norm = normalizar_registro_bd(nuevo_raw, fecha_corte=corte, tarifas_base=tarifas)
+    nuevos_regs = [reg_norm] + list(existentes)
+    accion_msg = f"✅ Nueva Matrícula {reg_norm['NUMEROMATRICULA']} ({reg_norm['ALUMNO']} - {reg_norm['CATEGORIA']}) incorporada en la Base de Datos Histórica (Curso: ${reg_norm['VALORCURSO']:,.0f} | Abono: ${reg_norm['ABONOS']:,.0f} | Saldo: ${reg_norm['VALORPENDIENTE']:,.0f})."
+    return nuevos_regs, reg_norm, accion_msg
+
+
+def fusionar_registros_bd_historica(
+    existentes: List[Dict[str, Any]],
+    nuevos: List[Dict[str, Any]],
+    fecha_corte: Optional[datetime.datetime] = None,
+    tarifas_base: Optional[Dict[str, float]] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """
+    Fusión Incremental Inteligente (Upsert):
+    - Conserva todos los registros históricos de todos los años (2024, 2025, 2026...).
+    - Si un registro del nuevo archivo ya existe (por NUMEROMATRICULA o clave compuesta),
+      actualiza sus datos (abonos, saldo, estado, convenio, categoría) con la versión más reciente.
+    - Si es una matrícula nueva, la incorpora a la base de datos.
+    """
+    corte = fecha_corte or datetime.datetime.now()
+    mapa: Dict[str, Dict[str, Any]] = {}
+    orden_claves: List[str] = []
+
+    for r_old in existentes:
+        r_n = normalizar_registro_bd(r_old, fecha_corte=corte, tarifas_base=tarifas_base)
+        k = _clave_unica_registro(r_n)
+        if k not in mapa:
+            orden_claves.append(k)
+        mapa[k] = r_n
+
+    total_antes = len(mapa)
+    insertados = 0
+    actualizados = 0
+    sin_cambios = 0
+
+    for r_new in nuevos:
+        r_n = normalizar_registro_bd(r_new, fecha_corte=corte, tarifas_base=tarifas_base)
+        k = _clave_unica_registro(r_n)
+        if k in mapa:
+            prev = mapa[k]
+            cambio = (
+                abs(_to_float(prev.get("ABONOS")) - _to_float(r_n.get("ABONOS"))) > 0.5
+                or abs(_to_float(prev.get("VALORCURSO")) - _to_float(r_n.get("VALORCURSO"))) > 0.5
+                or abs(_to_float(prev.get("VALORPENDIENTE")) - _to_float(r_n.get("VALORPENDIENTE"))) > 0.5
+                or str(prev.get("ESTADO", "")) != str(r_n.get("ESTADO", ""))
+                or str(prev.get("CONVENIO_NORM", "")) != str(r_n.get("CONVENIO_NORM", ""))
+                or str(prev.get("CATEGORIA", "")) != str(r_n.get("CATEGORIA", ""))
+                or str(prev.get("ALUMNO", "")) != str(r_n.get("ALUMNO", ""))
+            )
+            if cambio:
+                actualizados += 1
+            else:
+                sin_cambios += 1
+            mapa[k] = r_n
+        else:
+            orden_claves.append(k)
+            mapa[k] = r_n
+            insertados += 1
+
+    fusionados = [mapa[k] for k in orden_claves]
+    stats = {
+        "total_antes": total_antes,
+        "nuevos_insertados": insertados,
+        "existentes_actualizados": actualizados,
+        "sin_cambios": sin_cambios,
+        "total_despues": len(fusionados),
+    }
+    return fusionados, stats
 
 
 # =============================================================================
@@ -1025,6 +1368,8 @@ def auditar_riesgos(
     por_mes: Dict[str, Dict[str, Any]] = defaultdict(
         lambda: {
             "mes": "",
+            "anio": "",
+            "mes_num": "",
             "nombre_mes": "",
             "total_matriculas": 0,
             "meta_empresa": meta_total,
@@ -1035,8 +1380,26 @@ def auditar_riesgos(
             "facturado": 0.0,
             "recaudado": 0.0,
             "pendiente": 0.0,
+            "pendiente_neto": 0.0,
+            "con_saldo_count": 0,
             "abono_cero_count": 0,
             "abono_cero_real_count": 0,
+        }
+    )
+
+    por_anio: Dict[str, Dict[str, Any]] = defaultdict(
+        lambda: {
+            "anio": "",
+            "matriculas": 0,
+            "clientes_unicos_set": set(),
+            "facturado": 0.0,
+            "recaudado": 0.0,
+            "pendiente": 0.0,
+            "pendiente_neto": 0.0,
+            "con_saldo": 0,
+            "abono_cero_real": 0,
+            "matriculas_jt": 0,
+            "pendiente_jt": 0.0,
         }
     )
 
@@ -1048,6 +1411,7 @@ def auditar_riesgos(
             "facturado": 0.0,
             "recaudado": 0.0,
             "pendiente": 0.0,
+            "pendiente_neto": 0.0,
             "con_saldo": 0,
             "abono_cero": 0,
             "abono_cero_real": 0,
@@ -1071,6 +1435,7 @@ def auditar_riesgos(
     total_facturado = 0.0
     total_abonos = 0.0
     total_pendiente = 0.0
+    total_pendiente_neto = 0.0
     alumnos_con_saldo = 0
     convenios_vacios_count = 0
 
@@ -1078,16 +1443,20 @@ def auditar_riesgos(
         vc = r["VALORCURSO"]
         ab = r["ABONOS"]
         vp = r["VALORPENDIENTE"]
+        vp_pos = max(0.0, vp)
         vh = r["VALORHORA"]
         cc = r["CLASESCONTRATADAS"]
         dias = r["DIAS_ANTIGUEDAD"]
         conv = r["CONVENIO_NORM"]
         cat = r["CATEGORIA"]
         mes = r["MES_INSCRIPCION"]
+        anio = r.get("ANIO") or (mes.split("-")[0] if "-" in mes else "SIN_ANIO")
+        r["ANIO"] = anio
 
         total_facturado += vc
         total_abonos += ab
-        total_pendiente += vp
+        total_pendiente += vp_pos
+        total_pendiente_neto += vp
         if r["CONVENIO_VACIO"]:
             convenios_vacios_count += 1
 
@@ -1149,19 +1518,45 @@ def auditar_riesgos(
         m_item["mes"] = mes
         if "-" in mes:
             yyyy, mm = mes.split("-")
+            m_item["anio"] = yyyy
+            m_item["mes_num"] = mm
             m_item["nombre_mes"] = f"{MESES_ES.get(mm, mm)} {yyyy}"
         else:
+            m_item["anio"] = "SIN_ANIO"
+            m_item["mes_num"] = "00"
             m_item["nombre_mes"] = mes
         m_item["total_matriculas"] += 1
         if conv == "JAVIER TORRES":
             m_item["matriculas_jt"] += 1
         m_item["facturado"] += vc
         m_item["recaudado"] += ab
-        m_item["pendiente"] += vp
+        m_item["pendiente"] += vp_pos
+        m_item["pendiente_neto"] += vp
+        if vp > 0:
+            m_item["con_saldo_count"] += 1
         if ab == 0 and vc > 0:
             m_item["abono_cero_count"] += 1
             if r["TIPO_RIESGO_CERO"] == "RIESGO_CERO_REAL":
                 m_item["abono_cero_real_count"] += 1
+
+        # Agrupación Anual (Histórico Multianual 2024, 2025, 2026...)
+        a_item = por_anio[anio]
+        a_item["anio"] = anio
+        a_item["matriculas"] += 1
+        if r["NUMERODOCUMENTO"]:
+            a_item["clientes_unicos_set"].add(r["NUMERODOCUMENTO"])
+        a_item["facturado"] += vc
+        a_item["recaudado"] += ab
+        a_item["pendiente"] += vp_pos
+        a_item["pendiente_neto"] += vp
+        if vp > 0:
+            a_item["con_saldo"] += 1
+        if ab == 0 and vc > 0 and r["TIPO_RIESGO_CERO"] == "RIESGO_CERO_REAL":
+            a_item["abono_cero_real"] += 1
+        if conv == "JAVIER TORRES":
+            a_item["matriculas_jt"] += 1
+            if vp > 0:
+                a_item["pendiente_jt"] += vp_pos
 
         # Agrupación por Convenio
         c_item = por_convenio[conv]
@@ -1171,7 +1566,8 @@ def auditar_riesgos(
             c_item["clientes_unicos"].add(r["NUMERODOCUMENTO"])
         c_item["facturado"] += vc
         c_item["recaudado"] += ab
-        c_item["pendiente"] += vp
+        c_item["pendiente"] += vp_pos
+        c_item["pendiente_neto"] += vp
         if vp > 0:
             c_item["con_saldo"] += 1
         if ab == 0 and vc > 0:
@@ -1185,7 +1581,7 @@ def auditar_riesgos(
         cat_item["matriculas"] += 1
         cat_item["facturado"] += vc
         cat_item["recaudado"] += ab
-        cat_item["pendiente"] += vp
+        cat_item["pendiente"] += vp_pos
 
         por_publicidad[r["PUBLICIDAD"]] += 1
 
@@ -1197,6 +1593,44 @@ def auditar_riesgos(
         m["estado_meta_empresa"] = "CUMPLIDA" if m["total_matriculas"] >= meta_total else "BAJO META"
         m["estado_meta_jt"] = "CUMPLIDA" if m["matriculas_jt"] >= meta_jt else "BAJO META"
         lista_meses.append(m)
+
+    lista_anual = []
+    prev_fact = 0.0
+    prev_mat = 0
+    prev_rec = 0.0
+    for k_anio in sorted(k for k in por_anio.keys() if k != "SIN_ANIO"):
+        a = por_anio[k_anio]
+        fact_a = a["facturado"]
+        rec_a = a["recaudado"]
+        pend_a = a["pendiente"]
+        mat_a = a["matriculas"]
+        crec_ventas_pct = round(((fact_a - prev_fact) / prev_fact) * 100, 1) if prev_fact > 0 else 0.0
+        crec_mat_pct = round(((mat_a - prev_mat) / prev_mat) * 100, 1) if prev_mat > 0 else 0.0
+        crec_rec_pct = round(((rec_a - prev_rec) / prev_rec) * 100, 1) if prev_rec > 0 else 0.0
+        tasa_rec_a = round((rec_a / fact_a) * 100, 2) if fact_a > 0 else 0.0
+        tasa_mora_a = round((pend_a / fact_a) * 100, 2) if fact_a > 0 else 0.0
+        lista_anual.append({
+            "anio": k_anio,
+            "matriculas": mat_a,
+            "clientes_unicos": len(a["clientes_unicos_set"]),
+            "facturado": fact_a,
+            "recaudado": rec_a,
+            "pendiente": pend_a,
+            "pendiente_neto": a["pendiente_neto"],
+            "con_saldo": a["con_saldo"],
+            "abono_cero_real": a["abono_cero_real"],
+            "matriculas_jt": a["matriculas_jt"],
+            "pendiente_jt": a["pendiente_jt"],
+            "tasa_recaudo_pct": tasa_rec_a,
+            "tasa_morosidad_pct": tasa_mora_a,
+            "crecimiento_ventas_pct": crec_ventas_pct,
+            "crecimiento_matriculas_pct": crec_mat_pct,
+            "crecimiento_recaudo_pct": crec_rec_pct,
+            "es_primer_anio": prev_fact == 0,
+        })
+        prev_fact = fact_a
+        prev_mat = mat_a
+        prev_rec = rec_a
 
     lista_convenios = []
     for k, c in sorted(por_convenio.items(), key=lambda x: x[1]["matriculas"], reverse=True):
@@ -1245,6 +1679,7 @@ def auditar_riesgos(
         "total_facturado": total_facturado,
         "total_abonos": total_abonos,
         "total_pendiente": total_pendiente,
+        "total_pendiente_neto": total_pendiente_neto,
         "tasa_recaudo_pct": tasa_recaudo,
         "tasa_morosidad_pct": tasa_morosidad,
         "alumnos_con_saldo": alumnos_con_saldo,
@@ -1299,6 +1734,7 @@ def auditar_riesgos(
         "jt_abono_cero": jt_abono_cero,
         "jt_todos": jt_todos,
         "mensual": lista_meses,
+        "anual": lista_anual,
         "convenios": lista_convenios,
         "categorias": lista_categorias,
         "publicidad": dict(por_publicidad.most_common()),
@@ -1600,12 +2036,45 @@ def generar_reporte_excel_bytes(hallazgos: Dict[str, Any], tipo_informe: str = "
         for c in hallazgos["convenios"]
     ]
 
+    todas_hdrs, todas_rows = extraer_filas(hallazgos.get("todas_matriculas") or [])
+    anual_hdrs = [
+        "AÑO",
+        "MATRÍCULAS",
+        "CLIENTES ÚNICOS",
+        "TOTAL FACTURADO (VENTAS)",
+        "RECAUDO EFECTIVO (INGRESOS)",
+        "% RECAUDO",
+        "CARTERA PENDIENTE REAL",
+        "% MOROSIDAD",
+        "MATRÍCULAS CON SALDO",
+        "CRECIMIENTO VENTAS VS AÑO ANT.",
+        "CRECIMIENTO MATRÍCULAS VS AÑO ANT.",
+    ]
+    anual_rows = [
+        [
+            a["anio"],
+            a["matriculas"],
+            a["clientes_unicos"],
+            a["facturado"],
+            a["recaudado"],
+            f"{a['tasa_recaudo_pct']}%",
+            a["pendiente"],
+            f"{a['tasa_morosidad_pct']}%",
+            a["con_saldo"],
+            "Año Base" if a.get("es_primer_anio") else f"{'+' if a['crecimiento_ventas_pct'] >= 0 else ''}{a['crecimiento_ventas_pct']}%",
+            "Año Base" if a.get("es_primer_anio") else f"{'+' if a['crecimiento_matriculas_pct'] >= 0 else ''}{a['crecimiento_matriculas_pct']}%",
+        ]
+        for a in (hallazgos.get("anual") or [])
+    ]
+
     sheets = [
+        ("Todos_Los_Registros_BD", todas_hdrs, todas_rows),
+        ("Crecimiento_Por_Anios", anual_hdrs, anual_rows),
         ("Dashboard_Resumen", resumen_headers, resumen_rows),
         ("Cartera_Javier_Torres", jt_hdrs, jt_rows),
         ("Riesgo_Cero_Real_Suspender", cero_real_hdrs, cero_real_rows),
         ("Combos_MultiCurso_En_Cero", cero_mc_hdrs, cero_mc_rows),
-        ("Consolidado_231_MultiCurso", mc_hdrs, mc_rows),
+        ("Consolidado_MultiCurso", mc_hdrs, mc_rows),
         ("Mora_Mayor_90_Dias", mora90_hdrs, mora90_rows),
         ("Errores_Digitacion", err_hdrs, err_rows),
         ("Cumplimiento_Metas_Mes", metas_hdrs, metas_rows),
