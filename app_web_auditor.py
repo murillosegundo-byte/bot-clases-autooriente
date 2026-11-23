@@ -1223,7 +1223,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     </div>
     <div class="header-actions">
       <span id="userSessionBadge" class="badge badge-info" style="padding:7px 12px; font-size:12px;">👤 Cargando sesión...</span>
-      <a href="/observatorio" target="_blank" class="btn btn-outline" style="border-color:#10b981; color:#6ee7b7; background:rgba(16,185,129,0.12);" title="Abrir Observatorio Nacional de Seguridad Vial en Línea (2021-2026)">🚦 Observatorio Vial ANSV</a>
+      <a href="/observatorio" target="_blank" class="btn btn-outline" style="border-color:#10b981; color:#6ee7b7; background:rgba(16,185,129,0.12);" title="Abrir Observatorio Nacional de Seguridad Vial en Línea (Modo Consulta)">🚦 Observatorio Vial ANSV</a>
+      <button type="button" class="btn btn-outline admin-only-btn" onclick="toggleAnsvAdminDrawer()" style="border-color:#f59e0b; color:#fde68a;" title="Administración Interna Segura del Observatorio Vial ANSV">⚙️ Admin Observatorio ANSV</button>
       <button type="button" class="btn btn-outline admin-only-btn" id="btnSheetsStatus" onclick="toggleSheetsDrawer()">🔑 Google Sheets</button>
       <button type="button" class="btn btn-outline admin-only-btn" id="btnTarifasTop" onclick="toggleTarifas()">⚙️ Tarifas por Categoría</button>
       <a href="/api/download/excel" class="btn btn-success cartera-only-btn" id="btnExcelTop">📊 Excel Cartera (.xlsx)</a>
@@ -1233,6 +1234,32 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
   </header>
 
   <div class="container">
+    <!-- Panel Interno Protegido (Solo Administrador) para Gestión y Actualización de Datos del Observatorio Vial ANSV -->
+    <div id="ansvAdminDrawer" class="tarifas-drawer" style="border-color:#f59e0b; background:linear-gradient(135deg, rgba(245,158,11,0.12), rgba(15,23,42,0.96));">
+      <div class="panel-title">
+        <span>🛡️ Administración Interna Segura — Observatorio Nacional de Seguridad Vial (ANSV 2021–2026)</span>
+        <span class="badge badge-warning">Uso Exclusivo Gerencia • La vista pública /observatorio es 100% de solo consulta</span>
+      </div>
+      <p style="font-size:12.5px; color:#cbd5e1; margin-bottom:10px;">
+        Desde aquí puedes actualizar la matriz del Observatorio Nacional de Seguridad Vial sin exponer botones de carga en la página pública (evitando inyección de datos externos):
+      </p>
+      <div class="form-grid-4">
+        <div>
+          <label class="field-label">🔄 Conexión Portal Datos Abiertos ANSV</label>
+          <button type="button" class="btn btn-primary" id="btnInternalSyncAnsv" style="width:100%; justify-content:center;" onclick="sincronizarAnsvInterno()">🔄 Sincronizar con ANSV ahora</button>
+        </div>
+        <div style="grid-column: span 2;">
+          <label class="field-label">📂 O cargar nuevo CSV manualmente a la base del Observatorio (.csv)</label>
+          <input type="file" id="csvInternalAnsvInput" accept=".csv" onchange="subirCsvAnsvInterno(this)" />
+        </div>
+        <div>
+          <label class="field-label">🌐 Vista Pública de Consulta</label>
+          <a href="/observatorio" target="_blank" class="btn btn-success" style="width:100%; justify-content:center;">🚦 Abrir Observatorio Vial</a>
+        </div>
+      </div>
+      <div id="ansvInternalToast" class="status-toast"></div>
+    </div>
+
     <!-- Panel desplegable para conectar Google Sheets en vivo -->
     <div id="sheetsDrawer" class="tarifas-drawer">
       <div class="panel-title">
@@ -1354,9 +1381,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
 
       <div class="panel">
-        <div class="panel-title">
+        <div class="panel-title" style="flex-wrap:wrap; gap:6px;">
           <span>4. Administración de Base de Datos y Despacho (Email / Telegram)</span>
-          <button type="button" class="btn btn-success" style="padding:5px 11px; font-size:12px;" onclick="toggleManualMatriculaDrawer()">➕ Registrar / Editar Matrícula o Abono Manual</button>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button type="button" class="btn btn-success" style="padding:5px 10px; font-size:11.5px;" onclick="toggleManualMatriculaDrawer()">➕ Registrar / Editar Matrícula</button>
+            <button type="button" class="btn btn-outline admin-only-btn" style="padding:5px 10px; font-size:11.5px; border-color:#f59e0b; color:#fde68a;" onclick="toggleAnsvAdminDrawer()">🚦 Actualizar Datos ANSV</button>
+          </div>
         </div>
         <div class="upload-row" style="margin-bottom: 8px;">
           <input type="email" id="emailDestInput" placeholder="Correo destino (ej. gerencia@autooriente.com)" style="flex:1;" />
@@ -3103,6 +3133,71 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
     function toggleTarifas() {
       document.getElementById('tarifasDrawer').classList.toggle('open');
+    }
+
+    function toggleAnsvAdminDrawer() {
+      const dr = document.getElementById('ansvAdminDrawer');
+      if (!dr) return;
+      dr.classList.toggle('open');
+      if (dr.classList.contains('open')) {
+        dr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
+    async function sincronizarAnsvInterno() {
+      const btn = document.getElementById('btnInternalSyncAnsv');
+      const toast = document.getElementById('ansvInternalToast');
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Descargando datos oficiales ANSV...';
+      }
+      if (toast) {
+        toast.className = 'status-toast ok';
+        toast.textContent = '⏳ Conectando con portal oficial de Datos Abiertos ANSV...';
+      }
+      try {
+        const res = await fetch('/api/observatorio/sync', { method: 'POST' });
+        const data = await res.json();
+        if (toast) {
+          toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+          toast.textContent = data.message || (data.ok ? '✅ Sincronización terminada.' : '❌ Error al sincronizar.');
+        }
+      } catch (err) {
+        if (toast) {
+          toast.className = 'status-toast err';
+          toast.textContent = '❌ Error de red: ' + err;
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '🔄 Sincronizar con ANSV ahora';
+        }
+      }
+    }
+
+    async function subirCsvAnsvInterno(inputEl) {
+      if (!inputEl || !inputEl.files || !inputEl.files.length) return;
+      const toast = document.getElementById('ansvInternalToast');
+      if (toast) {
+        toast.className = 'status-toast ok';
+        toast.textContent = '⏳ Procesando y validando archivo CSV oficial...';
+      }
+      const fd = new FormData();
+      fd.append('file', inputEl.files[0]);
+      try {
+        const res = await fetch('/api/observatorio/upload_csv', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (toast) {
+          toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+          toast.textContent = data.message || (data.ok ? '✅ Archivo CSV cargado.' : '❌ No se pudo cargar.');
+        }
+        inputEl.value = '';
+      } catch (err) {
+        if (toast) {
+          toast.className = 'status-toast err';
+          toast.textContent = '❌ Error cargando CSV: ' + err;
+        }
+      }
     }
 
     async function guardarTarifas() {
@@ -6970,7 +7065,9 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
         # SERVICIO EN LÍNEA 24/7: OBSERVATORIO NACIONAL DE SEGURIDAD VIAL (ANSV)
         # =====================================================================
         if self.path.startswith("/observatorio"):
-            raw = observatorio_vial_cea.HTML_OBSERVATORIO_STANDALONE.encode("utf-8")
+            u_obs = self._get_current_user()
+            es_admin_obs = bool(u_obs and u_obs.get("rol") == "ADMIN_TOTAL")
+            raw = observatorio_vial_cea.renderizar_html_observatorio(es_admin=es_admin_obs).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(raw)))
@@ -7048,7 +7145,7 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
             for m_hide in mods_ocultos:
                 reglas_css.append(f'#{m_hide}, .mod-btn[data-mod="{m_hide}"] {{ display: none !important; }}')
             if not es_admin_total:
-                reglas_css.append('.admin-only-btn, #sheetsDrawer, #tarifasDrawer { display: none !important; }')
+                reglas_css.append('.admin-only-btn, #sheetsDrawer, #tarifasDrawer, #ansvAdminDrawer { display: none !important; }')
             if not es_admin_total and "mod_cartera" not in mods_permitidos:
                 reglas_css.append('.cartera-only-btn { display: none !important; }')
 
@@ -7390,12 +7487,31 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                 self._send_json({"ok": False, "error": "Usuario o contraseña incorrectos."}, 401)
             return
 
+        if not self._is_authenticated():
+            self._send_json({"ok": False, "error": "No autorizado. Inicie sesión primero."}, 401)
+            return
+
         if self.path == "/api/observatorio/sync":
+            u_curr = self._get_current_user() or {}
+            if u_curr.get("rol") != "ADMIN_TOTAL":
+                self._send_json({"ok": False, "message": "Acción restringida: Solo Gerencia (ADMIN_TOTAL) puede actualizar datos del Observatorio."}, 403)
+                return
             ok_s, msg_s = observatorio_vial_cea.observatorio_service.sincronizar_con_ansv_ahora()
+            _registrar_bitacora_empleado(
+                u_curr.get("username", "admin"),
+                u_curr.get("nombre", "Administrador"),
+                u_curr.get("rol", "ADMIN_TOTAL"),
+                "SYNC_OBSERVATORIO_ANSV",
+                msg_s,
+            )
             self._send_json({"ok": ok_s, "message": msg_s})
             return
 
         if self.path == "/api/observatorio/upload_csv":
+            u_curr = self._get_current_user() or {}
+            if u_curr.get("rol") != "ADMIN_TOTAL":
+                self._send_json({"ok": False, "message": "Acción restringida: Solo Gerencia (ADMIN_TOTAL) puede cargar archivos CSV al Observatorio."}, 403)
+                return
             try:
                 content_type = self.headers.get("Content-Type", "")
                 length = int(self.headers.get("Content-Length", "0"))
@@ -7409,13 +7525,16 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                     filename=fn_csv or "datos_ansv.csv",
                     file_bytes=csv_bytes,
                 )
+                _registrar_bitacora_empleado(
+                    u_curr.get("username", "admin"),
+                    u_curr.get("nombre", "Administrador"),
+                    u_curr.get("rol", "ADMIN_TOTAL"),
+                    "UPLOAD_CSV_ANSV",
+                    msg_u,
+                )
                 self._send_json({"ok": ok_u, "message": msg_u})
             except Exception as exc:
                 self._send_json({"ok": False, "message": f"Error al guardar CSV: {exc}"}, 500)
-            return
-
-        if not self._is_authenticated():
-            self._send_json({"ok": False, "error": "No autorizado. Inicie sesión primero."}, 401)
             return
 
         if self.path == "/api/upload":

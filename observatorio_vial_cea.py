@@ -694,6 +694,8 @@ HTML_OBSERVATORIO_STANDALONE = r"""<!DOCTYPE html>
       <img src="/api/observatorio/logo" alt="Logo Institucional" onerror="this.style.display='none'" />
     </div>
 
+    <!-- __ADMIN_PANEL_SIDEBAR__ -->
+
     <hr class="st-hr" />
     <h3 style="font-size:17px; font-weight:700;">🔍 Filtros de Consulta</h3>
 
@@ -735,8 +737,7 @@ HTML_OBSERVATORIO_STANDALONE = r"""<!DOCTYPE html>
     <button type="button" class="st-btn" style="margin-top:6px;" onclick="limpiarFiltrosObservatorio()">🧹 Restablecer Filtros</button>
 
     <div style="margin-top:auto; padding-top:14px; font-size:11.5px; color:var(--muted); border-top:1px solid var(--border);">
-      🛡️ <b>Modo Consulta Oficial Protegida</b><br/>
-      La actualización de datos está protegida en el panel interno de Gerencia CEA.<br/>
+      🟢 <b>Observatorio Nacional de Seguridad Vial</b><br/>
       <span id="lblUltimaCarga">Cargando matriz ANSV...</span>
     </div>
   </aside>
@@ -749,9 +750,7 @@ HTML_OBSERVATORIO_STANDALONE = r"""<!DOCTYPE html>
         <h1>🚦 Observatorio Nacional de Seguridad Vial - Colombia</h1>
         <p>Datos oficiales consolidados (INMLCF / SIRDEC / ANSV) — 2021 a 2026</p>
       </div>
-      <div class="top-bar-links">
-        <a href="/" class="btn-back-cea">⬅️ Ir a Plataforma Central CEA</a>
-      </div>
+      <!-- __ADMIN_TOP_BUTTON__ -->
     </div>
 
     <!-- 4 KPIs -->
@@ -989,8 +988,95 @@ HTML_OBSERVATORIO_STANDALONE = r"""<!DOCTYPE html>
       `).join('');
     }
 
+    <!-- __ADMIN_JS_FUNCTIONS__ -->
     window.addEventListener('DOMContentLoaded', () => cargarDatosObservatorio(true));
   </script>
 </body>
 </html>
 """
+
+
+def renderizar_html_observatorio(es_admin: bool = False) -> str:
+    """
+    Si es_admin=False (Alumnos / Público general):
+      - No renderiza en el HTML ni el botón '⬅️ Ir a Plataforma Central CEA'
+        ni el bloque '⚙️ Gestión y Actualización de Datos', ni sus funciones JS.
+    Si es_admin=True (Administrador autenticado con sesión ADMIN_TOTAL):
+      - Muestra el botón '⬅️ Ir a Plataforma Central CEA' y el panel de actualización.
+    """
+    html = HTML_OBSERVATORIO_STANDALONE
+    if not es_admin:
+        return (
+            html.replace("<!-- __ADMIN_PANEL_SIDEBAR__ -->", "")
+            .replace("<!-- __ADMIN_TOP_BUTTON__ -->", "")
+            .replace("<!-- __ADMIN_JS_FUNCTIONS__ -->", "")
+        )
+
+    panel_admin = """
+    <hr class="st-hr" />
+    <details class="st-expander">
+      <summary>⚙️ Gestión y Actualización de Datos (Admin) <span>▾</span></summary>
+      <div class="st-expander-body">
+        <button type="button" class="st-btn" id="btnSyncAnsv" onclick="sincronizarAnsvAhora()">🔄 Sincronizar con ANSV ahora</button>
+        <div>
+          <label class="st-label">O cargar nuevo CSV manualmente:</label>
+          <input type="file" id="csvManualInput" accept=".csv" class="st-file" onchange="subirCsvManualAnsv(this)" />
+        </div>
+        <div id="syncStatusMsg" class="status-msg"></div>
+      </div>
+    </details>
+    """
+    btn_top = """
+      <div class="top-bar-links">
+        <a href="/" class="btn-back-cea">⬅️ Ir a Plataforma Central CEA</a>
+      </div>
+    """
+    js_admin = """
+    async function sincronizarAnsvAhora() {
+      const btn = document.getElementById('btnSyncAnsv');
+      const msg = document.getElementById('syncStatusMsg');
+      btn.disabled = true;
+      btn.textContent = '⏳ Descargando últimos datos oficiales...';
+      msg.className = 'status-msg ok';
+      msg.textContent = 'Conectando con portal de Datos Abiertos ANSV...';
+      try {
+        const res = await fetch('/api/observatorio/sync', { method: 'POST' });
+        const data = await res.json();
+        msg.className = data.ok ? 'status-msg ok' : 'status-msg err';
+        msg.textContent = data.message || 'Sincronización terminada.';
+        INICIALIZADO = false;
+        await cargarDatosObservatorio(true);
+      } catch (e) {
+        msg.className = 'status-msg err';
+        msg.textContent = 'Error al sincronizar: ' + e;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '🔄 Sincronizar con ANSV ahora';
+      }
+    }
+
+    async function subirCsvManualAnsv(inputEl) {
+      if (!inputEl.files || !inputEl.files.length) return;
+      const msg = document.getElementById('syncStatusMsg');
+      msg.className = 'status-msg ok';
+      msg.textContent = '⏳ Subiendo y procesando archivo CSV...';
+      const fd = new FormData();
+      fd.append('file', inputEl.files[0]);
+      try {
+        const res = await fetch('/api/observatorio/upload_csv', { method: 'POST', body: fd });
+        const data = await res.json();
+        msg.className = data.ok ? 'status-msg ok' : 'status-msg err';
+        msg.textContent = data.message || 'Archivo guardado.';
+        INICIALIZADO = false;
+        await cargarDatosObservatorio(true);
+      } catch (e) {
+        msg.className = 'status-msg err';
+        msg.textContent = 'Error cargando CSV: ' + e;
+      }
+    }
+    """
+    return (
+        html.replace("<!-- __ADMIN_PANEL_SIDEBAR__ -->", panel_admin)
+        .replace("<!-- __ADMIN_TOP_BUTTON__ -->", btn_top)
+        .replace("<!-- __ADMIN_JS_FUNCTIONS__ -->", js_admin)
+    )
