@@ -46,6 +46,7 @@ except Exception: pass
 import bot_agenda_cea
 import crm_whatsapp_cea
 import runt_control_cea
+import observatorio_vial_cea
 
 
 def _parse_multipart_binary(content_type: str, raw_body: bytes) -> Dict[str, Tuple[Optional[str], bytes]]:
@@ -396,6 +397,9 @@ HTML_LOGIN = r"""<!DOCTYPE html>
       </div>
       <button type="submit">🔒 Ingresar al Sistema</button>
     </form>
+    <div style="margin-top:12px;">
+      <a href="/observatorio" style="display:block; text-align:center; padding:10px 12px; border-radius:8px; background:rgba(16,185,129,0.14); border:1px solid #059669; color:#6ee7b7; text-decoration:none; font-size:13px; font-weight:700;">🚦 Abrir Observatorio Nacional de Seguridad Vial (2021–2026)</a>
+    </div>
     <div class="footer-note">
       🛡️ Información financiera confidencial protegida por sesión cifrada HMAC-SHA256.
     </div>
@@ -1219,6 +1223,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     </div>
     <div class="header-actions">
       <span id="userSessionBadge" class="badge badge-info" style="padding:7px 12px; font-size:12px;">👤 Cargando sesión...</span>
+      <a href="/observatorio" target="_blank" class="btn btn-outline" style="border-color:#10b981; color:#6ee7b7; background:rgba(16,185,129,0.12);" title="Abrir Observatorio Nacional de Seguridad Vial en Línea (2021-2026)">🚦 Observatorio Vial ANSV</a>
       <button type="button" class="btn btn-outline admin-only-btn" id="btnSheetsStatus" onclick="toggleSheetsDrawer()">🔑 Google Sheets</button>
       <button type="button" class="btn btn-outline admin-only-btn" id="btnTarifasTop" onclick="toggleTarifas()">⚙️ Tarifas por Categoría</button>
       <a href="/api/download/excel" class="btn btn-success cartera-only-btn" id="btnExcelTop">📊 Excel Cartera (.xlsx)</a>
@@ -6961,6 +6966,60 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
             self.wfile.write(raw)
             return
 
+        # =====================================================================
+        # SERVICIO EN LÍNEA 24/7: OBSERVATORIO NACIONAL DE SEGURIDAD VIAL (ANSV)
+        # =====================================================================
+        if self.path.startswith("/observatorio"):
+            raw = observatorio_vial_cea.HTML_OBSERVATORIO_STANDALONE.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+            return
+
+        if self.path.startswith("/api/observatorio/logo"):
+            rutas_logo = [
+                BASE_DIR / "fallecidos" / "fallecidos" / "LOGO PEQUEÑO.png",
+                BASE_DIR / "fallecidos" / "LOGO PEQUEÑO.png",
+                BASE_DIR / "LOGO PEQUEÑO.png",
+                BASE_DIR / "logo_autooriente.png",
+                BASE_DIR / "SUBIR_A_GITHUB" / "logo_autooriente.png",
+            ]
+            logo_bytes = b""
+            for rl in rutas_logo:
+                if rl.exists():
+                    logo_bytes = rl.read_bytes()
+                    break
+            if logo_bytes:
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(logo_bytes)))
+                self.end_headers()
+                self.wfile.write(logo_bytes)
+            else:
+                self.send_response(404)
+                self.end_headers()
+            return
+
+        if self.path.startswith("/api/observatorio/data"):
+            parsed = urllib.parse.urlparse(self.path)
+            qs = urllib.parse.parse_qs(parsed.query)
+            anio = (qs.get("anio", ["Todos"])[0] or "Todos").strip()
+            depto = (qs.get("departamento", ["Todos"])[0] or "Todos").strip()
+            muni = (qs.get("municipio", ["Todos"])[0] or "Todos").strip()
+            actor = (qs.get("actor_vial", ["Todos"])[0] or "Todos").strip()
+            sexo = (qs.get("sexo", ["Todos"])[0] or "Todos").strip()
+            res_obs = observatorio_vial_cea.observatorio_service.consultar(
+                anio=anio,
+                departamento=depto,
+                municipio=muni,
+                actor_vial=actor,
+                sexo=sexo,
+            )
+            self._send_json(res_obs)
+            return
+
         if not self._is_authenticated():
             if self.path.startswith("/api/"):
                 self._send_json({"ok": False, "error": "Sesión expirada o no autorizada."}, 401)
@@ -7329,6 +7388,30 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
             else:
                 time.sleep(0.6)
                 self._send_json({"ok": False, "error": "Usuario o contraseña incorrectos."}, 401)
+            return
+
+        if self.path == "/api/observatorio/sync":
+            ok_s, msg_s = observatorio_vial_cea.observatorio_service.sincronizar_con_ansv_ahora()
+            self._send_json({"ok": ok_s, "message": msg_s})
+            return
+
+        if self.path == "/api/observatorio/upload_csv":
+            try:
+                content_type = self.headers.get("Content-Type", "")
+                length = int(self.headers.get("Content-Length", "0"))
+                raw_body = self.rfile.read(length) if length > 0 else b""
+                parts = _parse_multipart_binary(content_type, raw_body)
+                if "file" not in parts:
+                    self._send_json({"ok": False, "message": "No se recibió el archivo CSV."}, 400)
+                    return
+                fn_csv, csv_bytes = parts["file"]
+                ok_u, msg_u = observatorio_vial_cea.observatorio_service.guardar_csv_manual(
+                    filename=fn_csv or "datos_ansv.csv",
+                    file_bytes=csv_bytes,
+                )
+                self._send_json({"ok": ok_u, "message": msg_u})
+            except Exception as exc:
+                self._send_json({"ok": False, "message": f"Error al guardar CSV: {exc}"}, 500)
             return
 
         if not self._is_authenticated():
