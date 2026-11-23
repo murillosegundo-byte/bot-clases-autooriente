@@ -944,6 +944,60 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     .btn-outline { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.18); }
     .btn-outline:hover { background: rgba(255,255,255,0.14); }
 
+    /* Menú Desplegable Compacto en el Header */
+    .header-menu-wrap { position: relative; display: inline-block; }
+    .header-dropdown {
+      display: none;
+      position: absolute;
+      right: 0;
+      top: calc(100% + 8px);
+      min-width: 280px;
+      background: #111a2e;
+      border: 1px solid #2b3d63;
+      border-radius: 12px;
+      padding: 8px;
+      box-shadow: 0 16px 40px rgba(0,0,0,0.65);
+      z-index: 999;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .header-dropdown.open { display: flex; }
+    .header-dropdown-section {
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      padding: 6px 10px 2px;
+    }
+    .header-dropdown-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      width: 100%;
+      padding: 9px 12px;
+      border-radius: 8px;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: #e2e8f0;
+      background: transparent;
+      border: none;
+      text-decoration: none;
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.14s;
+    }
+    .header-dropdown-item:hover {
+      background: rgba(59, 130, 246, 0.16);
+      color: #fff;
+    }
+    .header-dropdown-divider {
+      height: 1px;
+      background: #1e2d4a;
+      margin: 4px 0;
+    }
+
     .container { max-width: 1480px; margin: 22px auto; padding: 0 22px; }
 
     .control-bar {
@@ -1223,12 +1277,48 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     </div>
     <div class="header-actions">
       <span id="userSessionBadge" class="badge badge-info" style="padding:7px 12px; font-size:12px;">👤 Cargando sesión...</span>
-      <a href="/observatorio" target="_blank" class="btn btn-outline" style="border-color:#10b981; color:#6ee7b7; background:rgba(16,185,129,0.12);" title="Abrir Observatorio Nacional de Seguridad Vial en Línea (Modo Consulta)">🚦 Observatorio Vial ANSV</a>
-      <button type="button" class="btn btn-outline admin-only-btn" onclick="toggleAnsvAdminDrawer()" style="border-color:#f59e0b; color:#fde68a;" title="Administración Interna Segura del Observatorio Vial ANSV">⚙️ Admin Observatorio ANSV</button>
-      <button type="button" class="btn btn-outline admin-only-btn" id="btnSheetsStatus" onclick="toggleSheetsDrawer()">🔑 Google Sheets</button>
-      <button type="button" class="btn btn-outline admin-only-btn" id="btnTarifasTop" onclick="toggleTarifas()">⚙️ Tarifas por Categoría</button>
-      <a href="/api/download/excel" class="btn btn-success cartera-only-btn" id="btnExcelTop">📊 Excel Cartera (.xlsx)</a>
-      <a href="/api/download/pdf" class="btn btn-danger cartera-only-btn" id="btnPdfTop">📄 PDF Ejecutivo Cartera</a>
+
+      <!-- Menú Desplegable Único para mantener la barra superior limpia -->
+      <div class="header-menu-wrap" id="headerMenuWrap">
+        <button type="button" class="btn btn-primary" onclick="toggleHeaderDropdown(event)" style="background:linear-gradient(135deg, #2563eb, #1d4ed8); border-color:#60a5fa;">
+          <span>☰ Menú y Herramientas</span>
+          <span style="font-size:11px; opacity:0.85;">▾</span>
+        </button>
+        <div class="header-dropdown" id="headerDropdownMenu">
+          <div class="header-dropdown-section">🌐 Observatorio Seguridad Vial</div>
+          <a href="/observatorio" target="_blank" class="header-dropdown-item" onclick="cerrarHeaderDropdown()">
+            <span>🚦 Abrir Observatorio Vial ANSV</span>
+            <span class="badge badge-success">En línea</span>
+          </a>
+          <button type="button" class="header-dropdown-item admin-only-btn" onclick="cerrarHeaderDropdown(); toggleAnsvAdminDrawer();">
+            <span>⚙️ Actualizar Datos Observatorio ANSV</span>
+            <span class="badge badge-warning">Admin</span>
+          </button>
+
+          <div class="header-dropdown-divider cartera-only-btn"></div>
+          <div class="header-dropdown-section cartera-only-btn">📊 Reportes Ejecutivos Cartera</div>
+          <a href="/api/download/excel" class="header-dropdown-item cartera-only-btn" id="btnExcelTop" onclick="cerrarHeaderDropdown()">
+            <span>📗 Descargar Excel Cartera (.xlsx)</span>
+            <span class="badge badge-success">11 Hojas</span>
+          </a>
+          <a href="/api/download/pdf" class="header-dropdown-item cartera-only-btn" id="btnPdfTop" onclick="cerrarHeaderDropdown()">
+            <span>📄 Descargar PDF Ejecutivo Cartera</span>
+            <span class="badge badge-danger">PDF</span>
+          </a>
+
+          <div class="header-dropdown-divider admin-only-btn"></div>
+          <div class="header-dropdown-section admin-only-btn">🔧 Configuración del Sistema</div>
+          <button type="button" class="header-dropdown-item admin-only-btn" id="btnTarifasTop" onclick="cerrarHeaderDropdown(); toggleTarifas();">
+            <span>💲 Tarifas Base por Categoría</span>
+            <span class="badge badge-info">A1-C2</span>
+          </button>
+          <button type="button" class="header-dropdown-item admin-only-btn" id="btnSheetsStatus" onclick="cerrarHeaderDropdown(); toggleSheetsDrawer();">
+            <span>🔑 Conexión Google Sheets</span>
+            <span class="badge badge-success" id="menuSheetsBadge">Conectado</span>
+          </button>
+        </div>
+      </div>
+
       <a href="/logout" class="btn btn-outline" title="Cerrar sesión segura">🔒 Salir</a>
     </div>
   </header>
@@ -1238,7 +1328,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     <div id="ansvAdminDrawer" class="tarifas-drawer" style="border-color:#f59e0b; background:linear-gradient(135deg, rgba(245,158,11,0.12), rgba(15,23,42,0.96));">
       <div class="panel-title">
         <span>🛡️ Administración Interna Segura — Observatorio Nacional de Seguridad Vial (ANSV 2021–2026)</span>
-        <span class="badge badge-warning">Uso Exclusivo Gerencia • La vista pública /observatorio es 100% de solo consulta</span>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <span class="badge badge-warning">Uso Exclusivo Gerencia • La vista pública /observatorio es 100% de solo consulta</span>
+          <button type="button" class="btn btn-outline" style="padding:3px 9px; font-size:11.5px;" onclick="toggleAnsvAdminDrawer()">✖ Ocultar</button>
+        </div>
       </div>
       <p style="font-size:12.5px; color:#cbd5e1; margin-bottom:10px;">
         Desde aquí puedes actualizar la matriz del Observatorio Nacional de Seguridad Vial sin exponer botones de carga en la página pública (evitando inyección de datos externos):
@@ -1260,11 +1353,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       <div id="ansvInternalToast" class="status-toast"></div>
     </div>
 
-    <!-- Panel desplegable para conectar Google Sheets en vivo -->
+    <!-- Panel desplegable para conectar Google Sheets en vivo (Oculto automáticamente cuando ya está conectado) -->
     <div id="sheetsDrawer" class="tarifas-drawer">
       <div class="panel-title">
         <span>🔑 Conexión en Tiempo Real con Google Sheets del Bot (`1xouy9DMkp4oZffZVx9E1y2IwY5qxRi5u2yr3p5wpj6U`)</span>
-        <span id="sheetsStatusLabel" class="badge badge-info">Verificando conexión...</span>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <span id="sheetsStatusLabel" class="badge badge-info">Verificando conexión...</span>
+          <button type="button" class="btn btn-outline" style="padding:3px 9px; font-size:11.5px;" onclick="toggleSheetsDrawer()">✖ Ocultar</button>
+        </div>
       </div>
       <p style="font-size:12.5px; color:#cbd5e1; margin-bottom:10px;">
         El Dashboard y el Bot de Telegram comparten las mismas hojas de Google Sheets (<b>Alumnos</b>, <b>Instructores</b>, <b>Registro_Clases</b>, <b>Inasistencias</b>, <b>Mantenimientos</b>, <b>Vehiculos_PESV</b> y <b>Cierres_Jornada</b>). Si estás en Render y aún no has cargado <code>credentials.json</code>, súbelo o pégalo aquí con 1 clic:
@@ -3135,6 +3231,25 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       document.getElementById('tarifasDrawer').classList.toggle('open');
     }
 
+    function toggleHeaderDropdown(ev) {
+      if (ev) ev.stopPropagation();
+      const dd = document.getElementById('headerDropdownMenu');
+      if (dd) dd.classList.toggle('open');
+    }
+
+    function cerrarHeaderDropdown() {
+      const dd = document.getElementById('headerDropdownMenu');
+      if (dd) dd.classList.remove('open');
+    }
+
+    document.addEventListener('click', (ev) => {
+      const wrap = document.getElementById('headerMenuWrap');
+      const dd = document.getElementById('headerDropdownMenu');
+      if (dd && dd.classList.contains('open') && wrap && !wrap.contains(ev.target)) {
+        dd.classList.remove('open');
+      }
+    });
+
     function toggleAnsvAdminDrawer() {
       const dr = document.getElementById('ansvAdminDrawer');
       if (!dr) return;
@@ -4226,6 +4341,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         toast.textContent = (isOk ? '✅ ' : '❌ ') + msg;
         if (isOk) {
           await cargarBotOverview();
+          setTimeout(() => {
+            const dr = document.getElementById('sheetsDrawer');
+            if (dr) dr.classList.remove('open');
+          }, 900);
         }
       } catch (err) {
         toast.className = 'status-toast err';
@@ -4261,17 +4380,31 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         }
         BOT_DATA = data;
 
-        // Estado de Google Sheets en Header
-        const btnSheets = document.getElementById('btnSheetsStatus');
+        // Estado de Google Sheets en Menú Desplegable (y mantener oculto el cajón si ya cumplió su función de conectar)
         const lblSheets = document.getElementById('sheetsStatusLabel');
+        const menuBadge = document.getElementById('menuSheetsBadge');
+        const sheetsDr = document.getElementById('sheetsDrawer');
         if (data.sheets_conectado) {
-          btnSheets.innerHTML = '🟢 Sheets Conectado';
-          lblSheets.className = 'badge badge-success';
-          lblSheets.textContent = '🟢 Sincronizado en Vivo con Google Sheets';
+          if (menuBadge) {
+            menuBadge.className = 'badge badge-success';
+            menuBadge.textContent = '🟢 Conectado';
+          }
+          if (lblSheets) {
+            lblSheets.className = 'badge badge-success';
+            lblSheets.textContent = '🟢 Sincronizado en Vivo con Google Sheets';
+          }
+          if (sheetsDr) {
+            sheetsDr.classList.remove('open');
+          }
         } else {
-          btnSheets.innerHTML = '🟡 Conectar Google Sheets';
-          lblSheets.className = 'badge badge-warning';
-          lblSheets.textContent = '🟡 Modo Base Local / Semilla Histórica (Clic para conectar Google Sheets en vivo)';
+          if (menuBadge) {
+            menuBadge.className = 'badge badge-warning';
+            menuBadge.textContent = '🟡 Local';
+          }
+          if (lblSheets) {
+            lblSheets.className = 'badge badge-warning';
+            lblSheets.textContent = '🟡 Modo Base Local / Semilla Histórica (Clic para conectar Google Sheets en vivo)';
+          }
         }
 
         // Actualizar badges de la barra de módulos
@@ -6811,10 +6944,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
         // Ocultar botones administrativos sensibles si no es ADMIN_TOTAL
         document.querySelectorAll('.admin-only-btn').forEach(el => {
-          el.style.display = esAdminTotal ? 'inline-flex' : 'none';
+          const disp = el.classList.contains('header-dropdown-item') ? 'flex' : (el.classList.contains('header-dropdown-divider') || el.classList.contains('header-dropdown-section') ? 'block' : 'inline-flex');
+          el.style.display = esAdminTotal ? disp : 'none';
         });
         document.querySelectorAll('.cartera-only-btn').forEach(el => {
-          el.style.display = (esAdminTotal || modulosPermitidos.includes('mod_cartera')) ? 'inline-flex' : 'none';
+          const disp = el.classList.contains('header-dropdown-item') ? 'flex' : (el.classList.contains('header-dropdown-divider') || el.classList.contains('header-dropdown-section') ? 'block' : 'inline-flex');
+          el.style.display = (esAdminTotal || modulosPermitidos.includes('mod_cartera')) ? disp : 'none';
         });
 
         // Si el módulo activo actual no está permitido para este empleado, saltar al primero permitido
