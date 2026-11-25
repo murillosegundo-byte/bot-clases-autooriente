@@ -2159,10 +2159,163 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
                 </button>
               </div>
             </div>
-            <input type="search" id="searchRuntSheetInput" autocomplete="off" placeholder="🔎 Buscar alumno por nombre, cédula, categoría o estado..." oninput="renderizarTablaHojaRunt()" style="max-width:390px; flex:1;" />
+            <div class="header-menu-wrap" id="runtFiltrosWrap">
+              <button type="button" class="btn btn-outline" id="btnRuntFiltrosMenu" onclick="toggleRuntFiltrosMenu(event)" style="border-color:#38bdf8; color:#bae6fd; white-space:nowrap;">
+                <span>🎛️ Filtros</span>
+                <span class="badge badge-info" id="runtFiltrosCountBadge" style="display:none;">0</span>
+                <span style="font-size:11px; opacity:0.85;">▾</span>
+              </button>
+              <div class="header-dropdown" id="runtFiltrosDropdown" onclick="event.stopPropagation()" style="left:0; right:auto; width:min(580px, 92vw); max-height:76vh; overflow-y:auto; padding:14px; gap:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; border-bottom:1px solid #1e2d4a; padding-bottom:8px;">
+                  <span style="font-size:12.5px; font-weight:700; color:#e2e8f0;">🎛️ Filtros de Columnas RUNT</span>
+                  <div style="display:flex; gap:6px; align-items:center;">
+                    <button type="button" class="btn btn-outline" style="padding:3px 9px; font-size:11px;" onclick="limpiarFiltrosColumnasRunt()">🧹 Limpiar</button>
+                    <button type="button" class="btn btn-outline" style="padding:3px 8px; font-size:11px;" onclick="cerrarRuntFiltrosMenu()">✖</button>
+                  </div>
+                </div>
+
+                <!-- Accesos Rápidos (Cargue Ayer / Hoy + Tipo de Cargue) -->
+                <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+                  <span style="font-size:11px; color:#94a3b8; font-weight:700;">Rápidos:</span>
+                  <button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11px; border-color:#f59e0b; color:#fde68a;" onclick="aplicarFiltroRapidoRunt('CARGUE_AYER')">📅 Cargue Ayer</button>
+                  <button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11px; border-color:#10b981; color:#6ee7b7;" onclick="aplicarFiltroRapidoRunt('CARGUE_HOY')">📅 Cargue Hoy</button>
+                  <button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11px; border-color:#38bdf8; color:#bae6fd;" onclick="aplicarFiltroRapidoRunt('DIARIO_PRACTICA')">🚗 Práctica</button>
+                  <button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11px; border-color:#8b5cf6; color:#ddd6fe;" onclick="aplicarFiltroRapidoRunt('DIARIO_TEORIA')">📘 Teoría</button>
+                  <button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11px; border-color:#22d3ee; color:#a5f3fc;" onclick="aplicarFiltroRapidoRunt('DIARIO_TALLER')">🔧 Taller</button>
+                </div>
+
+                <!-- Grid Compacto de los 14 Filtros de Columnas -->
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); gap:9px;">
+                  <div>
+                    <label class="field-label">🏍️ Categoría</label>
+                    <select id="rf_categoria" onchange="aplicarFiltrosColumnasRunt()">
+                      <option value="">Todas las categorías</option>
+                      <option value="A1">A1 (Moto)</option>
+                      <option value="A2">A2 (Moto)</option>
+                      <option value="B1">B1 (Carro Particular)</option>
+                      <option value="C1">C1 (Servicio Público)</option>
+                      <option value="RECAT_C1">RECAT_C1</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label">🔥 Prioridad</label>
+                    <select id="rf_prioridad" onchange="aplicarFiltrosColumnasRunt()">
+                      <option value="">Todas las prioridades</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label">📅 Fecha Cargue</label>
+                    <div style="display:flex; gap:4px; align-items:center;">
+                      <input type="date" id="rf_fecha_cargue" onchange="aplicarFiltrosColumnasRunt()" style="flex:1; padding:6px 8px;" />
+                      <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px;" title="Ayer" onclick="setFechaCargueFiltroRunt(-1)">Ayer</button>
+                      <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px;" title="Hoy" onclick="setFechaCargueFiltroRunt(0)">Hoy</button>
+                      <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px;" title="Sin fecha de cargue" onclick="setFechaCargueFiltroRunt('SIN')">Sin</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label class="field-label">📌 Cargue Diario</label>
+                    <select id="rf_cargue_diario" onchange="aplicarFiltrosColumnasRunt()">
+                      <option value="">Todos</option>
+                      <option value="PRACTICA">🚗 PRACTICA</option>
+                      <option value="TEORIA">📘 TEORIA</option>
+                      <option value="TALLER">🔧 TALLER</option>
+                      <option value="COMPLETO">✅ COMPLETO</option>
+                      <option value="__SIN__">— Sin etiqueta —</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label">🚦 Vigente / Vencido</label>
+                    <select id="rf_vigencia" onchange="aplicarFiltrosColumnasRunt()">
+                      <option value="">Todos los estados</option>
+                      <option value="VIGENTE">✅ Vigente</option>
+                      <option value="POR_VENCER">⚠️ Por Vencer</option>
+                      <option value="VENCIDO">❌ Vencido</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label">⏳ Vence 90 Días (YYYY-MM o fecha)</label>
+                    <input type="text" id="rf_vence_90" placeholder="Ej: 2026-12 o 2026-12-15" oninput="aplicarFiltrosColumnasRunt()" />
+                  </div>
+                  <div>
+                    <label class="field-label">🗓️ Fecha Matrícula (YYYY-MM o fecha)</label>
+                    <input type="text" id="rf_fecha_mat" placeholder="Ej: 2026-11 o 2026-11-24" oninput="aplicarFiltrosColumnasRunt()" />
+                  </div>
+                  <div>
+                    <label class="field-label">🏛️ Fecha Registro RUNT (YYYY-MM o fecha)</label>
+                    <input type="text" id="rf_fecha_reg" placeholder="Ej: 2026-11 o 2026-11-24" oninput="aplicarFiltrosColumnasRunt()" />
+                  </div>
+                  <div>
+                    <label class="field-label">📘 Teoría</label>
+                    <select id="rf_teoria" onchange="aplicarFiltrosColumnasRunt()">
+                      <option value="">Todas</option>
+                      <option value="COMPLETA">✅ Completa (100%)</option>
+                      <option value="INCOMPLETA">⚠️ Incompleta (Faltan horas)</option>
+                      <option value="CERO">🔴 En 0h</option>
+                      <option value="CON_HORAS">🔵 Con horas (&gt; 0h)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label">🔧 Taller</label>
+                    <select id="rf_taller" onchange="aplicarFiltrosColumnasRunt()">
+                      <option value="">Todos</option>
+                      <option value="COMPLETO">✅ Completo (100%)</option>
+                      <option value="INCOMPLETO">⚠️ Incompleto (Faltan horas)</option>
+                      <option value="CERO">🔴 En 0h</option>
+                      <option value="CON_HORAS">🔵 Con horas (&gt; 0h)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label">🚗 Práctica</label>
+                    <select id="rf_practica" onchange="aplicarFiltrosColumnasRunt()">
+                      <option value="">Todas</option>
+                      <option value="COMPLETA">✅ Completa (100%)</option>
+                      <option value="INCOMPLETA">⚠️ Incompleta (Faltan horas)</option>
+                      <option value="CON_BOT">🤖 Con horas Bot por subir</option>
+                      <option value="CERO">🔴 En 0h</option>
+                      <option value="CON_HORAS">🔵 Con horas (&gt; 0h)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label">📊 Clases Cargadas</label>
+                    <select id="rf_clases_cargadas" onchange="aplicarFiltrosColumnasRunt()">
+                      <option value="">Todas</option>
+                      <option value="COMPLETO_100">✅ 100% Completas</option>
+                      <option value="PARCIAL">🟡 Parcial (1% a 99%)</option>
+                      <option value="CERO">🔴 Sin cargue (0h)</option>
+                      <option value="MIN_25">📈 25+ clases cargadas</option>
+                      <option value="MIN_40">📈 40+ clases cargadas</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label">👨‍🏫 Instructor</label>
+                    <select id="rf_instructor" onchange="aplicarFiltrosColumnasRunt()">
+                      <option value="">Todos los instructores</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label class="field-label">🕒 Hora Registro</label>
+                    <select id="rf_hora_reg" onchange="aplicarFiltrosColumnasRunt()">
+                      <option value="">Todas las horas</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; border-top:1px solid #1e2d4a; padding-top:10px;">
+                  <span id="runtFiltrosPreviewCount" style="font-size:12px; color:#93c5fd; font-weight:600;"></span>
+                  <div style="display:flex; gap:6px;">
+                    <button type="button" class="btn btn-outline" style="padding:6px 11px; font-size:12px;" onclick="limpiarFiltrosColumnasRunt()">🧹 Limpiar todo</button>
+                    <button type="button" class="btn btn-primary" style="padding:6px 14px; font-size:12px;" onclick="cerrarRuntFiltrosMenu()">✅ Listo</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <input type="search" id="searchRuntSheetInput" autocomplete="off" placeholder="🔎 Buscar alumno por nombre, cédula, categoría o estado..." oninput="renderizarTablaHojaRunt()" style="max-width:340px; flex:1;" />
           </div>
           <span id="runtSheetCountInfo" style="font-size:12.5px; color:var(--muted);">Haz clic en <b>✏️</b> para editar o en <b>✅</b> para marcar cargado</span>
         </div>
+
+        <!-- Barra de chips de filtros activos (oculto cuando no hay filtros aplicados) -->
+        <div id="runtActiveFiltersBar" style="display:none; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px;"></div>
 
         <div class="table-wrap">
           <table>
@@ -3347,7 +3500,222 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       if (rvDd && rvDd.classList.contains('open') && rvWrap && !rvWrap.contains(ev.target)) {
         rvDd.classList.remove('open');
       }
+      const rfWrap = document.getElementById('runtFiltrosWrap');
+      const rfDd = document.getElementById('runtFiltrosDropdown');
+      if (rfDd && rfDd.classList.contains('open') && rfWrap && !rfWrap.contains(ev.target)) {
+        rfDd.classList.remove('open');
+      }
     });
+
+    let RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+
+    function toggleRuntFiltrosMenu(ev) {
+      if (ev) ev.stopPropagation();
+      cerrarRuntVistasMenu();
+      cerrarRuntDropdown();
+      const dd = document.getElementById('runtFiltrosDropdown');
+      if (dd) dd.classList.toggle('open');
+    }
+
+    function cerrarRuntFiltrosMenu() {
+      const dd = document.getElementById('runtFiltrosDropdown');
+      if (dd) dd.classList.remove('open');
+    }
+
+    function obtenerIsoFechaOffsetRunt(offsetDias = 0) {
+      const d = new Date();
+      d.setDate(d.getDate() + Number(offsetDias || 0));
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
+    function setFechaCargueFiltroRunt(modo) {
+      const el = document.getElementById('rf_fecha_cargue');
+      if (modo === 'SIN') {
+        RUNT_FILTRO_SIN_FECHA_CARGUE = true;
+        if (el) el.value = '';
+      } else {
+        RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+        if (el) el.value = obtenerIsoFechaOffsetRunt(modo);
+      }
+      aplicarFiltrosColumnasRunt();
+    }
+
+    function aplicarFiltroRapidoRunt(modo) {
+      const elFecha = document.getElementById('rf_fecha_cargue');
+      const elDiario = document.getElementById('rf_cargue_diario');
+      if (modo === 'CARGUE_AYER') {
+        RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+        if (elFecha) elFecha.value = obtenerIsoFechaOffsetRunt(-1);
+        ACTIVE_RUNT_TAB = 'TODOS_PRACTICA';
+        actualizarBotonVistaRunt();
+      } else if (modo === 'CARGUE_HOY') {
+        RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+        if (elFecha) elFecha.value = obtenerIsoFechaOffsetRunt(0);
+        ACTIVE_RUNT_TAB = 'TODOS_PRACTICA';
+        actualizarBotonVistaRunt();
+      } else if (modo === 'DIARIO_PRACTICA') {
+        if (elDiario) elDiario.value = 'PRACTICA';
+      } else if (modo === 'DIARIO_TEORIA') {
+        if (elDiario) elDiario.value = 'TEORIA';
+      } else if (modo === 'DIARIO_TALLER') {
+        if (elDiario) elDiario.value = 'TALLER';
+      }
+      aplicarFiltrosColumnasRunt();
+    }
+
+    function poblarOpcionesFiltrosRunt() {
+      const rows = (RUNT_SHEET_DATA && RUNT_SHEET_DATA.practica) ? RUNT_SHEET_DATA.practica : [];
+      const fillSel = (id, defaultLabel, values, addSinLabel) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const prev = el.value;
+        const uniq = [...new Set(values.map(v => String(v || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+        let html = `<option value="">${defaultLabel}</option>`;
+        uniq.forEach(v => {
+          const safe = v.replace(/"/g, '&quot;');
+          html += `<option value="${safe}">${v}</option>`;
+        });
+        if (addSinLabel) html += `<option value="__SIN__">${addSinLabel}</option>`;
+        el.innerHTML = html;
+        if (prev && Array.from(el.options).some(o => o.value === prev)) el.value = prev;
+      };
+      fillSel('rf_prioridad', 'Todas las prioridades', rows.map(r => r.prioridad), '— Sin prioridad —');
+      fillSel('rf_instructor', 'Todos los instructores', rows.map(r => r.instructor), '— Sin instructor —');
+      fillSel('rf_hora_reg', 'Todas las horas', rows.map(r => r.hora_registro), '— Sin hora —');
+
+      const diarioEl = document.getElementById('rf_cargue_diario');
+      if (diarioEl) {
+        const prevD = diarioEl.value;
+        const extras = [...new Set(rows.map(r => String(r.cargue_diario || '').trim().toUpperCase()).filter(v => v && !['PRACTICA', 'TEORIA', 'TALLER', 'COMPLETO'].includes(v)))].sort();
+        let html = `
+          <option value="">Todos</option>
+          <option value="PRACTICA">🚗 PRACTICA</option>
+          <option value="TEORIA">📘 TEORIA</option>
+          <option value="TALLER">🔧 TALLER</option>
+          <option value="COMPLETO">✅ COMPLETO</option>
+        `;
+        extras.forEach(v => {
+          const safe = v.replace(/"/g, '&quot;');
+          html += `<option value="${safe}">${v}</option>`;
+        });
+        html += `<option value="__SIN__">— Sin etiqueta —</option>`;
+        diarioEl.innerHTML = html;
+        if (prevD && Array.from(diarioEl.options).some(o => o.value === prevD)) diarioEl.value = prevD;
+      }
+    }
+
+    function obtenerFiltrosColumnasRunt() {
+      const val = (id) => ((document.getElementById(id) || {}).value || '').trim();
+      const fc = val('rf_fecha_cargue');
+      if (fc) RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+      return {
+        categoria: val('rf_categoria'),
+        prioridad: val('rf_prioridad'),
+        fecha_mat: val('rf_fecha_mat'),
+        vence_90: val('rf_vence_90'),
+        fecha_reg: val('rf_fecha_reg'),
+        vigencia: val('rf_vigencia'),
+        teoria: val('rf_teoria'),
+        taller: val('rf_taller'),
+        practica: val('rf_practica'),
+        clases_cargadas: val('rf_clases_cargadas'),
+        instructor: val('rf_instructor'),
+        hora_reg: val('rf_hora_reg'),
+        fecha_cargue: RUNT_FILTRO_SIN_FECHA_CARGUE ? '__SIN__' : fc,
+        cargue_diario: val('rf_cargue_diario'),
+      };
+    }
+
+    function limpiarFiltrosColumnasRunt(soloCampo = null) {
+      const mapIds = {
+        categoria: 'rf_categoria',
+        prioridad: 'rf_prioridad',
+        fecha_mat: 'rf_fecha_mat',
+        vence_90: 'rf_vence_90',
+        fecha_reg: 'rf_fecha_reg',
+        vigencia: 'rf_vigencia',
+        teoria: 'rf_teoria',
+        taller: 'rf_taller',
+        practica: 'rf_practica',
+        clases_cargadas: 'rf_clases_cargadas',
+        instructor: 'rf_instructor',
+        hora_reg: 'rf_hora_reg',
+        fecha_cargue: 'rf_fecha_cargue',
+        cargue_diario: 'rf_cargue_diario',
+      };
+      if (soloCampo && mapIds[soloCampo]) {
+        const el = document.getElementById(mapIds[soloCampo]);
+        if (el) el.value = '';
+        if (soloCampo === 'fecha_cargue') RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+      } else {
+        Object.values(mapIds).forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.value = '';
+        });
+        RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+      }
+      renderizarTablaHojaRunt();
+    }
+
+    function aplicarFiltrosColumnasRunt() {
+      const fcEl = document.getElementById('rf_fecha_cargue');
+      if (fcEl && fcEl.value) RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+      renderizarTablaHojaRunt();
+    }
+
+    function renderizarChipsFiltrosRunt(totalMostrados) {
+      const f = obtenerFiltrosColumnasRunt();
+      const etiquetas = {
+        categoria: 'Cat.',
+        prioridad: 'Prioridad',
+        fecha_mat: 'Matrícula',
+        vence_90: 'Vence 90d',
+        fecha_reg: 'Reg. RUNT',
+        vigencia: 'Vigencia',
+        teoria: 'Teoría',
+        taller: 'Taller',
+        practica: 'Práctica',
+        clases_cargadas: 'Cargadas',
+        instructor: 'Instructor',
+        hora_reg: 'Hora Reg.',
+        fecha_cargue: 'Fecha Cargue',
+        cargue_diario: 'Cargue Diario',
+      };
+      const activos = Object.entries(f).filter(([, v]) => Boolean(v));
+      const cntBadge = document.getElementById('runtFiltrosCountBadge');
+      const btnMenu = document.getElementById('btnRuntFiltrosMenu');
+      if (cntBadge) {
+        cntBadge.textContent = activos.length;
+        cntBadge.style.display = activos.length > 0 ? 'inline-block' : 'none';
+      }
+      if (btnMenu) {
+        btnMenu.style.background = activos.length > 0 ? 'rgba(56, 189, 248, 0.22)' : '';
+      }
+      const prevEl = document.getElementById('runtFiltrosPreviewCount');
+      if (prevEl) {
+        prevEl.textContent = `Mostrando ${totalMostrados} alumno(s)`;
+      }
+      const bar = document.getElementById('runtActiveFiltersBar');
+      if (!bar) return;
+      if (!activos.length) {
+        bar.style.display = 'none';
+        bar.innerHTML = '';
+        return;
+      }
+      bar.style.display = 'flex';
+      const chips = activos.map(([k, v]) => {
+        const prettyV = v === '__SIN__' ? 'Sin dato' : v;
+        return `<span class="badge badge-info" style="display:inline-flex; align-items:center; gap:5px; padding:4px 9px; font-size:11.5px;">
+          <span><b>${etiquetas[k] || k}:</b> ${prettyV}</span>
+          <button type="button" onclick="limpiarFiltrosColumnasRunt('${k}')" style="background:none; border:none; color:#fff; cursor:pointer; font-weight:800; padding:0 2px; line-height:1;">✖</button>
+        </span>`;
+      });
+      chips.push(`<button type="button" class="btn btn-outline" style="padding:3px 9px; font-size:11px;" onclick="limpiarFiltrosColumnasRunt()">🧹 Limpiar filtros</button>`);
+      bar.innerHTML = chips.join('');
+    }
 
     function toggleRuntVistasMenu(ev) {
       if (ev) ev.stopPropagation();
@@ -4753,6 +5121,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         setCnt('cnt_rn_norunt', k.no_runt_pendientes || 0);
         setCnt('cnt_rn_horarios', k.total_inicio_practica || 0);
         setCnt('cnt_rn_codigos', k.total_codigos_runt || 0);
+        poblarOpcionesFiltrosRunt();
         actualizarBotonVistaRunt();
 
         const kpiEl = document.getElementById('kpiRuntSheetGrid');
@@ -5132,6 +5501,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     function obtenerFilasFiltradasPracticaRunt() {
       if (!RUNT_SHEET_DATA || !RUNT_SHEET_DATA.practica) return [];
       const q = obtenerBusquedaLimpia('searchRuntSheetInput');
+      const f = obtenerFiltrosColumnasRunt();
       let listP = RUNT_SHEET_DATA.practica || [];
       listP = listP.filter(r => {
         const esCarg = r.estado_runt === 'CARGADO RUNT';
@@ -5144,8 +5514,77 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         if (ACTIVE_RUNT_TAB === 'CARGADOS_PRACTICA' && !esCarg) return false;
         if (ACTIVE_RUNT_TAB === 'DESFASE_BOT' && (esCarg || (r.pendiente_subir_bot || 0) <= 0)) return false;
         if (ACTIVE_RUNT_TAB === 'POR_VENCER_90' && (esCarg || !['POR_VENCER', 'VENCIDO'].includes(r.semaforo_90))) return false;
+
+        // Filtros avanzados de las 14 columnas RUNT
+        if (f.categoria && String(r.categoria || '').toUpperCase() !== f.categoria.toUpperCase()) return false;
+        if (f.prioridad) {
+          const prVal = String(r.prioridad || '').trim();
+          if (f.prioridad === '__SIN__' ? prVal !== '' : prVal.toLowerCase() !== f.prioridad.toLowerCase()) return false;
+        }
+        if (f.fecha_mat && !String(r.fecha_matricula || '').toLowerCase().includes(f.fecha_mat.toLowerCase())) return false;
+        if (f.vence_90 && !String(r.vence_90_dias || '').toLowerCase().includes(f.vence_90.toLowerCase())) return false;
+        if (f.fecha_reg && !String(r.fecha_registro_runt || '').toLowerCase().includes(f.fecha_reg.toLowerCase())) return false;
+        if (f.vigencia) {
+          const sem = String(r.semaforo_90 || 'VIGENTE').toUpperCase();
+          if (f.vigencia === 'VIGENTE' && (sem === 'VENCIDO' || sem === 'POR_VENCER')) return false;
+          if (f.vigencia === 'POR_VENCER' && sem !== 'POR_VENCER') return false;
+          if (f.vigencia === 'VENCIDO' && sem !== 'VENCIDO') return false;
+        }
+        if (f.teoria) {
+          const t = Number(r.teoria || 0), mt = Number(r.meta_teoria || 0);
+          if (f.teoria === 'COMPLETA' && t < mt) return false;
+          if (f.teoria === 'INCOMPLETA' && t >= mt) return false;
+          if (f.teoria === 'CERO' && t !== 0) return false;
+          if (f.teoria === 'CON_HORAS' && t <= 0) return false;
+        }
+        if (f.taller) {
+          const tl = Number(r.taller || 0), mtl = Number(r.meta_taller || 0);
+          if (f.taller === 'COMPLETO' && tl < mtl) return false;
+          if (f.taller === 'INCOMPLETO' && tl >= mtl) return false;
+          if (f.taller === 'CERO' && tl !== 0) return false;
+          if (f.taller === 'CON_HORAS' && tl <= 0) return false;
+        }
+        if (f.practica) {
+          const p = Number(r.practica || 0), mp = Number(r.meta_practica || 0);
+          if (f.practica === 'COMPLETA' && p < mp) return false;
+          if (f.practica === 'INCOMPLETA' && p >= mp) return false;
+          if (f.practica === 'CON_BOT' && Number(r.pendiente_subir_bot || 0) <= 0) return false;
+          if (f.practica === 'CERO' && p !== 0) return false;
+          if (f.practica === 'CON_HORAS' && p <= 0) return false;
+        }
+        if (f.clases_cargadas) {
+          const cc = Number(r.clases_cargadas || 0), mtot = Number(r.meta_total || 1);
+          if (f.clases_cargadas === 'COMPLETO_100' && cc < mtot) return false;
+          if (f.clases_cargadas === 'PARCIAL' && (cc <= 0 || cc >= mtot)) return false;
+          if (f.clases_cargadas === 'CERO' && cc !== 0) return false;
+          if (f.clases_cargadas === 'MIN_25' && cc < 25) return false;
+          if (f.clases_cargadas === 'MIN_40' && cc < 40) return false;
+        }
+        if (f.instructor) {
+          const insVal = String(r.instructor || '').trim();
+          if (f.instructor === '__SIN__' ? insVal !== '' : insVal.toLowerCase() !== f.instructor.toLowerCase()) return false;
+        }
+        if (f.hora_reg) {
+          const hrVal = String(r.hora_registro || '').trim();
+          if (f.hora_reg === '__SIN__' ? hrVal !== '' : hrVal.toLowerCase() !== f.hora_reg.toLowerCase()) return false;
+        }
+        if (f.fecha_cargue) {
+          const fcVal = String(r.fecha_cargue || '').trim();
+          if (f.fecha_cargue === '__SIN__' ? fcVal !== '' : !fcVal.includes(f.fecha_cargue)) return false;
+        }
+        if (f.cargue_diario) {
+          const cdVal = String(r.cargue_diario || '').trim().toUpperCase();
+          if (f.cargue_diario === '__SIN__') {
+            if (cdVal !== '') return false;
+          } else if (['PRACTICA', 'TEORIA', 'TALLER', 'COMPLETO'].includes(f.cargue_diario)) {
+            if (!cdVal.includes(f.cargue_diario)) return false;
+          } else if (cdVal !== f.cargue_diario.toUpperCase()) {
+            return false;
+          }
+        }
+
         if (!q) return true;
-        return `${r.nombre} ${r.cedula} ${r.categoria} ${r.prioridad} ${r.estado_runt} ${r.cargue_diario} ${r.vigente_texto} ${r.etiqueta_prioridad_op || ''}`.toLowerCase().includes(q);
+        return `${r.nombre} ${r.cedula} ${r.categoria} ${r.prioridad} ${r.estado_runt} ${r.cargue_diario} ${r.vigente_texto} ${r.etiqueta_prioridad_op || ''} ${r.instructor || ''} ${r.hora_registro || ''} ${r.fecha_matricula || ''} ${r.vence_90_dias || ''} ${r.fecha_registro_runt || ''} ${r.fecha_cargue || ''}`.toLowerCase().includes(q);
       });
       // Ordenar por Prioridad de Certificación (1. Terminó práctica sin cargue -> 2. En Práctica -> 3. Por vencer -> 4. Teoría/Taller)
       listP = [...listP].sort((a, b) => {
@@ -5332,6 +5771,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
       // Pestaña principal 'Practica' (ordenada por Prioridad Operativa de Certificación y con filtros masivos Teoría/Taller)
       const listP = obtenerFilasFiltradasPracticaRunt();
+      renderizarChipsFiltrosRunt(listP.length);
 
       const titulosTabRunt = {
         'PENDIENTES_PRACTICA': '📋 Todos los Pendientes RUNT (Ordenados por Prioridad: 1° Terminaron Práctica → 2° En Práctica → 3° Por Vencer → 4° Teoría/Taller)',
@@ -5420,7 +5860,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <td><code>${r.cedula}</code></td>
           <td><span class="badge badge-info">${r.categoria_raw || r.categoria}</span></td>
           <td>${badgePrioridad}</td>
-          <td>${r.fecha_matricula || '-'}</td>
+          <td>
+            ${r.fecha_matricula || '-'}
+            ${r.fecha_registro_runt ? `<div style="font-size:10px; color:#94a3b8;" title="Fecha registro RUNT">RUNT: ${r.fecha_registro_runt}</div>` : ''}
+          </td>
           <td style="color:#fde047; font-weight:600;">${r.vence_90_dias || '-'}</td>
           <td>${badgeVig}</td>
           <td style="text-align:center;">
@@ -5441,6 +5884,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <td>
             ${r.fecha_cargue ? `<span style="font-size:11px; color:#fde047; font-weight:600;">📅 ${r.fecha_cargue}</span>` : '<span style="font-size:11px; color:var(--muted);">-</span>'}
             ${r.cargue_diario ? `<div><span class="badge badge-info" style="font-size:10px;">${r.cargue_diario}</span></div>` : ''}
+            ${(r.instructor || r.hora_registro) ? `<div style="font-size:10px; color:#94a3b8;" title="Instructor / Hora registro">${[r.instructor, r.hora_registro].filter(Boolean).join(' • ')}</div>` : ''}
           </td>
           <td>
             <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
