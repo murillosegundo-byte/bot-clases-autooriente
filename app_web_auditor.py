@@ -1201,32 +1201,37 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     .status-toast.ok { display: block; background: rgba(16,185,129,0.15); border: 1px solid #059669; color: #6ee7b7; }
     .status-toast.err { display: block; background: rgba(239,68,68,0.15); border: 1px solid #dc2626; color: #fca5a5; }
 
-    /* Barra de Navegación Maestra de 5 Módulos */
+    /* Barra de Navegación Maestra de Módulos */
     .mod-nav {
       display: flex;
       flex-wrap: wrap;
-      gap: 10px;
+      gap: 8px;
       margin-bottom: 18px;
       background: #0f172a;
       border: 1px solid #2b3d63;
-      padding: 10px;
+      padding: 8px;
       border-radius: 14px;
     }
     .mod-btn {
-      flex: 1 1 200px;
+      flex: 1 1 175px;
       background: #162238;
       color: #cbd5e1;
       border: 1px solid #2b3d63;
-      padding: 11px 14px;
+      padding: 10px 14px;
       border-radius: 10px;
       font-size: 13px;
       font-weight: 700;
       cursor: pointer;
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      gap: 8px;
+      justify-content: center;
+      text-align: center;
+      gap: 6px;
+      line-height: 1.3;
       transition: all 0.15s;
+    }
+    .mod-btn .badge {
+      display: none !important;
     }
     .mod-btn:hover { background: #223556; color: #fff; }
     .mod-btn.active {
@@ -1271,8 +1276,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     <div class="brand">
       <div class="brand-badge">CEA</div>
       <div>
-        <h1>Plataforma Central CEA Auto Oriente — Cartera + Bot de Clases + PESV</h1>
-        <p id="headerMeta">CEA Auto Oriente • Cargando motor de consolidación por Cédula y sincronización con Google Sheets...</p>
+        <h1>CEA Auto Oriente</h1>
+        <p id="headerMeta" style="font-size:12px; color:#94a3b8;">Gestión Integral • 2026</p>
       </div>
     </div>
     <div class="header-actions">
@@ -1381,43 +1386,43 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       <div id="sheetsToast" class="status-toast"></div>
     </div>
 
-    <!-- Barra de Navegación de los 5 Módulos Integrados -->
+    <!-- Barra de Navegación Maestra de Módulos (Limpia, sin badges recargados) -->
     <div class="mod-nav">
       <button type="button" class="mod-btn active" data-mod="mod_cartera" onclick="cambiarModulo('mod_cartera', this)">
         <span>💰 1. Auditoría de Cartera y Convenios</span>
-        <span class="badge" id="nav_badge_cartera">Multi-Curso</span>
+        <span class="badge" id="nav_badge_cartera" style="display:none;"></span>
       </button>
       <button type="button" class="mod-btn" data-mod="mod_clases" onclick="cambiarModulo('mod_clases', this)">
         <span>🎓 2. Seguimiento Clases y Alumnos</span>
-        <span class="badge badge-info" id="nav_badge_clases">F-59 a F-62</span>
+        <span class="badge badge-info" id="nav_badge_clases" style="display:none;"></span>
       </button>
       <button type="button" class="mod-btn" data-mod="mod_nomina" onclick="cambiarModulo('mod_nomina', this)">
         <span>👨‍🏫 3. Nómina y Horarios Instructores</span>
-        <span class="badge badge-purple" id="nav_badge_nomina">Liquidación</span>
+        <span class="badge badge-purple" id="nav_badge_nomina" style="display:none;"></span>
       </button>
       <button type="button" class="mod-btn" data-mod="mod_inasistencias" onclick="cambiarModulo('mod_inasistencias', this)">
         <span>🚫 4. Control de Inasistencias</span>
-        <span class="badge badge-warning" id="nav_badge_inas">153+</span>
+        <span class="badge badge-warning" id="nav_badge_inas" style="display:none;"></span>
       </button>
       <button type="button" class="mod-btn" data-mod="mod_pesv" onclick="cambiarModulo('mod_pesv', this)">
         <span>🔧 5. Mantenimientos y Flota PESV</span>
-        <span class="badge badge-success" id="nav_badge_pesv">SISI-F2-08</span>
+        <span class="badge badge-success" id="nav_badge_pesv" style="display:none;"></span>
       </button>
       <button type="button" class="mod-btn" data-mod="mod_robot" onclick="cambiarModulo('mod_robot', this)">
         <span>🤖 6. Robot Gestor y Despacho</span>
-        <span class="badge badge-info" id="nav_badge_robot">TG + WhatsApp</span>
+        <span class="badge badge-info" id="nav_badge_robot" style="display:none;"></span>
       </button>
       <button type="button" class="mod-btn" data-mod="mod_agenda" onclick="cambiarModulo('mod_agenda', this)">
         <span>📅 7. Agenda + Bot + Baúl</span>
-        <span class="badge badge-purple" id="nav_badge_agenda">Calendar + TG</span>
+        <span class="badge badge-purple" id="nav_badge_agenda" style="display:none;"></span>
       </button>
       <button type="button" class="mod-btn" data-mod="mod_whatsapp" onclick="cambiarModulo('mod_whatsapp', this)">
         <span>💬 8. WhatsApp IA & Remarketing</span>
-        <span class="badge badge-warning" id="nav_badge_wa">Embudo IA</span>
+        <span class="badge badge-warning" id="nav_badge_wa" style="display:none;"></span>
       </button>
       <button type="button" class="mod-btn" data-mod="mod_empleados" id="btnNavEmpleados" onclick="cambiarModulo('mod_empleados', this)">
         <span>👥 9. Recepcionistas y Empleados</span>
-        <span class="badge badge-info" id="nav_badge_emp">Permisos 1-5</span>
+        <span class="badge badge-info" id="nav_badge_emp" style="display:none;"></span>
       </button>
     </div>
 
@@ -1445,7 +1450,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     <div class="control-bar">
       <div class="panel">
         <div class="panel-title">
-          <span>🗄️ 1. Base de Datos Histórica Permanente: Incorporar Archivo de Modificaciones o Nuevas Ventas sin Perder Años Anteriores</span>
+          <span>🗄️ 1. Cargar / Actualizar Base de Datos</span>
           <span id="currentFileBadge" class="badge badge-info">matriculas23112026.xlsx</span>
         </div>
         <form id="uploadForm">
@@ -1561,16 +1566,23 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       <div id="manualMatriculaToast" class="status-toast"></div>
     </div>
 
-    <!-- Panel Comparativo Multianual: Claridad de Ventas, Ingresos y Cartera Pendiente por Año (2024, 2025, 2026 y Total) -->
-    <div class="panel" style="margin-bottom:18px; border-color:#3b82f6; background:linear-gradient(180deg, rgba(30,58,138,0.20), rgba(19,29,49,0.96));">
-      <div class="panel-title" style="flex-wrap:wrap; gap:10px;">
+    <!-- Panel de Período Activo (Por defecto solo 2026; el histórico comparativo queda oculto en un desplegable) -->
+    <div class="panel" style="margin-bottom:16px; padding:12px 18px; border-color:#2b3d63; background:linear-gradient(180deg, rgba(30,58,138,0.16), rgba(19,29,49,0.96));">
+      <div class="panel-title" style="flex-wrap:wrap; gap:10px; margin-bottom:0;">
         <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-          <span>📅 Histórico Financiero por Años (Ventas Facturadas, Ingresos Recaudados y Cartera Pendiente que Quedó por Año)</span>
-          <span class="badge badge-info" id="badgeAnioActivo">Viendo: Histórico Completo (Todos los Años)</span>
+          <span>📅 Período Financiero</span>
+          <span class="badge badge-success" id="badgeAnioActivo" style="font-size:12px; padding:4px 10px;">Año 2026</span>
         </div>
-        <div style="display:flex; gap:6px; flex-wrap:wrap;" id="botonesFiltroAnioTop"></div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button type="button" class="btn btn-outline" id="btnToggleHistoricoAnios" style="padding:5px 12px; font-size:12px;" onclick="togglePanelHistoricoAnios()">
+            📂 Ver Histórico (Otros Años) ▾
+          </button>
+        </div>
       </div>
-      <div class="kpi-grid" id="anualCardsGrid" style="margin-bottom:0; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));"></div>
+      <div id="historicoAniosBody" style="display:none; margin-top:14px; padding-top:12px; border-top:1px solid #1e2d4a;">
+        <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;" id="botonesFiltroAnioTop"></div>
+        <div class="kpi-grid" id="anualCardsGrid" style="margin-bottom:0; grid-template-columns: repeat(auto-fit, minmax(245px, 1fr));"></div>
+      </div>
     </div>
 
     <!-- Tarjetas de KPIs Ejecutivos -->
@@ -1654,10 +1666,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; flex:1;">
           <input type="search" id="searchInput" autocomplete="off" placeholder="🔎 Buscar en vivo por cédula, nombre, matrícula, año, categoría o convenio..." oninput="renderizarTablaActiva()" style="max-width: 350px; flex:1;" />
           <select id="filterAnioCarteraSelect" onchange="cambiarFiltroAnioGlobal(this.value)" style="width:auto; min-width:175px; font-weight:700; border-color:#10b981; color:#6ee7b7;">
-            <option value="TODOS" selected>📅 Año: Todos (Histórico 2024-2026)</option>
-            <option value="2026">📅 Solo Año 2026 (Año en Curso)</option>
+            <option value="2026" selected>📅 Año 2026 (Actual)</option>
             <option value="2025">📅 Solo Año 2025</option>
             <option value="2024">📅 Solo Año 2024</option>
+            <option value="TODOS">🗄️ Todos los Años (Histórico)</option>
           </select>
           <select id="sortCarteraSelect" onchange="renderizarTablaActiva()" style="width:auto; min-width:225px; font-weight:600; border-color:#3b82f6;">
             <option value="RECIENTES" selected>📅 Orden: Más Recientes a Más Antiguos</option>
@@ -1871,95 +1883,139 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </div>
 
       <!-- =================================================================== -->
-      <!-- PANEL INTEGRADO: HOJA DE CÁLCULO CONTROL DIGITAL RUNT               -->
+      <!-- PANEL INTEGRADO: CONTROL DIGITAL RUNT (DISEÑO LIMPIO CON MENÚS)     -->
       <!-- ID: 1XHbqfDa7dK5CWcgWKNgJZiXN_OSrjJCEJJu8F4z-u2M                    -->
       <!-- =================================================================== -->
-      <div class="panel" style="margin-top:18px; border-color:#3b82f6; background:linear-gradient(180deg, rgba(30,58,138,0.18), rgba(15,23,42,0.96));">
-        <div class="panel-title">
+      <div class="panel" style="margin-top:18px; border-color:#2b3d63; background:linear-gradient(180deg, rgba(30,58,138,0.14), rgba(15,23,42,0.96));">
+        <div class="panel-title" style="flex-wrap:wrap; gap:10px;">
           <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
-            <span>🏛️ Hoja de Cálculo Integrada: Control Digital de Reporte de Clases en Plataforma RUNT</span>
-            <span class="badge badge-info" id="runtSheetStatusBadge">ID: 1XHbqfDa7dK5CWcgWKNgJZiXN_OSrjJCEJJu8F4z-u2M</span>
+            <span>🏛️ Control Digital RUNT</span>
+            <span class="badge badge-info" id="runtSheetStatusBadge" title="Hoja Google Sheets: 1XHbqfDa7dK5CWcgWKNgJZiXN_OSrjJCEJJu8F4z-u2M">Conectando...</span>
           </div>
-          <div style="display:flex; gap:8px; flex-wrap:wrap;">
-            <button type="button" class="btn btn-primary" onclick="sincronizarHorasBotHaciaHojaRunt()" title="Toma las horas prácticas dictadas por los instructores en el Bot y actualiza la columna Practica de esta hoja">🔄 Pasar Horas Prácticas del Bot a Hoja RUNT</button>
-            <button type="button" class="btn btn-outline" onclick="cargarPanoramaRuntDigital(true)">🔃 Recargar Hoja RUNT</button>
-            <a id="runtSheetExternalLink" href="https://docs.google.com/spreadsheets/d/1XHbqfDa7dK5CWcgWKNgJZiXN_OSrjJCEJJu8F4z-u2M/edit" target="_blank" class="btn btn-outline">↗️ Abrir en Google Sheets</a>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <button type="button" class="btn btn-primary" style="padding:7px 12px; font-size:12.5px;" onclick="toggleRuntDrawer('individual')">➕ Registrar / Editar Alumno</button>
+            <button type="button" class="btn btn-success" style="padding:7px 12px; font-size:12.5px;" onclick="toggleRuntDrawer('masivo')">🚀 Cargue Masivo</button>
+            <div class="header-menu-wrap" id="runtMenuWrap">
+              <button type="button" class="btn btn-outline" style="padding:7px 12px; font-size:12.5px;" onclick="toggleRuntDropdown(event)">
+                <span>⚙️ Menú RUNT</span>
+                <span style="font-size:11px; opacity:0.85;">▾</span>
+              </button>
+              <div class="header-dropdown" id="runtDropdownMenu" style="min-width:270px;">
+                <div class="header-dropdown-section">🔄 Sincronización y Hoja</div>
+                <button type="button" class="header-dropdown-item" onclick="cerrarRuntDropdown(); sincronizarHorasBotHaciaHojaRunt();">
+                  <span>🔄 Pasar Horas del Bot a RUNT</span>
+                </button>
+                <button type="button" class="header-dropdown-item" onclick="cerrarRuntDropdown(); cargarPanoramaRuntDigital(true);">
+                  <span>🔃 Recargar Datos RUNT</span>
+                </button>
+                <a id="runtSheetExternalLink" href="https://docs.google.com/spreadsheets/d/1XHbqfDa7dK5CWcgWKNgJZiXN_OSrjJCEJJu8F4z-u2M/edit" target="_blank" class="header-dropdown-item" onclick="cerrarRuntDropdown()">
+                  <span>↗️ Abrir en Google Sheets</span>
+                </a>
+                <div class="header-dropdown-divider"></div>
+                <div class="header-dropdown-section">🧭 Ayuda y Herramientas</div>
+                <button type="button" class="header-dropdown-item" onclick="cerrarRuntDropdown(); toggleRuntGuia();">
+                  <span>❓ Ver Guía Rápida de Uso</span>
+                </button>
+                <button type="button" class="header-dropdown-item" onclick="cerrarRuntDropdown(); abrirRuntCorreccion();">
+                  <span>🛠️ Corrección / Opciones Avanzadas</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="runtSheetToast" class="status-toast" style="margin-bottom:12px;"></div>
+
+        <!-- Guía Rápida (Oculta por defecto; se abre desde Menú RUNT) -->
+        <div id="runtGuiaBox" class="tarifas-drawer" style="margin-bottom:14px; border-color:#3b82f6; background:rgba(15,23,42,0.92);">
+          <div class="panel-title" style="margin-bottom:8px;">
+            <span>❓ Cómo usar el Control RUNT en 3 pasos simples</span>
+            <button type="button" class="btn btn-outline" style="padding:3px 9px; font-size:11.5px;" onclick="toggleRuntGuia(false)">✖ Ocultar</button>
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:8px;">
+            <div style="background:#131d31; border:1px solid #2b3d63; border-left:3px solid #3b82f6; border-radius:8px; padding:8px 10px; font-size:12px; color:#cbd5e1;">
+              <b>1. Consulta pendientes</b><br/>
+              Usa las pestañas de abajo (<b>Pendientes</b>, <b>Listos por Cargar</b>, <b>En Práctica</b>) o el selector <b>Más vistas</b>.
+            </div>
+            <div style="background:#131d31; border:1px solid #2b3d63; border-left:3px solid #10b981; border-radius:8px; padding:8px 10px; font-size:12px; color:#cbd5e1;">
+              <b>2. Edita un alumno</b><br/>
+              Haz clic en <b>✏️</b> en la fila del alumno (o en <b>➕ Registrar / Editar</b>) para actualizar sus horas y marcarlo como cargado.
+            </div>
+            <div style="background:#131d31; border:1px solid #2b3d63; border-left:3px solid #a855f7; border-radius:8px; padding:8px 10px; font-size:12px; color:#cbd5e1;">
+              <b>3. Cargue masivo (Teoría/Taller)</b><br/>
+              Marca con <b>☑️</b> los alumnos en la tabla, abre <b>🚀 Cargue Masivo</b>, copia sus cédulas para RUNT y suma las horas.
+            </div>
           </div>
         </div>
 
         <!-- KPIs de la Hoja RUNT -->
         <div class="kpi-grid" id="kpiRuntSheetGrid" style="margin-bottom:14px;"></div>
 
-        <!-- ================================================================= -->
-        <!-- BARRA DE CARGUE MASIVO RUNT (TEORÍA Y TALLER + TOPE 8 CLASES/DÍA) -->
-        <!-- ================================================================= -->
-        <div class="panel" style="margin-bottom:14px; background:linear-gradient(135deg, rgba(16,185,129,0.12), rgba(15,23,42,0.95)); border-color:#10b981;">
+        <!-- DRAWER 1: CARGUE MASIVO RUNT (OCULTO POR DEFECTO) -->
+        <div id="runtMasivoDrawer" class="tarifas-drawer" style="margin-bottom:14px; background:linear-gradient(135deg, rgba(16,185,129,0.10), rgba(15,23,42,0.96)); border-color:#10b981;">
           <div class="panel-title">
-            <span>🚀 Centro de Cargue Masivo de Teoría y Taller (Guía Paso a Paso + Botón Deshacer Errores)</span>
-            <span class="badge badge-success">Con Confirmación Segura y Selección por Casillas ☑️</span>
-          </div>
-          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:8px; margin-bottom:12px;">
-            <div style="background:rgba(15,23,42,0.85); border:1px solid #334155; border-left:4px solid #a855f7; border-radius:8px; padding:8px 10px; font-size:11.5px; color:#e2e8f0;">
-              <b>1️⃣ PASO 1: Elige el Filtro abajo y Marca ☑️</b><br/>
-              Haz clic en la pestaña que necesitas (ej. <b>🏍️ Moto A2 sin 25h Teoría</b> o <b>🔧 Moto A2 sin 3h Taller</b>) y marca con chulito <b>☑️</b> en la tabla los alumnos que vas a reportar.
-            </div>
-            <div style="background:rgba(15,23,42,0.85); border:1px solid #334155; border-left:4px solid #fde047; border-radius:8px; padding:8px 10px; font-size:11.5px; color:#e2e8f0;">
-              <b>2️⃣ PASO 2: Copia sus Cédulas para RUNT</b><br/>
-              Haz clic en <b>📋 Copiar Cédulas</b> para llevarte las cédulas de los alumnos marcados y pegarlas en el cargue masivo de la plataforma RUNT.
-            </div>
-            <div style="background:rgba(15,23,42,0.85); border:1px solid #334155; border-left:4px solid #10b981; border-radius:8px; padding:8px 10px; font-size:11.5px; color:#e2e8f0;">
-              <b>3️⃣ PASO 3: Registra las Horas o Deshaz</b><br/>
-              Elige la fecha (<b>Ayer / Hoy / Mañana</b>) y pulsa <b>📘 Sumar Teoría</b> o <b>🔧 Sumar Taller</b>. El sistema te pedirá confirmación antes de guardar, y si te equivocas puedes pulsar <b>↩️ Deshacer / Corregir</b>.
+            <span>🚀 Cargue Masivo de Teoría y Taller</span>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <span class="badge badge-success">Selección por casillas ☑️</span>
+              <button type="button" class="btn btn-outline" style="padding:3px 9px; font-size:11.5px;" onclick="toggleRuntDrawer('masivo', false)">✖ Cerrar</button>
             </div>
           </div>
-          <div class="form-grid-4">
+          <div class="form-grid-4" style="grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));">
             <div>
-              <label class="field-label">📅 Fecha del Reporte / Cargue (Ayer / Hoy / Mañana)</label>
+              <label class="field-label">📅 Fecha del Reporte</label>
               <div style="display:flex; gap:4px;">
                 <input type="date" id="rn_batch_fecha" style="flex:1;" />
-                <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px;" title="Poner fecha de Ayer" onclick="ajustarFechaBatchRunt(-1)">Ayer</button>
-                <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px;" title="Poner fecha de Hoy" onclick="ajustarFechaBatchRunt(0)">Hoy</button>
-                <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px;" title="Poner fecha de Mañana (Ej: Lunes adelantando Martes)" onclick="ajustarFechaBatchRunt(1)">Mañana</button>
+                <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px;" title="Fecha de Ayer" onclick="ajustarFechaBatchRunt(-1)">Ayer</button>
+                <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px;" title="Fecha de Hoy" onclick="ajustarFechaBatchRunt(0)">Hoy</button>
+                <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px;" title="Fecha de Mañana" onclick="ajustarFechaBatchRunt(1)">Mañana</button>
               </div>
             </div>
             <div>
-              <label class="field-label">🏍️/🚗 Categoría para Cargue Masivo</label>
+              <label class="field-label">🏍️/🚗 Categoría</label>
               <select id="rn_batch_cat">
-                <option value="A2" selected>🏍️ A2 Moto (Meta: 25 Teo / 3 Taller)</option>
-                <option value="B1">🚗 B1 Carro Particular (Meta: 25 Teo / 5 Taller)</option>
-                <option value="C1">🚕 C1 Público (Meta: 30 Teo / 5 Taller)</option>
-                <option value="RECAT_C1">🔄 RAC. C1 (Meta: 8 Teo / 0 Taller)</option>
-                <option value="A1">🏍️ A1 Moto (Meta: 25 Teo / 3 Taller)</option>
+                <option value="A2" selected>🏍️ A2 Moto (25 Teo / 3 Tal)</option>
+                <option value="B1">🚗 B1 Carro (25 Teo / 5 Tal)</option>
+                <option value="C1">🚕 C1 Público (30 Teo / 5 Tal)</option>
+                <option value="RECAT_C1">🔄 RAC. C1 (8 Teo / 0 Tal)</option>
+                <option value="A1">🏍️ A1 Moto (25 Teo / 3 Tal)</option>
                 <option value="TODAS">📚 Todas las Categorías</option>
               </select>
             </div>
             <div>
-              <label class="field-label">⚖️ Regla de Cupo Diario RUNT</label>
+              <label class="field-label">⚖️ Cupo Diario RUNT</label>
               <select id="rn_batch_modo">
-                <option value="MAX_8" selected>🛡️ Tope Reglamentario: Sumar máx. +8 clases en esta fecha</option>
-                <option value="COMPLETAR_META">⚡ Excepción (Ponerse al día): Completar el 100% que lleva</option>
+                <option value="MAX_8" selected>🛡️ Máx. +8 clases por fecha</option>
+                <option value="COMPLETAR_META">⚡ Completar 100% (Ponerse al día)</option>
               </select>
             </div>
-            <div>
-              <label class="field-label">💰 Valor Sanción por Curso Vencido (90d)</label>
-              <input type="number" id="rn_sancion_valor" value="50000" step="5000" min="0" title="Valor de la sanción económica cuando se vence el curso de 90 días y toca reiniciar el reporte en RUNT" />
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; align-items:center;">
+            <button type="button" class="btn btn-outline" style="border-color:#fde047; color:#fde047; font-weight:700;" onclick="copiarCedulasFiltroActualRunt()">📋 1. Copiar Cédulas</button>
+            <button type="button" class="btn btn-primary" onclick="ejecutarCargueMasivoRunt('TEORIA')">📘 2. Sumar Teoría</button>
+            <button type="button" class="btn btn-primary" style="background:#0284c7; border-color:#38bdf8;" onclick="ejecutarCargueMasivoRunt('TALLER')">🔧 2. Sumar Taller</button>
+            <button type="button" class="btn btn-success" onclick="ejecutarCargueMasivoRunt('TEORIA_Y_TALLER')">✨ Teoría + Taller</button>
+          </div>
+          <details id="runtAvanzadoDetails" style="margin-top:12px; padding-top:10px; border-top:1px solid rgba(148,163,184,0.2);">
+            <summary style="cursor:pointer; font-size:12px; color:#94a3b8; font-weight:600; user-select:none;">🛠️ Opciones avanzadas (Valor sanción 90d y deshacer errores)</summary>
+            <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:end; margin-top:10px;">
+              <div style="min-width:190px;">
+                <label class="field-label">💰 Valor Sanción Curso Vencido (90d)</label>
+                <input type="number" id="rn_sancion_valor" value="50000" step="5000" min="0" />
+              </div>
+              <button type="button" class="btn btn-outline" style="border-color:#f97316; color:#fdba74; font-size:12px;" onclick="deshacerCargueMasivoRunt('RESTAR_8_TEORIA')">➖ Restar -8h Teoría (Seleccionados)</button>
+              <button type="button" class="btn btn-danger" style="font-size:12px;" onclick="deshacerCargueMasivoRunt('RESTAURAR_14_A2_ORIGINAL')">↩️ Restaurar 14 Alumnos A2</button>
             </div>
-          </div>
-          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; align-items:center;">
-            <button type="button" class="btn btn-outline" style="border-color:#fde047; color:#fde047; font-weight:700;" onclick="copiarCedulasFiltroActualRunt()" title="Copia al portapapeles las Cédulas de los alumnos marcados ☑️ (o de toda la pestaña actual) para pegarlas en RUNT">📋 1. Copiar Cédulas (Seleccionados ☑️ o Filtro)</button>
-            <button type="button" class="btn btn-primary" onclick="ejecutarCargueMasivoRunt('TEORIA')" title="Suma +8h de Teoría (o completa las 25h/30h) a los alumnos seleccionados ☑️ (pide confirmación antes de aplicar)">📘 2. Cargue Masivo TEORÍA</button>
-            <button type="button" class="btn btn-primary" style="background:#0284c7; border-color:#38bdf8;" onclick="ejecutarCargueMasivoRunt('TALLER')" title="Suma las horas de Taller (3h en Moto / 5h en Carro) a los alumnos seleccionados ☑️ (pide confirmación antes de aplicar)">🔧 2. Cargue Masivo TALLER</button>
-            <button type="button" class="btn btn-success" onclick="ejecutarCargueMasivoRunt('TEORIA_Y_TALLER')" title="Actualiza Teoría + Taller en lote para los alumnos seleccionados ☑️">✨ Cargue Masivo TEORÍA + TALLER</button>
-            <button type="button" class="btn btn-danger" style="background:#dc2626; border-color:#f87171; font-weight:700;" onclick="deshacerCargueMasivoRunt('RESTAURAR_14_A2_ORIGINAL')" title="Corrige inmediatamente el cargue masivo hecho por error y devuelve los 14 alumnos de Moto A2 a sus horas originales (16h, 8h, 24h, 0h)">↩️ Deshacer / Corregir Cargue Masivo por Error (Restaurar 14 Alumnos A2)</button>
-            <button type="button" class="btn btn-outline" style="border-color:#f97316; color:#fdba74;" onclick="deshacerCargueMasivoRunt('RESTAR_8_TEORIA')" title="Resta -8 horas de Teoría a los alumnos marcados con ☑️">➖ Restar -8h Teoría (a Seleccionados ☑️)</button>
-          </div>
+          </details>
         </div>
 
-        <!-- Formulario de Actualización / Registro Individual en Pestaña 'Practica' de la Hoja RUNT -->
-        <div class="panel" style="margin-bottom:14px; background:#0f172a; border-color:#2b3d63;">
+        <!-- DRAWER 2: REGISTRO / EDICIÓN INDIVIDUAL (OCULTO POR DEFECTO; SE ABRE AL EDITAR FILA O CON EL BOTÓN) -->
+        <div id="runtIndividualDrawer" class="tarifas-drawer" style="margin-bottom:14px; background:#0f172a; border-color:#3b82f6;">
           <div class="panel-title">
-            <span>📝 Reportar / Actualizar Conteo Individual de Horas en RUNT (Práctica Individual • Máx. 8 Clases/Día o Ponerse al Día)</span>
-            <span class="badge badge-warning" id="runtEditRowBadge">Nuevo / Buscar por Cédula o Clic en ✏️ de la Tabla</span>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <span>📝 Registrar / Actualizar Horas del Alumno</span>
+              <span class="badge badge-warning" id="runtEditRowBadge">Nuevo registro</span>
+            </div>
+            <button type="button" class="btn btn-outline" style="padding:3px 9px; font-size:11.5px;" onclick="toggleRuntDrawer('individual', false)">✖ Cerrar</button>
           </div>
           <input type="hidden" id="rn_fila" value="0" />
           <div class="form-grid-4">
@@ -1974,50 +2030,50 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             <div>
               <label class="field-label">Categoría *</label>
               <select id="rn_cat" onchange="ajustarMetasFormularioRunt()">
-                <option value="A2">🏍️ A2 (25 Teo + 3 Tal + 15 Prác = 43h)</option>
-                <option value="B1">🚗 B1 (25 Teo + 5 Tal + 20 Prác = 50h)</option>
-                <option value="C1">🚕 C1 (30 Teo + 5 Tal + 30 Prác = 65h)</option>
-                <option value="RECAT_C1">🔄 RAC. C1 (8 Teo + 0 Tal + 8 Prác = 16h)</option>
-                <option value="A1">🏍️ A1 (25 Teo + 3 Tal + 8 Prác = 36h)</option>
+                <option value="A2">🏍️ A2 (25 Teo + 3 Tal + 15 Prác)</option>
+                <option value="B1">🚗 B1 (25 Teo + 5 Tal + 20 Prác)</option>
+                <option value="C1">🚕 C1 (30 Teo + 5 Tal + 30 Prác)</option>
+                <option value="RECAT_C1">🔄 RAC. C1 (8 Teo + 0 Tal + 8 Prác)</option>
+                <option value="A1">🏍️ A1 (25 Teo + 3 Tal + 8 Prác)</option>
               </select>
             </div>
             <div>
-              <label class="field-label">Prioridad Operativa</label>
+              <label class="field-label">Prioridad</label>
               <select id="rn_prioridad">
-                <option value="EN PRACTICA">🚨 EN PRACTICA (Urgente a Certificar)</option>
-                <option value="Termino">🔥 Termino (Terminó Práctica • Listo Certificar)</option>
+                <option value="EN PRACTICA">🚨 EN PRACTICA</option>
+                <option value="Termino">🔥 Termino (Listo Certificar)</option>
                 <option value="revisado">🔍 revisado</option>
                 <option value="Novedad">⚠️ Novedad</option>
               </select>
             </div>
             <div>
-              <label class="field-label">📅 Fecha Matrícula (Calcula Vence 90d)</label>
+              <label class="field-label">📅 Fecha Matrícula (90d)</label>
               <input type="date" id="rn_fecha_mat" />
             </div>
             <div>
-              <label class="field-label">📘 Horas Teoría Cargadas</label>
+              <label class="field-label">📘 Teoría</label>
               <input type="number" id="rn_teoria" value="25" min="0" max="40" />
             </div>
             <div>
-              <label class="field-label">🔧 Horas Taller Cargadas</label>
+              <label class="field-label">🔧 Taller</label>
               <input type="number" id="rn_taller" value="3" min="0" max="15" />
             </div>
             <div>
-              <label class="field-label">🚗 Horas Práctica Cargadas (Individual)</label>
+              <label class="field-label">🚗 Práctica</label>
               <div style="display:flex; gap:4px;">
                 <input type="number" id="rn_practica" value="15" min="0" max="40" style="flex:1;" />
-                <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px;" title="Sumar +2 clases prácticas" onclick="sumarHorasInputFormulario('rn_practica', 2)">+2h</button>
-                <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px; border-color:#38bdf8; color:#38bdf8;" title="Sumar tope máximo diario (+8 clases prácticas)" onclick="sumarHorasInputFormulario('rn_practica', 8)">+8h (Tope)</button>
+                <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px;" onclick="sumarHorasInputFormulario('rn_practica', 2)">+2h</button>
+                <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px; border-color:#38bdf8; color:#38bdf8;" onclick="sumarHorasInputFormulario('rn_practica', 8)">+8h</button>
               </div>
             </div>
             <div>
-              <label class="field-label">📅 Fecha de Cargue (Ayer / Hoy / Mañana)</label>
+              <label class="field-label">📅 Fecha de Cargue</label>
               <input type="date" id="rn_fecha_cargue" />
             </div>
             <div>
-              <label class="field-label">📌 Etiqueta Cargue Diario</label>
+              <label class="field-label">📌 Etiqueta Diaria</label>
               <select id="rn_cargue_diario">
-                <option value="">-- Sin etiqueta diaria --</option>
+                <option value="">-- Sin etiqueta --</option>
                 <option value="TEORIA">📘 TEORIA</option>
                 <option value="TALLER">🔧 TALLER</option>
                 <option value="PRACTICA">🚗 PRACTICA</option>
@@ -2025,66 +2081,95 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               </select>
             </div>
             <div>
-              <label class="field-label">🏛️ Actividad / Estado RUNT</label>
+              <label class="field-label">🏛️ Estado RUNT</label>
               <select id="rn_estado_runt">
                 <option value="PENDIENTE RUNT">⚠️ PENDIENTE RUNT</option>
                 <option value="CARGADO RUNT">✅ CARGADO RUNT</option>
               </select>
             </div>
             <div style="display:flex; gap:6px;">
-              <button type="button" class="btn btn-primary" style="flex:1; justify-content:center;" onclick="guardarRegistroHojaRunt(false)">💾 Guardar Conteo</button>
-              <button type="button" class="btn btn-success" style="flex:1; justify-content:center;" onclick="guardarRegistroHojaRunt(true)" title="Completa el 100% de Teoría+Taller+Práctica y marca ✅ CARGADO RUNT">✅ 100% + CARGADO RUNT</button>
+              <button type="button" class="btn btn-primary" style="flex:1; justify-content:center;" onclick="guardarRegistroHojaRunt(false)">💾 Guardar</button>
+              <button type="button" class="btn btn-success" style="flex:1; justify-content:center;" onclick="guardarRegistroHojaRunt(true)" title="Completa 100% y marca CARGADO RUNT">✅ 100% RUNT</button>
             </div>
           </div>
-          <div id="runtSheetToast" class="status-toast"></div>
         </div>
 
-        <!-- Sub-Pestañas Operativas por Prioridad de Certificación y Filtros Masivos -->
-        <div class="tabs-header" id="runtSheetTabsHeader">
-          <button type="button" class="tab-btn active" onclick="cambiarTabHojaRunt('PENDIENTES_PRACTICA', this)">
-            📋 Todos Pendientes (Orden Prioridad) <span class="badge badge-warning" id="cnt_rn_pend">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('TERMINARON_SIN_CARGUE', this)" style="border-color:#f97316; color:#fed7aa;">
-            🔥 1. Terminaron y Falta Cargue Manual RUNT <span class="badge badge-danger" id="cnt_rn_term_sin">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('URGENTES_EN_PRACTICA', this)" style="border-color:#38bdf8; color:#bae6fd;">
-            🚨 2. Urgentes: En Práctica (A Certificar) <span class="badge badge-info" id="cnt_rn_urg_prac">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('MOTO_SIN_25_TEORIA', this)" style="border-color:#a855f7;">
-            🏍️ Moto A2 sin 25h Teoría (Masivo) <span class="badge badge-purple" id="cnt_rn_moto_teo">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('MOTO_SIN_3_TALLER', this)" style="border-color:#a855f7;">
-            🔧 Moto A2 sin 3h Taller (Masivo) <span class="badge badge-purple" id="cnt_rn_moto_tal">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('CARRO_SIN_TEO_TAL', this)">
-            🚗 Carro B1/C1 sin Teoría o Taller <span class="badge badge-info" id="cnt_rn_carro_tt">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('DESFASE_BOT', this)">
-            🔄 Con Horas Nuevas del Bot <span class="badge badge-info" id="cnt_rn_bot">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('POR_VENCER_90', this)" style="border-color:#ef4444;">
-            💸 Vencidos / Por Vencer 90d (Reiniciar + Sanción) <span class="badge badge-danger" id="cnt_rn_vence">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('CARGADOS_PRACTICA', this)">
-            ✅ Ya Cargados RUNT <span class="badge badge-success" id="cnt_rn_cargados">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('TODOS_PRACTICA', this)">
-            📚 Histórico (191) <span class="badge" id="cnt_rn_todos">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('TAB_NO_RUNT', this)">
-            🚫 Pestaña "No runt" <span class="badge badge-danger" id="cnt_rn_norunt">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('TAB_INICIO_PRACTICA', this)">
-            🕒 Pestaña "Inicio Practica" <span class="badge badge-purple" id="cnt_rn_horarios">0</span>
-          </button>
-          <button type="button" class="tab-btn" onclick="cambiarTabHojaRunt('TAB_CODIGOS_RUNT', this)">
-            🔢 Pestaña "Codigo de Runt" <span class="badge badge-info" id="cnt_rn_codigos">0</span>
-          </button>
-        </div>
+        <!-- Menú Desplegable Único de Vistas RUNT + Buscador (Sin filas de botones recargados) -->
+        <div class="table-toolbar" id="runtSheetTabsHeader" style="align-items:center; gap:10px; border-bottom:1px solid var(--card-border); padding-bottom:12px;">
+          <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; flex:1;">
+            <div class="header-menu-wrap" id="runtVistasWrap">
+              <button type="button" class="btn btn-primary" id="btnRuntVistaActual" onclick="toggleRuntVistasMenu(event)" style="min-width:250px; justify-content:space-between;">
+                <span id="runtVistaActualLabel">📋 Todos Pendientes</span>
+                <span style="display:inline-flex; align-items:center; gap:6px;">
+                  <span class="badge" id="runtVistaActualCount">0</span>
+                  <span style="font-size:11px; opacity:0.85;">▾</span>
+                </span>
+              </button>
+              <div class="header-dropdown" id="runtVistasDropdown" style="left:0; right:auto; min-width:315px; max-height:430px; overflow-y:auto;">
+                <div class="header-dropdown-section">🎯 Operación Diaria</div>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="PENDIENTES_PRACTICA" onclick="cambiarTabHojaRunt('PENDIENTES_PRACTICA', this)">
+                  <span>📋 Todos Pendientes</span>
+                  <span class="badge badge-warning" id="cnt_rn_pend">0</span>
+                </button>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="TERMINARON_SIN_CARGUE" onclick="cambiarTabHojaRunt('TERMINARON_SIN_CARGUE', this)">
+                  <span>🔥 Listos por Cargar RUNT</span>
+                  <span class="badge badge-danger" id="cnt_rn_term_sin">0</span>
+                </button>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="URGENTES_EN_PRACTICA" onclick="cambiarTabHojaRunt('URGENTES_EN_PRACTICA', this)">
+                  <span>🚨 Urgentes: En Práctica</span>
+                  <span class="badge badge-info" id="cnt_rn_urg_prac">0</span>
+                </button>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="POR_VENCER_90" onclick="cambiarTabHojaRunt('POR_VENCER_90', this)">
+                  <span>⏰ Vencidos / Por Vencer 90d</span>
+                  <span class="badge badge-danger" id="cnt_rn_vence">0</span>
+                </button>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="CARGADOS_PRACTICA" onclick="cambiarTabHojaRunt('CARGADOS_PRACTICA', this)">
+                  <span>✅ Ya Cargados RUNT</span>
+                  <span class="badge badge-success" id="cnt_rn_cargados">0</span>
+                </button>
 
-        <div class="table-toolbar">
-          <input type="search" id="searchRuntSheetInput" autocomplete="off" placeholder="🔎 Buscar en esta hoja por nombre, cédula, categoría, prioridad o estado..." oninput="renderizarTablaHojaRunt()" style="max-width:460px;" />
-          <span id="runtSheetCountInfo" style="font-size:12.5px; color:var(--muted);">Haz clic en <b>✏️ Editar</b> o en <b>✅ CARGADO RUNT</b> para actualizar en tiempo real</span>
+                <div class="header-dropdown-divider"></div>
+                <div class="header-dropdown-section">🚀 Cargue Masivo y Bot</div>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="MOTO_SIN_25_TEORIA" onclick="cambiarTabHojaRunt('MOTO_SIN_25_TEORIA', this)">
+                  <span>🏍️ Moto A2 sin 25h Teoría</span>
+                  <span class="badge badge-purple" id="cnt_rn_moto_teo">0</span>
+                </button>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="MOTO_SIN_3_TALLER" onclick="cambiarTabHojaRunt('MOTO_SIN_3_TALLER', this)">
+                  <span>🔧 Moto A2 sin 3h Taller</span>
+                  <span class="badge badge-purple" id="cnt_rn_moto_tal">0</span>
+                </button>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="CARRO_SIN_TEO_TAL" onclick="cambiarTabHojaRunt('CARRO_SIN_TEO_TAL', this)">
+                  <span>🚗 Carro B1/C1 sin Teoría/Taller</span>
+                  <span class="badge badge-info" id="cnt_rn_carro_tt">0</span>
+                </button>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="DESFASE_BOT" onclick="cambiarTabHojaRunt('DESFASE_BOT', this)">
+                  <span>🔄 Con Horas Nuevas del Bot</span>
+                  <span class="badge badge-info" id="cnt_rn_bot">0</span>
+                </button>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="TODOS_PRACTICA" onclick="cambiarTabHojaRunt('TODOS_PRACTICA', this)">
+                  <span>📚 Histórico Completo</span>
+                  <span class="badge" id="cnt_rn_todos">0</span>
+                </button>
+
+                <div class="header-dropdown-divider"></div>
+                <div class="header-dropdown-section">📑 Otras Hojas de Google Sheets</div>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="TAB_NO_RUNT" onclick="cambiarTabHojaRunt('TAB_NO_RUNT', this)">
+                  <span>🚫 Pestaña "No runt"</span>
+                  <span class="badge badge-danger" id="cnt_rn_norunt">0</span>
+                </button>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="TAB_INICIO_PRACTICA" onclick="cambiarTabHojaRunt('TAB_INICIO_PRACTICA', this)">
+                  <span>🕒 Pestaña "Inicio Practica"</span>
+                  <span class="badge badge-purple" id="cnt_rn_horarios">0</span>
+                </button>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="TAB_CODIGOS_RUNT" onclick="cambiarTabHojaRunt('TAB_CODIGOS_RUNT', this)">
+                  <span>🔢 Pestaña "Codigo de Runt"</span>
+                  <span class="badge badge-info" id="cnt_rn_codigos">0</span>
+                </button>
+              </div>
+            </div>
+            <input type="search" id="searchRuntSheetInput" autocomplete="off" placeholder="🔎 Buscar alumno por nombre, cédula, categoría o estado..." oninput="renderizarTablaHojaRunt()" style="max-width:390px; flex:1;" />
+          </div>
+          <span id="runtSheetCountInfo" style="font-size:12.5px; color:var(--muted);">Haz clic en <b>✏️</b> para editar o en <b>✅</b> para marcar cargado</span>
         </div>
 
         <div class="table-wrap">
@@ -3063,7 +3148,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     let BOT_DATA = null;
     let ACTIVE_TAB = 'todas_matriculas';
     let ACTIVE_MODULE = 'mod_cartera';
-    let FILTRO_ANIO_GLOBAL = 'TODOS';
+    let FILTRO_ANIO_GLOBAL = '2026';
     let chartMensualInstance = null;
     let chartCarteraInstance = null;
 
@@ -3199,8 +3284,20 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
     }
 
+    function togglePanelHistoricoAnios(forceOpen) {
+      const body = document.getElementById('historicoAniosBody');
+      const btn = document.getElementById('btnToggleHistoricoAnios');
+      if (!body) return;
+      const isCurrentlyOpen = body.style.display !== 'none';
+      const nextOpen = (typeof forceOpen === 'boolean') ? forceOpen : !isCurrentlyOpen;
+      body.style.display = nextOpen ? 'block' : 'none';
+      if (btn) {
+        btn.textContent = nextOpen ? '📂 Ocultar Histórico ▴' : '📂 Ver Histórico (Otros Años) ▾';
+      }
+    }
+
     function cambiarFiltroAnioGlobal(anioSel) {
-      FILTRO_ANIO_GLOBAL = anioSel || 'TODOS';
+      FILTRO_ANIO_GLOBAL = anioSel || '2026';
       const selEl = document.getElementById('filterAnioCarteraSelect');
       if (selEl && selEl.value !== FILTRO_ANIO_GLOBAL) {
         selEl.value = FILTRO_ANIO_GLOBAL;
@@ -3248,7 +3345,103 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       if (dd && dd.classList.contains('open') && wrap && !wrap.contains(ev.target)) {
         dd.classList.remove('open');
       }
+      const rWrap = document.getElementById('runtMenuWrap');
+      const rDd = document.getElementById('runtDropdownMenu');
+      if (rDd && rDd.classList.contains('open') && rWrap && !rWrap.contains(ev.target)) {
+        rDd.classList.remove('open');
+      }
+      const rvWrap = document.getElementById('runtVistasWrap');
+      const rvDd = document.getElementById('runtVistasDropdown');
+      if (rvDd && rvDd.classList.contains('open') && rvWrap && !rvWrap.contains(ev.target)) {
+        rvDd.classList.remove('open');
+      }
     });
+
+    function toggleRuntVistasMenu(ev) {
+      if (ev) ev.stopPropagation();
+      const dd = document.getElementById('runtVistasDropdown');
+      if (dd) dd.classList.toggle('open');
+    }
+
+    function cerrarRuntVistasMenu() {
+      const dd = document.getElementById('runtVistasDropdown');
+      if (dd) dd.classList.remove('open');
+    }
+
+    function actualizarBotonVistaRunt() {
+      const items = document.querySelectorAll('#runtVistasDropdown .runt-vista-item');
+      let labelTxt = '📋 Todos Pendientes';
+      let countTxt = '0';
+      items.forEach(it => {
+        const isAct = it.getAttribute('data-tab') === ACTIVE_RUNT_TAB;
+        it.style.background = isAct ? 'rgba(59, 130, 246, 0.24)' : '';
+        it.style.color = isAct ? '#fff' : '';
+        if (isAct) {
+          const sp = it.querySelector('span:first-child');
+          const bg = it.querySelector('.badge');
+          if (sp) labelTxt = sp.textContent;
+          if (bg) countTxt = bg.textContent;
+        }
+      });
+      const lblEl = document.getElementById('runtVistaActualLabel');
+      const cntEl = document.getElementById('runtVistaActualCount');
+      if (lblEl) lblEl.textContent = labelTxt;
+      if (cntEl) cntEl.textContent = countTxt;
+    }
+
+    function toggleRuntDropdown(ev) {
+      if (ev) ev.stopPropagation();
+      const dd = document.getElementById('runtDropdownMenu');
+      if (dd) dd.classList.toggle('open');
+    }
+
+    function cerrarRuntDropdown() {
+      const dd = document.getElementById('runtDropdownMenu');
+      if (dd) dd.classList.remove('open');
+    }
+
+    function toggleRuntDrawer(tipo, forceOpen) {
+      const idMap = {
+        individual: 'runtIndividualDrawer',
+        masivo: 'runtMasivoDrawer'
+      };
+      const targetId = idMap[tipo];
+      const targetEl = document.getElementById(targetId);
+      if (!targetEl) return;
+      const otherId = tipo === 'individual' ? 'runtMasivoDrawer' : 'runtIndividualDrawer';
+      const otherEl = document.getElementById(otherId);
+      const willOpen = (typeof forceOpen === 'boolean') ? forceOpen : !targetEl.classList.contains('open');
+      if (willOpen && otherEl) otherEl.classList.remove('open');
+      targetEl.classList.toggle('open', willOpen);
+      if (willOpen) {
+        if (tipo === 'masivo') {
+          const elBatchF = document.getElementById('rn_batch_fecha');
+          if (elBatchF && !elBatchF.value) ajustarFechaBatchRunt(0);
+        }
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    function toggleRuntGuia(forceOpen) {
+      const box = document.getElementById('runtGuiaBox');
+      if (!box) return;
+      if (typeof forceOpen === 'boolean') box.classList.toggle('open', forceOpen);
+      else box.classList.toggle('open');
+    }
+
+    function abrirRuntCorreccion() {
+      toggleRuntDrawer('masivo', true);
+      const det = document.getElementById('runtAvanzadoDetails');
+      if (det) {
+        det.open = true;
+        det.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
+    function seleccionarVistaExtraRunt(val) {
+      if (!val) return;
+      cambiarTabHojaRunt(val, null);
+    }
 
     function toggleAnsvAdminDrawer() {
       const dr = document.getElementById('ansvAdminDrawer');
@@ -3342,7 +3535,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         if (!mods.includes('mod_cartera')) {
           const hm = document.getElementById('headerMeta');
           if (hm) {
-            hm.textContent = `CEA Auto Oriente • Panel Operativo (${window.__INITIAL_USER__.nombre} — ${window.__INITIAL_USER__.cargo || window.__INITIAL_USER__.rol})`;
+            hm.textContent = `Panel Operativo • ${window.__INITIAL_USER__.nombre}`;
           }
           return;
         }
@@ -3367,46 +3560,53 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         : (AUDIT_DATA.filename || 'matriculas23112026.xlsx');
       document.getElementById('currentFileBadge').textContent = `${badgeTxt} (${k.total_matriculas} reg.)`;
 
-      const aniosDisponibles = listaAnual.map(a => a.anio).join(', ') || '2024-2026';
-      document.getElementById('headerMeta').textContent =
-        `Sede: ${m.sede || 'CEA'} • Base Histórica (${aniosDisponibles}): ${m.fecha_inicial || '2024-02-01'} al ${m.fecha_final || '2026-11-23'} • ${k.total_matriculas} Matrículas (${k.total_clientes_unicos} Clientes Únicos | ${k.clientes_multicurso_count} Multi-Curso)`;
+      const aniosDisponibles = listaAnual.map(a => a.anio).join(', ') || '2026';
+      if (FILTRO_ANIO_GLOBAL !== 'TODOS' && listaAnual.length > 0 && !listaAnual.some(a => String(a.anio) === String(FILTRO_ANIO_GLOBAL))) {
+        FILTRO_ANIO_GLOBAL = String(listaAnual[listaAnual.length - 1].anio);
+      }
+      const hmEl = document.getElementById('headerMeta');
+      if (hmEl) {
+        hmEl.textContent = FILTRO_ANIO_GLOBAL === 'TODOS'
+          ? `Gestión Integral • Histórico (${aniosDisponibles})`
+          : `Gestión Integral • Año ${FILTRO_ANIO_GLOBAL}`;
+        hmEl.title = `Sede: ${m.sede || 'CEA Auto Oriente'} • ${k.total_matriculas} matrículas (${k.total_clientes_unicos} clientes únicos)`;
+      }
 
       const contBanner = document.getElementById('contabilidadBanner');
       if (contBanner) {
         if (m.contabilidad_resumen && m.contabilidad_resumen.es_contabilidad) {
           const cr = m.contabilidad_resumen;
           contBanner.style.display = 'block';
-          contBanner.innerHTML = `📑 <b>MODO AUXILIAR CONTABLE DIAN/SIIGO DETECTADO:</b> Facturación Servicios Cuenta <code>41800101</code> (${cr.total_facturas_fv} Facturas <b>FV-2</b>): <b>${fmtCOP(cr.total_credito_servicios_4180)}</b> • Devoluciones Cuenta <code>41750502</code> (${cr.total_notas_credito_nc} Notas Crédito <b>NC-2</b>): <b style="color:#fca5a5;">-${fmtCOP(cr.total_debito_devoluciones_4175)}</b> • <b>Ingreso Neto Contable: ${fmtCOP(cr.ingreso_neto_contable)}</b>`;
-        } else if (m.merge_stats && (m.merge_stats.nuevos_insertados > 0 || m.merge_stats.existentes_actualizados > 0)) {
-          const ms = m.merge_stats;
-          contBanner.style.display = 'block';
-          contBanner.innerHTML = `🗄️ <b>BASE DE DATOS HISTÓRICA ACTIVA Y SINCRONIZADA:</b> Total conservado: <b>${ms.total_despues} registros</b> (${aniosDisponibles}) • Nuevos incorporados: <b>+${ms.nuevos_insertados}</b> • Existentes actualizados: <b>${ms.existentes_actualizados}</b> • Sin pérdida de años anteriores.`;
-        } else if (m.recibos_externos_cargados > 0) {
-          contBanner.style.display = 'block';
-          contBanner.innerHTML = `🔗 <b>CRUCE MULTIFORMATO ACTIVO:</b> Se cruzaron <b>${m.recibos_externos_cargados} comprobantes/recibos externos</b> (${m.recibos_huerfanos_cruzados} acreditados automáticamente por Cédula/NIT).`;
+          contBanner.innerHTML = `<div style="display:flex; justify-content:space-between; align-items:center; gap:10px;"><span>📑 <b>Auxiliar Contable DIAN/SIIGO:</b> Facturación <code>41800101</code>: <b>${fmtCOP(cr.total_credito_servicios_4180)}</b> • Devoluciones <code>41750502</code>: <b style="color:#fca5a5;">-${fmtCOP(cr.total_debito_devoluciones_4175)}</b> • <b>Ingreso Neto: ${fmtCOP(cr.ingreso_neto_contable)}</b></span><button type="button" class="btn btn-outline" style="padding:2px 8px; font-size:11px;" onclick="document.getElementById('contabilidadBanner').style.display='none'">✖</button></div>`;
         } else {
-          contBanner.style.display = 'block';
-          contBanner.innerHTML = `🗄️ <b>BASE DE DATOS HISTÓRICA PERMANENTE ACTIVA:</b> Conservando <b>${k.total_matriculas} matrículas históricas</b> de los años <b>${aniosDisponibles}</b>. Cualquier archivo nuevo que subas incorporará modificaciones sin borrar años anteriores.`;
+          // Mantener la interfaz limpia ocultando banners informativos persistentes
+          contBanner.style.display = 'none';
+          contBanner.innerHTML = '';
         }
       }
 
-      // Renderizar Botones y Tarjetas Comparativas por Año (2024, 2025, 2026 + Histórico Total)
+      // Renderizar indicador de año activo y contenido colapsable del histórico
       const badgeAnioEl = document.getElementById('badgeAnioActivo');
       if (badgeAnioEl) {
         badgeAnioEl.textContent = FILTRO_ANIO_GLOBAL === 'TODOS'
-          ? `Viendo: Histórico Completo (${aniosDisponibles})`
-          : `Viendo: Solo Año ${FILTRO_ANIO_GLOBAL}`;
+          ? `Histórico (${aniosDisponibles})`
+          : `Año ${FILTRO_ANIO_GLOBAL}`;
+      }
+
+      const selAnioTabla = document.getElementById('filterAnioCarteraSelect');
+      if (selAnioTabla && selAnioTabla.value !== FILTRO_ANIO_GLOBAL) {
+        selAnioTabla.value = FILTRO_ANIO_GLOBAL;
       }
 
       const btnsAnioTop = document.getElementById('botonesFiltroAnioTop');
       if (btnsAnioTop) {
         const btns = [
-          `<button type="button" class="btn ${FILTRO_ANIO_GLOBAL === 'TODOS' ? 'btn-primary' : 'btn-outline'}" style="padding:5px 11px; font-size:12px;" onclick="cambiarFiltroAnioGlobal('TODOS')">🗄️ Todos los Años (${k.total_matriculas})</button>`
+          `<button type="button" class="btn ${FILTRO_ANIO_GLOBAL === 'TODOS' ? 'btn-primary' : 'btn-outline'}" style="padding:5px 11px; font-size:12px;" onclick="cambiarFiltroAnioGlobal('TODOS')">🗄️ Todos los Años</button>`
         ];
         listaAnual.forEach(a => {
           const isAct = FILTRO_ANIO_GLOBAL === String(a.anio);
           btns.push(
-            `<button type="button" class="btn ${isAct ? 'btn-primary' : 'btn-outline'}" style="padding:5px 11px; font-size:12px;" onclick="cambiarFiltroAnioGlobal('${a.anio}')">📅 Año ${a.anio} (${a.matriculas})</button>`
+            `<button type="button" class="btn ${isAct ? 'btn-primary' : 'btn-outline'}" style="padding:5px 11px; font-size:12px;" onclick="cambiarFiltroAnioGlobal('${a.anio}')">📅 ${a.anio}</button>`
           );
         });
         btnsAnioTop.innerHTML = btns.join('');
@@ -4536,12 +4736,13 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         const extLink = document.getElementById('runtSheetExternalLink');
         if (extLink && data.sheet_url) extLink.href = data.sheet_url;
         if (stBadge) {
+          stBadge.title = `Hoja Google Sheets ID: ${data.sheet_id || ''}`;
           if (data.conectado_en_vivo) {
             stBadge.className = 'badge badge-success';
-            stBadge.textContent = `🟢 Conectado en Vivo • ID: ${data.sheet_id}`;
+            stBadge.textContent = '🟢 En vivo';
           } else {
             stBadge.className = 'badge badge-warning';
-            stBadge.textContent = `🟡 Base Activa RUNT (${data.kpis.total_practica} reg.) • ID: ${data.sheet_id}`;
+            stBadge.textContent = `🟡 Local (${data.kpis.total_practica || 0})`;
           }
         }
 
@@ -4550,39 +4751,40 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         setCnt('cnt_rn_pend', k.pendientes_runt || 0);
         setCnt('cnt_rn_term_sin', k.terminaron_sin_cargue || 0);
         setCnt('cnt_rn_urg_prac', k.urgentes_en_practica || 0);
+        setCnt('cnt_rn_vence', k.por_vencer_o_vencidos || 0);
+        setCnt('cnt_rn_cargados', k.cargados_runt || 0);
         setCnt('cnt_rn_moto_teo', k.moto_sin_25_teoria || 0);
         setCnt('cnt_rn_moto_tal', k.moto_sin_3_taller || 0);
         setCnt('cnt_rn_carro_tt', k.carro_sin_teoria_taller || 0);
         setCnt('cnt_rn_bot', k.con_clases_bot_por_subir || 0);
-        setCnt('cnt_rn_vence', k.por_vencer_o_vencidos || 0);
-        setCnt('cnt_rn_cargados', k.cargados_runt || 0);
         setCnt('cnt_rn_todos', k.total_practica || 0);
         setCnt('cnt_rn_norunt', k.no_runt_pendientes || 0);
         setCnt('cnt_rn_horarios', k.total_inicio_practica || 0);
         setCnt('cnt_rn_codigos', k.total_codigos_runt || 0);
+        actualizarBotonVistaRunt();
 
         const kpiEl = document.getElementById('kpiRuntSheetGrid');
         if (kpiEl) {
           kpiEl.innerHTML = `
             <div class="kpi-card danger" style="cursor:pointer;" onclick="cambiarTabHojaRunt('TERMINARON_SIN_CARGUE')">
-              <div class="kpi-label">🔥 1. Terminaron y Falta Cargue Manual RUNT</div>
+              <div class="kpi-label">🔥 Listos por Cargar RUNT</div>
               <div class="kpi-value" style="color:#fdba74;">${k.terminaron_sin_cargue || 0} Listos</div>
-              <div class="kpi-sub">Prioridad #1 de certificación + <b>🚨 ${k.urgentes_en_practica || 0} en práctica</b></div>
+              <div class="kpi-sub"><b>🚨 ${k.urgentes_en_practica || 0}</b> en práctica activa</div>
             </div>
             <div class="kpi-card purple" style="cursor:pointer;" onclick="cambiarTabHojaRunt('MOTO_SIN_25_TEORIA')">
-              <div class="kpi-label">🏍️ Moto A2 Pendientes Cargue Masivo</div>
+              <div class="kpi-label">🏍️ Pendientes Teoría / Taller</div>
               <div class="kpi-value" style="color:#d8b4fe;">${k.moto_sin_25_teoria || 0} Sin 25h Teoría</div>
-              <div class="kpi-sub"><b>🔧 ${k.moto_sin_3_taller || 0}</b> sin 3h Taller • <b>🚗 ${k.carro_sin_teoria_taller || 0}</b> Carros sin Teo/Tal</div>
+              <div class="kpi-sub"><b>${k.moto_sin_3_taller || 0}</b> sin taller • <b>${k.carro_sin_teoria_taller || 0}</b> carros</div>
             </div>
             <div class="kpi-card warning" style="cursor:pointer;" onclick="cambiarTabHojaRunt('POR_VENCER_90')">
-              <div class="kpi-label">💸 Vencidos / Por Vencer 90 Días (Reiniciar + Sanción)</div>
+              <div class="kpi-label">⏰ Por Vencer / Vencidos (90d)</div>
               <div class="kpi-value" style="color:#fca5a5;">${k.por_vencer_o_vencidos || 0} Alumnos</div>
-              <div class="kpi-sub"><b>${k.vencidos_sancion || 0} vencidos</b> para reiniciar reporte RUNT con sanción</div>
+              <div class="kpi-sub"><b>${k.vencidos_sancion || 0} vencidos</b> para reiniciar</div>
             </div>
             <div class="kpi-card success" style="cursor:pointer;" onclick="cambiarTabHojaRunt('CARGADOS_PRACTICA')">
-              <div class="kpi-label">✅ Ya Cargados 100% en Plataforma RUNT</div>
-              <div class="kpi-value" style="color:#34d399;">${k.cargados_runt || 0} Certificados</div>
-              <div class="kpi-sub"><b>⚠️ ${k.pendientes_runt || 0} pendientes</b> en total en hoja Practica</div>
+              <div class="kpi-label">✅ Certificados en RUNT</div>
+              <div class="kpi-value" style="color:#34d399;">${k.cargados_runt || 0} Cargados</div>
+              <div class="kpi-sub"><b>${k.pendientes_runt || 0}</b> pendientes en total</div>
             </div>
           `;
         }
@@ -4595,28 +4797,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
     function cambiarTabHojaRunt(tabVal, btnEl) {
       ACTIVE_RUNT_TAB = tabVal;
-      document.querySelectorAll('#runtSheetTabsHeader .tab-btn').forEach(b => b.classList.remove('active'));
-      if (btnEl) {
-        btnEl.classList.add('active');
-      } else {
-        const idxMap = {
-          'PENDIENTES_PRACTICA': 0,
-          'TERMINARON_SIN_CARGUE': 1,
-          'URGENTES_EN_PRACTICA': 2,
-          'MOTO_SIN_25_TEORIA': 3,
-          'MOTO_SIN_3_TALLER': 4,
-          'CARRO_SIN_TEO_TAL': 5,
-          'DESFASE_BOT': 6,
-          'POR_VENCER_90': 7,
-          'CARGADOS_PRACTICA': 8,
-          'TODOS_PRACTICA': 9,
-          'TAB_NO_RUNT': 10,
-          'TAB_INICIO_PRACTICA': 11,
-          'TAB_CODIGOS_RUNT': 12
-        };
-        const btns = document.querySelectorAll('#runtSheetTabsHeader .tab-btn');
-        if (btns[idxMap[tabVal] || 0]) btns[idxMap[tabVal] || 0].classList.add('active');
-      }
+      cerrarRuntVistasMenu();
+      actualizarBotonVistaRunt();
       renderizarTablaHojaRunt();
     }
 
@@ -4657,7 +4839,9 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         badge.className = 'badge badge-info';
         badge.textContent = `✏️ Editando Fila #${item.fila}: ${item.nombre} (${item.categoria})`;
       }
-      document.getElementById('rn_cedula').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      toggleRuntDrawer('individual', true);
+      const cedEl = document.getElementById('rn_cedula');
+      if (cedEl) cedEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
     function autocompletarFormularioRuntSheet(origen) {
