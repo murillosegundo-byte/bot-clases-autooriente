@@ -4188,6 +4188,140 @@ class SheetsService:
     ) -> Dict[str, Any]:
         return self.registrar_o_actualizar_alumno(cedula, nombre, categoria, estado_runt=estado_runt)
 
+    def editar_alumno_completo(
+        self,
+        cedula: str,
+        nombre: str,
+        categoria: str = "A2",
+        estado: str = "",
+        estado_runt: Optional[str] = None,
+        fecha_runt: str = "",
+        fecha_primera_clase: str = "",
+        telefono: str = "",
+        orig_cedula: str = "",
+        orig_nombre: str = "",
+        orig_categoria: str = "",
+    ) -> Dict[str, Any]:
+        """
+        Edita CUALQUIER dato de un alumno en la hoja 'Alumnos' (Cédula, Nombre, Categoría,
+        Estado del curso, Estado_RUNT, Fecha_RUNT) y propaga cambios de Cédula/Nombre/Categoría
+        o Fecha de 1ra Clase en 'Registro_Clases' para que nunca se pierda su historial.
+        """
+        doc_nuevo = str(cedula or "").strip()
+        nom_nuevo = limpiar_solo_nombre_persona(str(nombre or "")) or str(nombre or "").strip()
+        cat_nueva = normalizar_categoria(categoria or "A2")
+        est_nuevo = str(estado or "").strip()
+        runt_norm = ""
+        if estado_runt:
+            runt_norm = "Cargue RUNT" if ("cargue" in str(estado_runt).lower() or "cargado" in str(estado_runt).lower()) else "No Registrado RUNT"
+        fecha_runt_in = str(fecha_runt or "").strip()
+        fecha_primera_in = str(fecha_primera_clase or "").strip()
+
+        orig_doc_n = _normalizar_texto(orig_cedula or doc_nuevo)
+        orig_nom_n = _normalizar_texto(orig_nombre or nom_nuevo)
+        orig_cat_n = normalizar_categoria(orig_categoria or cat_nueva)
+
+        ws = self.obtener_o_crear_hoja(SHEET_ALUMNOS, HEADERS_ALUMNOS)
+        todas = ws.get_all_values()
+        fila_encontrada = 0
+        fila_prev: List[str] = []
+
+        for idx_f in range(2, len(todas) + 1):
+            fila = todas[idx_f - 1]
+            if not any(str(c).strip() for c in fila):
+                continue
+            d_f = _normalizar_texto(str(fila[1]).strip()) if len(fila) > 1 else ""
+            n_f = _normalizar_texto(str(fila[2]).strip()) if len(fila) > 2 else ""
+            c_f = normalizar_categoria(str(fila[3]).strip()) if len(fila) > 3 else "B1"
+            if c_f != orig_cat_n:
+                continue
+            if (orig_doc_n and d_f == orig_doc_n) or (orig_nom_n and n_f == orig_nom_n):
+                fila_encontrada = idx_f
+                fila_prev = fila
+                break
+
+        id_mat_final = str(fila_prev[0]).strip() if len(fila_prev) > 0 and str(fila_prev[0]).strip() else ""
+        est_final = est_nuevo or (str(fila_prev[4]).strip() if len(fila_prev) > 4 and str(fila_prev[4]).strip() else "En curso")
+        runt_final = runt_norm or (str(fila_prev[5]).strip() if len(fila_prev) > 5 and str(fila_prev[5]).strip() else "No Registrado RUNT")
+        if fecha_runt_in:
+            fecha_runt_final = fecha_runt_in
+        elif runt_final == "Cargue RUNT":
+            prev_fr = str(fila_prev[6]).strip() if len(fila_prev) > 6 else ""
+            fecha_runt_final = prev_fr or datetime.now(TZ_COLOMBIA).strftime("%Y-%m-%d %H:%M")
+        else:
+            fecha_runt_final = ""
+
+        if fila_encontrada >= 2:
+            ws.update(
+                values=[[id_mat_final or f"MAT-{fila_encontrada:03d}", doc_nuevo, nom_nuevo, cat_nueva, est_final, runt_final, fecha_runt_final]],
+                range_name=f"A{fila_encontrada}:G{fila_encontrada}",
+                value_input_option="USER_ENTERED",
+            )
+        else:
+            max_num = max(0, len(todas) - 1)
+            for f in todas[1:]:
+                if f:
+                    m_id = re.search(r"(\d+)", str(f[0]))
+                    if m_id:
+                        max_num = max(max_num, int(m_id.group(1)))
+            id_mat_final = f"MAT-{max_num + 1:03d}"
+            self._agregar_fila_al_final(ws, [id_mat_final, doc_nuevo, nom_nuevo, cat_nueva, est_final, runt_final, fecha_runt_final])
+
+        # Propagar cambios de Cédula / Nombre / Categoría / Fecha 1ra Clase en Registro_Clases
+        clases_actualizadas = 0
+        cambio_identidad = (
+            (_normalizar_texto(doc_nuevo) != orig_doc_n)
+            or (_normalizar_texto(nom_nuevo) != orig_nom_n)
+            or (cat_nueva != orig_cat_n)
+        )
+        if cambio_identidad or fecha_primera_in:
+            try:
+                ws_reg = self.obtener_o_crear_hoja(SHEET_REGISTRO, HEADERS_REGISTRO)
+                filas_reg = ws_reg.get_all_values()
+                matches_reg: List[Tuple[int, str, List[str]]] = []
+                for idx_r in range(2, len(filas_reg) + 1):
+                    fr = filas_reg[idx_r - 1]
+                    if len(fr) < 7:
+                        continue
+                    d_r = _normalizar_texto(str(fr[4]).strip())
+                    n_r = _normalizar_texto(limpiar_solo_nombre_persona(str(fr[5])) or str(fr[5]))
+                    c_r = normalizar_categoria(str(fr[6]).strip())
+                    if c_r != orig_cat_n:
+                        continue
+                    if (orig_doc_n and d_r == orig_doc_n) or (orig_nom_n and n_r == orig_nom_n):
+                        f_iso = self._normalizar_fecha_iso(str(fr[1]), str(fr[0])) or "9999-99-99"
+                        matches_reg.append((idx_r, f_iso, fr))
+
+                if cambio_identidad:
+                    for idx_r, _, _ in matches_reg:
+                        ws_reg.update(
+                            values=[[doc_nuevo, nom_nuevo, cat_nueva]],
+                            range_name=f"E{idx_r}:G{idx_r}",
+                            value_input_option="USER_ENTERED",
+                        )
+                        clases_actualizadas += 1
+
+                if fecha_primera_in and matches_reg:
+                    matches_reg.sort(key=lambda x: x[1])
+                    idx_primera, iso_actual, _ = matches_reg[0]
+                    if iso_actual[:10] != fecha_primera_in[:10]:
+                        ws_reg.update_cell(idx_primera, 2, fecha_primera_in[:10])
+                        clases_actualizadas += 1
+            except Exception as exc_reg:
+                logger.warning("Aviso propagando cambios en Registro_Clases: %s", exc_reg)
+
+        return {
+            "ok": True,
+            "ID_Matricula": id_mat_final,
+            "Documento": doc_nuevo,
+            "Nombre_Completo": nom_nuevo,
+            "Categoria": cat_nueva,
+            "Estado": est_final,
+            "Estado_RUNT": runt_final,
+            "Fecha_RUNT": fecha_runt_final,
+            "clases_actualizadas": clases_actualizadas,
+        }
+
     def agregar_vehiculo_pesv(self, placa: str, tipo: str = "CARRO", categoria: str = "B1", marca: str = "") -> Dict[str, Any]:
         res = self.agregar_vehiculo_flota(placa, tipo)
         res["ok"] = True

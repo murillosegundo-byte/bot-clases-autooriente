@@ -1772,45 +1772,65 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
         <div class="panel">
           <div class="panel-title">
-            <span>➕ Registrar, Buscar o Actualizar Alumno en Google Sheets (Sincronizado con el Bot)</span>
-            <span class="badge badge-info">Hoja: Alumnos</span>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <span>✏️ Registrar o Editar Cualquier Dato del Alumno (Hoja Alumnos)</span>
+              <span class="badge badge-info" id="alumnoEditBadge">Nuevo alumno</span>
+            </div>
+            <button type="button" class="btn btn-outline" style="padding:3px 9px; font-size:11px;" onclick="limpiarFormularioAlumnoWeb()" title="Limpiar para crear un alumno nuevo">🧹 Nuevo</button>
           </div>
-          <p style="font-size:11.5px; color:#93c5fd; margin-bottom:8px;">
-            💡 Escribe la <b>Cédula</b> o el <b>Nombre</b> para autocompletar sus datos actuales, o haz clic en el botón <b>✏️ Editar</b> de cualquier alumno en la tabla inferior.
-          </p>
+          <input type="hidden" id="al_orig_cedula" value="" />
+          <input type="hidden" id="al_orig_nombre" value="" />
+          <input type="hidden" id="al_orig_cat" value="" />
           <div class="form-grid-4">
             <div>
               <label class="field-label">Cédula / Documento *</label>
-              <input type="text" id="al_cedula" list="dlCedulasGlobal" autocomplete="off" placeholder="Ej: 1094950123 (Escribe para buscar)" oninput="autocompletarFormularioAlumno('cedula')" />
+              <input type="text" id="al_cedula" list="dlCedulasGlobal" autocomplete="off" placeholder="Ej: 1094950123" oninput="autocompletarFormularioAlumno('cedula')" />
             </div>
             <div>
-              <label class="field-label">Nombre Completo del Alumno *</label>
-              <input type="text" id="al_nombre" list="dlAlumnosGlobal" autocomplete="off" placeholder="Ej: JUAN PEREZ GOMEZ (Escribe para buscar)" oninput="autocompletarFormularioAlumno('nombre')" />
+              <label class="field-label">Nombre Completo *</label>
+              <input type="text" id="al_nombre" list="dlAlumnosGlobal" autocomplete="off" placeholder="Ej: JUAN PEREZ GOMEZ" oninput="autocompletarFormularioAlumno('nombre')" />
             </div>
             <div>
               <label class="field-label">Categoría *</label>
               <select id="al_cat">
-                <option value="A2">🏍️ A2 Moto (15 clases - F-60)</option>
-                <option value="B1">🚗 B1 Carro Particular (20 clases - F-61)</option>
-                <option value="C1">🚕 C1 Servicio Público (30 clases - F-62)</option>
-                <option value="RECAT_C1">🔄 Recategorización C1 (10 clases - F-62)</option>
-                <option value="A1">🏍️ A1 Moto (8 clases - F-59)</option>
+                <option value="A2">🏍️ A2 Moto (15 cl. - F-60)</option>
+                <option value="B1">🚗 B1 Carro (20 cl. - F-61)</option>
+                <option value="C1">🚕 C1 Público (30 cl. - F-62)</option>
+                <option value="RECAT_C1">🔄 Recat. C1 (10 cl. - F-62)</option>
+                <option value="A1">🏍️ A1 Moto (8 cl. - F-59)</option>
               </select>
             </div>
             <div>
-              <label class="field-label">Estado RUNT (Por Categoría)</label>
+              <label class="field-label">Estado del Curso</label>
+              <select id="al_estado">
+                <option value="En curso">🟢 En curso</option>
+                <option value="FINALIZADO">🎓 FINALIZADO</option>
+                <option value="Suspendido">⏸️ Suspendido</option>
+                <option value="Retirado">🚫 Retirado</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label">Estado RUNT</label>
               <select id="al_runt">
-                <option value="No Registrado RUNT">⏳ No Registrado RUNT (Pendiente)</option>
-                <option value="Cargue RUNT">✅ Cargue RUNT (Ocultar de pendientes)</option>
+                <option value="No Registrado RUNT">⏳ No Registrado RUNT</option>
+                <option value="Cargue RUNT">✅ Cargue RUNT</option>
               </select>
             </div>
             <div>
-              <label class="field-label">Teléfono / Celular</label>
+              <label class="field-label">📅 Fecha RUNT</label>
+              <input type="text" id="al_fecha_runt" autocomplete="off" placeholder="YYYY-MM-DD HH:MM" />
+            </div>
+            <div>
+              <label class="field-label">🚦 Fecha 1ra Clase (90d)</label>
+              <input type="date" id="al_fecha_primera_clase" />
+            </div>
+            <div>
+              <label class="field-label">📱 Teléfono / Celular</label>
               <input type="text" id="al_tel" autocomplete="off" placeholder="Ej: 3101234567" />
             </div>
             <div style="display:flex; gap:6px; grid-column: span 2;">
-              <button type="button" class="btn btn-primary" style="flex:1; justify-content:center;" onclick="registrarAlumnoWeb()">💾 Guardar / Actualizar Alumno</button>
-              <button type="button" class="btn btn-success" style="flex:1; justify-content:center;" onclick="marcarCargueRuntDesdeFormulario()" title="Marca Cargue RUNT para este alumno y esta categoría y lo filtra del listado">✅ Marcar Cargue RUNT</button>
+              <button type="button" class="btn btn-primary" style="flex:1; justify-content:center;" onclick="registrarAlumnoWeb()">💾 Guardar Cambios del Alumno</button>
+              <button type="button" class="btn btn-success" style="flex:1; justify-content:center;" onclick="marcarCargueRuntDesdeFormulario()">✅ Marcar Cargue RUNT</button>
               <button type="button" class="btn btn-outline" title="Buscar en la tabla" onclick="buscarAlumnoDesdeFormulario()">🔎</button>
             </div>
           </div>
@@ -2064,6 +2084,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
                 <label class="field-label">💰 Valor Sanción Curso Vencido (90d)</label>
                 <input type="number" id="rn_sancion_valor" value="50000" step="5000" min="0" />
               </div>
+              <button type="button" class="btn btn-outline" style="border-color:#38bdf8; color:#bae6fd; font-size:12px;" onclick="deshacerCargueMasivoRunt('DESHACER_ULTIMO')">↩️ Deshacer Último Lote Sumado</button>
               <button type="button" class="btn btn-outline" style="border-color:#f97316; color:#fdba74; font-size:12px;" onclick="deshacerCargueMasivoRunt('RESTAR_8_TEORIA')">➖ Restar -8h Teoría (Seleccionados)</button>
               <button type="button" class="btn btn-danger" style="font-size:12px;" onclick="deshacerCargueMasivoRunt('RESTAURAR_14_A2_ORIGINAL')">↩️ Restaurar 14 Alumnos A2</button>
             </div>
@@ -2113,12 +2134,28 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               <input type="date" id="rn_fecha_mat" />
             </div>
             <div>
+              <label class="field-label">⏳ Vence 90 Días</label>
+              <input type="date" id="rn_vence_90" />
+            </div>
+            <div>
+              <label class="field-label">🏛️ Fecha Registro RUNT</label>
+              <input type="date" id="rn_fecha_reg_runt" />
+            </div>
+            <div>
               <label class="field-label">📘 Teoría</label>
-              <input type="number" id="rn_teoria" value="25" min="0" max="40" />
+              <div style="display:flex; gap:4px;">
+                <input type="number" id="rn_teoria" value="25" min="0" max="40" style="flex:1;" />
+                <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px;" title="Sumar +4 clases teóricas" onclick="sumarHorasInputFormulario('rn_teoria', 4)">+4h</button>
+                <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px; border-color:#38bdf8; color:#38bdf8;" title="Sumar +8 clases teóricas" onclick="sumarHorasInputFormulario('rn_teoria', 8)">+8h</button>
+              </div>
             </div>
             <div>
               <label class="field-label">🔧 Taller</label>
-              <input type="number" id="rn_taller" value="3" min="0" max="15" />
+              <div style="display:flex; gap:4px;">
+                <input type="number" id="rn_taller" value="3" min="0" max="15" style="flex:1;" />
+                <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px;" title="Sumar +3 clases de taller" onclick="sumarHorasInputFormulario('rn_taller', 3)">+3h</button>
+                <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px; border-color:#38bdf8; color:#38bdf8;" title="Sumar +5 clases de taller" onclick="sumarHorasInputFormulario('rn_taller', 5)">+5h</button>
+              </div>
             </div>
             <div>
               <label class="field-label">🚗 Práctica</label>
@@ -2141,6 +2178,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
                 <option value="PRACTICA">🚗 PRACTICA</option>
                 <option value="COMPLETO">✅ COMPLETO</option>
               </select>
+            </div>
+            <div>
+              <label class="field-label">👨‍🏫 Instructor</label>
+              <input type="text" id="rn_instructor" list="dlInstructoresGlobal" autocomplete="off" placeholder="Nombre instructor" />
+            </div>
+            <div>
+              <label class="field-label">🕒 Hora Registro</label>
+              <input type="text" id="rn_hora_reg" autocomplete="off" placeholder="Ej: 14:30:00" />
             </div>
             <div>
               <label class="field-label">🏛️ Estado RUNT</label>
@@ -2395,6 +2440,37 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
         <!-- Barra de chips de filtros activos (oculto cuando no hay filtros aplicados) -->
         <div id="runtActiveFiltersBar" style="display:none; flex-wrap:wrap; gap:6px; align-items:center; margin-bottom:10px;"></div>
+
+        <!-- Barra Contextual de Suma Rápida para Alumnos Marcados con ☑️ (Aparece solo cuando hay 1+ alumnos marcados) -->
+        <div id="runtSeleccionBar" style="display:none; flex-wrap:wrap; gap:8px; align-items:center; justify-content:space-between; margin-bottom:10px; padding:10px 14px; border-radius:10px; background:linear-gradient(135deg, rgba(16,185,129,0.16), rgba(37,99,235,0.16)); border:1px solid #10b981;">
+          <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+            <span class="badge badge-success" id="runtSelCountBadge" style="font-size:12px; padding:5px 10px;">☑️ 0 seleccionados</span>
+            <select id="rn_sel_tipo" onchange="actualizarBarraSeleccionRunt()" style="width:auto; padding:6px 10px; font-weight:700; border-color:#3b82f6;">
+              <option value="TEORIA" selected>📘 Teoría</option>
+              <option value="TALLER">🔧 Taller</option>
+              <option value="PRACTICA">🚗 Práctica</option>
+            </select>
+            <div style="display:flex; align-items:center; gap:4px;">
+              <span style="font-size:12px; color:#cbd5e1; font-weight:700;">Sumar +</span>
+              <input type="number" id="rn_sel_horas" value="8" min="1" max="30" oninput="actualizarBarraSeleccionRunt()" style="width:62px; padding:6px 8px; text-align:center; font-weight:800; border-color:#10b981; color:#6ee7b7;" />
+              <span style="font-size:11.5px; color:#94a3b8;">h</span>
+              <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:11px;" onclick="setHorasSeleccionRunt(2)">+2</button>
+              <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:11px;" onclick="setHorasSeleccionRunt(3)">+3</button>
+              <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:11px;" onclick="setHorasSeleccionRunt(5)">+5</button>
+              <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:11px; border-color:#38bdf8; color:#38bdf8;" onclick="setHorasSeleccionRunt(8)">+8</button>
+            </div>
+            <div style="display:flex; align-items:center; gap:4px;">
+              <input type="date" id="rn_sel_fecha" style="width:auto; padding:5px 8px; font-size:12px;" />
+              <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px;" onclick="setFechaSeleccionRunt(-1)">Ayer</button>
+              <button type="button" class="btn btn-outline" style="padding:4px 7px; font-size:10.5px;" onclick="setFechaSeleccionRunt(0)">Hoy</button>
+            </div>
+          </div>
+          <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+            <button type="button" class="btn btn-success" id="btnSumarSeleccionRunt" style="padding:7px 14px; font-size:12.5px; font-weight:700;" onclick="ejecutarSumaSeleccionadosRunt()">➕ Sumar +8h Teoría</button>
+            <button type="button" class="btn btn-outline" style="padding:6px 10px; font-size:12px; border-color:#fde047; color:#fde047;" onclick="copiarCedulasFiltroActualRunt()">📋 Copiar Cédulas</button>
+            <button type="button" class="btn btn-outline" style="padding:6px 9px; font-size:11.5px;" onclick="limpiarSeleccionRunt()" title="Desmarcar alumnos">✖</button>
+          </div>
+        </div>
 
         <!-- Popover Flotante de Filtro por Columna Estilo Google Sheets (Casillas + Vacío + Ordenar) -->
         <div id="runtSheetsColPopover" class="sheets-col-popover" onclick="event.stopPropagation()">
@@ -5363,6 +5439,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const f = Number(filaIdx);
       if (checked) RUNT_SELECTED_FILAS.add(f);
       else RUNT_SELECTED_FILAS.delete(f);
+      actualizarBarraSeleccionRunt();
     }
 
     function toggleSeleccionarTodosRunt(checked) {
@@ -5374,25 +5451,157 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       renderizarTablaHojaRunt();
     }
 
+    function limpiarSeleccionRunt() {
+      RUNT_SELECTED_FILAS.clear();
+      renderizarTablaHojaRunt();
+    }
+
+    function setHorasSeleccionRunt(h) {
+      const el = document.getElementById('rn_sel_horas');
+      if (el) el.value = h;
+      actualizarBarraSeleccionRunt();
+    }
+
+    function setFechaSeleccionRunt(offsetDias = 0) {
+      const el = document.getElementById('rn_sel_fecha');
+      if (el) el.value = obtenerIsoFechaOffsetRunt(offsetDias);
+    }
+
+    function actualizarBarraSeleccionRunt() {
+      const bar = document.getElementById('runtSeleccionBar');
+      if (!bar) return;
+      const visibles = obtenerFilasFiltradasPracticaRunt();
+      const selVisibles = visibles.filter(r => RUNT_SELECTED_FILAS.has(Number(r.fila)));
+      if (!selVisibles.length || ACTIVE_RUNT_TAB.startsWith('TAB_')) {
+        bar.style.display = 'none';
+        return;
+      }
+      bar.style.display = 'flex';
+      const cntEl = document.getElementById('runtSelCountBadge');
+      if (cntEl) cntEl.textContent = `☑️ ${selVisibles.length} seleccionado${selVisibles.length === 1 ? '' : 's'}`;
+
+      const fEl = document.getElementById('rn_sel_fecha');
+      if (fEl && !fEl.value) fEl.value = obtenerIsoFechaOffsetRunt(0);
+
+      const tipo = ((document.getElementById('rn_sel_tipo') || {}).value || 'TEORIA').toUpperCase();
+      const horas = Math.max(1, Number((document.getElementById('rn_sel_horas') || {}).value || 8));
+      const nomTipo = tipo === 'TALLER' ? 'Taller' : (tipo === 'PRACTICA' ? 'Práctica' : 'Teoría');
+      const btn = document.getElementById('btnSumarSeleccionRunt');
+      if (btn) btn.textContent = `➕ Sumar +${horas}h ${nomTipo} (${selVisibles.length})`;
+    }
+
+    async function ejecutarSumaSeleccionadosRunt() {
+      const visibles = obtenerFilasFiltradasPracticaRunt();
+      const seleccionados = visibles.filter(r => RUNT_SELECTED_FILAS.has(Number(r.fila)));
+      if (!seleccionados.length) {
+        alert('⚠️ Marca al menos un alumno con ☑️ para sumarle clases.');
+        return;
+      }
+      const tipo = ((document.getElementById('rn_sel_tipo') || {}).value || 'TEORIA').toUpperCase();
+      const horas = Math.max(1, Math.min(40, Number((document.getElementById('rn_sel_horas') || {}).value || 8)));
+      const fecha_cargue = (document.getElementById('rn_sel_fecha') || {}).value || obtenerIsoFechaOffsetRunt(0);
+      const nomTipo = tipo === 'TALLER' ? 'Taller' : (tipo === 'PRACTICA' ? 'Práctica' : 'Teoría');
+
+      // Construir vista previa exacta Antes → Después para cada alumno seleccionado
+      const lineasPrev = [];
+      const filasEnviar = [];
+      seleccionados.forEach(r => {
+        if (r.estado_runt === 'CARGADO RUNT') return;
+        const actual = tipo === 'TALLER' ? Number(r.taller || 0) : (tipo === 'PRACTICA' ? Number(r.practica || 0) : Number(r.teoria || 0));
+        const meta = tipo === 'TALLER' ? Number(r.meta_taller || 0) : (tipo === 'PRACTICA' ? Number(r.meta_practica || 0) : Number(r.meta_teoria || 0));
+        const nuevo = Math.min(meta, actual + horas);
+        if (nuevo > actual) {
+          filasEnviar.push(Number(r.fila));
+          lineasPrev.push(`• ${r.nombre} (${r.categoria}): ${actual} → ${nuevo}/${meta}h (+${nuevo - actual}h)`);
+        } else {
+          lineasPrev.push(`• ${r.nombre} (${r.categoria}): ya está en tope ${actual}/${meta}h (sin cambio)`);
+        }
+      });
+
+      if (!filasEnviar.length) {
+        alert(`⚠️ Los alumnos seleccionados ya tienen el 100% de ${nomTipo} completo (o ya figuran como CARGADO RUNT).`);
+        return;
+      }
+
+      const preview = lineasPrev.slice(0, 12).join('\n') + (lineasPrev.length > 12 ? `\n... y ${lineasPrev.length - 12} alumno(s) más.` : '');
+      const ok = confirm(
+        `➕ SUMAR +${horas}h DE ${nomTipo.toUpperCase()} A ${filasEnviar.length} ALUMNO(S)\n` +
+        `Fecha de cargue: ${fecha_cargue}\n\n` +
+        `Detalle (se suma a lo que ya tiene cada alumno, sin pasar la meta):\n${preview}\n\n` +
+        `¿Confirmas aplicar y guardar en Google Sheets?`
+      );
+      if (!ok) return;
+
+      const toast = document.getElementById('runtSheetToast');
+      const btn = document.getElementById('btnSumarSeleccionRunt');
+      if (btn) btn.disabled = true;
+      if (toast) {
+        toast.className = 'status-toast ok';
+        toast.textContent = `⏳ Sumando +${horas}h de ${nomTipo} a ${filasEnviar.length} alumno(s) y guardando en Google Sheets...`;
+      }
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'runt_cargue_masivo',
+            tipo,
+            categoria: 'TODAS',
+            modo_cupo: 'SUMA_EXACTA',
+            horas_sumar: horas,
+            fecha_cargue,
+            filas: filasEnviar
+          })
+        });
+        const data = await res.json();
+        if (toast) {
+          toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+          toast.textContent = data.message || 'Actualizado.';
+        }
+        RUNT_SELECTED_FILAS.clear();
+        await cargarPanoramaRuntDigital(false);
+      } catch (err) {
+        if (toast) {
+          toast.className = 'status-toast err';
+          toast.textContent = '❌ Error sumando clases: ' + err;
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
     function ajustarFechaBatchRunt(offsetDias = 0) {
       const d = new Date();
       d.setDate(d.getDate() + Number(offsetDias || 0));
       const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       const elBatch = document.getElementById('rn_batch_fecha');
       const elForm = document.getElementById('rn_fecha_cargue');
+      const elSel = document.getElementById('rn_sel_fecha');
       if (elBatch) elBatch.value = iso;
       if (elForm) elForm.value = iso;
+      if (elSel) elSel.value = iso;
     }
 
     function sumarHorasInputFormulario(inputId, delta) {
       const el = document.getElementById(inputId);
       if (!el) return;
       const cat = (document.getElementById('rn_cat') || {}).value || 'A2';
-      const maxPrac = { 'A1': 8, 'A2': 15, 'B1': 20, 'C1': 30, 'RECAT_C1': 8 }[cat] || 20;
+      const metas = {
+        'A1': { rn_teoria: 25, rn_taller: 3, rn_practica: 8 },
+        'A2': { rn_teoria: 25, rn_taller: 3, rn_practica: 15 },
+        'B1': { rn_teoria: 25, rn_taller: 5, rn_practica: 20 },
+        'C1': { rn_teoria: 30, rn_taller: 5, rn_practica: 30 },
+        'RECAT_C1': { rn_teoria: 8, rn_taller: 0, rn_practica: 8 }
+      }[cat] || { rn_teoria: 30, rn_taller: 5, rn_practica: 30 };
+      const tope = metas[inputId] !== undefined ? metas[inputId] : 30;
       const actual = Number(el.value || 0);
-      el.value = Math.min(maxPrac, actual + Number(delta || 0));
+      el.value = Math.min(tope, actual + Number(delta || 0));
       const cg = document.getElementById('rn_cargue_diario');
-      if (cg) cg.value = 'PRACTICA';
+      if (cg) {
+        if (inputId === 'rn_teoria') cg.value = 'TEORIA';
+        else if (inputId === 'rn_taller') cg.value = 'TALLER';
+        else cg.value = 'PRACTICA';
+      }
     }
 
     async function cargarPanoramaRuntDigital(forzar = false) {
@@ -5502,10 +5711,20 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       document.getElementById('rn_cat').value = item.categoria || 'A2';
       document.getElementById('rn_prioridad').value = item.prioridad || 'EN PRACTICA';
       document.getElementById('rn_fecha_mat').value = item.fecha_matricula || '';
+      const v90El = document.getElementById('rn_vence_90');
+      if (v90El) v90El.value = (item.vence_90_dias || '').slice(0, 10);
+      const frEl = document.getElementById('rn_fecha_reg_runt');
+      if (frEl) frEl.value = (item.fecha_registro_runt || '').slice(0, 10);
       document.getElementById('rn_teoria').value = item.teoria || 0;
       document.getElementById('rn_taller').value = item.taller || 0;
-      document.getElementById('rn_practica').value = Math.max(item.practica || 0, item.practica_bot || 0);
+      document.getElementById('rn_practica').value = item.practica || 0;
+      const fcEl = document.getElementById('rn_fecha_cargue');
+      if (fcEl) fcEl.value = (item.fecha_cargue || '').slice(0, 10);
       document.getElementById('rn_cargue_diario').value = item.cargue_diario || '';
+      const insEl = document.getElementById('rn_instructor');
+      if (insEl) insEl.value = item.instructor || '';
+      const hrEl = document.getElementById('rn_hora_reg');
+      if (hrEl) hrEl.value = item.hora_registro || '';
       document.getElementById('rn_estado_runt').value = item.estado_runt || 'PENDIENTE RUNT';
       const badge = document.getElementById('runtEditRowBadge');
       if (badge) {
@@ -5537,9 +5756,19 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         document.getElementById('rn_cat').value = match.categoria || 'A2';
         document.getElementById('rn_prioridad').value = match.prioridad || 'EN PRACTICA';
         if (match.fecha_matricula) document.getElementById('rn_fecha_mat').value = match.fecha_matricula;
+        const v90El = document.getElementById('rn_vence_90');
+        if (v90El) v90El.value = (match.vence_90_dias || '').slice(0, 10);
+        const frEl = document.getElementById('rn_fecha_reg_runt');
+        if (frEl) frEl.value = (match.fecha_registro_runt || '').slice(0, 10);
         document.getElementById('rn_teoria').value = match.teoria || 0;
         document.getElementById('rn_taller').value = match.taller || 0;
-        document.getElementById('rn_practica').value = Math.max(match.practica || 0, match.practica_bot || 0);
+        document.getElementById('rn_practica').value = match.practica || 0;
+        const fcEl = document.getElementById('rn_fecha_cargue');
+        if (fcEl && match.fecha_cargue) fcEl.value = (match.fecha_cargue || '').slice(0, 10);
+        const insEl = document.getElementById('rn_instructor');
+        if (insEl) insEl.value = match.instructor || '';
+        const hrEl = document.getElementById('rn_hora_reg');
+        if (hrEl) hrEl.value = match.hora_registro || '';
         document.getElementById('rn_estado_runt').value = match.estado_runt || 'PENDIENTE RUNT';
         const badge = document.getElementById('runtEditRowBadge');
         if (badge) {
@@ -5558,10 +5787,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const categoria = document.getElementById('rn_cat').value;
       let prioridad = document.getElementById('rn_prioridad').value;
       const fecha_matricula = document.getElementById('rn_fecha_mat').value;
+      const vence_90_dias = (document.getElementById('rn_vence_90') || {}).value || '';
+      const fecha_registro_runt = (document.getElementById('rn_fecha_reg_runt') || {}).value || '';
       let teoria = Number(document.getElementById('rn_teoria').value || 0);
       let taller = Number(document.getElementById('rn_taller').value || 0);
       let practica = Number(document.getElementById('rn_practica').value || 0);
       let cargue_diario = document.getElementById('rn_cargue_diario').value;
+      const instructor = ((document.getElementById('rn_instructor') || {}).value || '').trim();
+      const hora_registro = ((document.getElementById('rn_hora_reg') || {}).value || '').trim();
       let estado_runt = document.getElementById('rn_estado_runt').value;
       const fecha_cargue = (document.getElementById('rn_fecha_cargue') || {}).value || (document.getElementById('rn_batch_fecha') || {}).value || '';
       const toast = document.getElementById('runtSheetToast');
@@ -5598,7 +5831,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           body: JSON.stringify({
             action: 'runt_guardar_practica',
             fila, cedula, nombre, categoria, prioridad, fecha_matricula,
-            teoria, taller, practica, cargue_diario, estado_runt, fecha_cargue
+            vence_90_dias, fecha_registro_runt,
+            teoria, taller, practica, cargue_diario, instructor, hora_registro, estado_runt, fecha_cargue
           })
         });
         const data = await res.json();
@@ -5695,7 +5929,11 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     async function deshacerCargueMasivoRunt(modo = 'RESTAURAR_14_A2_ORIGINAL') {
       const seleccionadasArr = Array.from(RUNT_SELECTED_FILAS);
       let msgConfirm = '';
-      if (modo === 'RESTAR_8_TEORIA') {
+      if (modo === 'DESHACER_ULTIMO') {
+        msgConfirm = `↩️ DESHACER EL ÚLTIMO LOTE SUMADO\n\n` +
+          `Esto devolverá a los alumnos del último lote aplicado a las horas exactas que tenían antes de sumar.\n\n` +
+          `¿Confirmas deshacer el último lote ahora?`;
+      } else if (modo === 'RESTAR_8_TEORIA') {
         msgConfirm = seleccionadasArr.length > 0
           ? `¿Deseas restar -8 horas de Teoría a los ${seleccionadasArr.length} alumno(s) marcados con ☑️?`
           : `¿Deseas restar -8 horas de Teoría a los 14 alumnos de Moto A2 que recibieron el cargue masivo?`;
@@ -5976,7 +6214,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         fecha_matricula: item.fecha_matricula,
         teoria: marcarCargado ? item.meta_teoria : item.teoria,
         taller: marcarCargado ? item.meta_taller : item.taller,
-        practica: marcarCargado ? item.meta_practica : Math.max(item.practica, item.practica_bot),
+        practica: marcarCargado ? item.meta_practica : (item.practica || 0),
         cargue_diario: marcarCargado ? 'PRACTICA' : item.cargue_diario,
         estado_runt: marcarCargado ? 'CARGADO RUNT' : 'PENDIENTE RUNT'
       };
@@ -6112,6 +6350,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       // Pestaña principal 'Practica' (ordenada por Prioridad Operativa de Certificación y con filtros masivos Teoría/Taller)
       const listP = obtenerFilasFiltradasPracticaRunt();
       renderizarChipsFiltrosRunt(listP.length);
+      actualizarBarraSeleccionRunt();
 
       const titulosTabRunt = {
         'PENDIENTES_PRACTICA': '📋 Todos los Pendientes RUNT (Ordenados por Prioridad: 1° Terminaron Práctica → 2° En Práctica → 3° Por Vencer → 4° Teoría/Taller)',
@@ -6497,7 +6736,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <td class="${(a.saldo_cartera || 0) > 0 ? 'money-neg' : 'money-pos'}">${fmtCOP(a.saldo_cartera || 0)}</td>
           <td>
             <div style="display:flex; gap:5px; align-items:center; flex-wrap:wrap;">
-              <button type="button" class="btn btn-outline" style="padding:5px 8px; font-size:11px;" title="Cargar datos del alumno arriba para editar, cambiar RUNT o registrar clase" onclick="cargarAlumnoEnFormularios('${safeCedula}', '${safeNombre}', '${a.categoria}', ${a.clases_completadas || 0}, ${a.total_requerido || 15}, '${a.estado_runt || 'No Registrado RUNT'}')">✏️ Editar / +Clase</button>
+              <button type="button" class="btn btn-outline" style="padding:5px 8px; font-size:11px;" title="Editar cualquier dato del alumno o registrar clase" onclick="cargarAlumnoEnFormularios('${safeCedula}', '${safeNombre}', '${a.categoria}', ${a.clases_completadas || 0}, ${a.total_requerido || 15}, '${a.estado_runt || 'No Registrado RUNT'}', '${(a.estado_curso || 'En curso').replace(/'/g, "\\'")}', '${(a.fecha_runt || '').replace(/'/g, "\\'")}', '${(a.fecha_primera_clase || '').replace(/'/g, "\\'")}')">✏️ Editar</button>
               <a href="/api/bot/pdf/alumno?q=${qParam}&cat=${catParam}" class="btn btn-primary" style="padding:5px 9px; font-size:11px;" title="Descargar Ficha Oficial PDF">📄 PDF ${a.formato_codigo}</a>
               <button type="button" class="btn btn-outline" style="padding:5px 7px; font-size:11px;" title="Enviar PDF F-59/F-62 al Telegram del CEA" onclick="enviarPdfAlumnoTelegram('${safeCedula}', '${safeNombre}', '${a.categoria}')">✈️</button>
               <button type="button" class="btn btn-success" style="padding:5px 7px; font-size:11px;" title="Enviar recordatorio de vencimiento 90 días y avance por WhatsApp al alumno" onclick="enviarInfoAlumnoWhatsApp('${safeCedula}', '${safeNombre}', '${a.categoria}', '${a.clases_completadas}/${a.total_requerido} (${a.porcentaje_avance}%)', ${a.saldo_cartera || 0}, '${a.dias_restantes_90 ?? 90}', '${a.fecha_vencimiento_90 || ''}', '${a.clases_faltantes ?? 0}')">📲</button>
@@ -6811,13 +7050,50 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
     }
 
-    function cargarAlumnoEnFormularios(cedula, nombre, categoria, completadas, requeridas, estadoRunt) {
+    function limpiarFormularioAlumnoWeb() {
+      ['al_orig_cedula', 'al_orig_nombre', 'al_orig_cat', 'al_cedula', 'al_nombre', 'al_fecha_runt', 'al_fecha_primera_clase', 'al_tel'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      const catEl = document.getElementById('al_cat');
+      if (catEl) catEl.value = 'A2';
+      const estEl = document.getElementById('al_estado');
+      if (estEl) estEl.value = 'En curso';
+      const runtEl = document.getElementById('al_runt');
+      if (runtEl) runtEl.value = 'No Registrado RUNT';
+      const b = document.getElementById('alumnoEditBadge');
+      if (b) { b.className = 'badge badge-info'; b.textContent = 'Nuevo alumno'; }
+    }
+
+    function cargarAlumnoEnFormularios(cedula, nombre, categoria, completadas, requeridas, estadoRunt, estadoCurso, fechaRunt, fechaPrimeraClase) {
+      document.getElementById('al_orig_cedula').value = cedula || '';
+      document.getElementById('al_orig_nombre').value = nombre || '';
+      document.getElementById('al_orig_cat').value = categoria || '';
+
       document.getElementById('al_cedula').value = cedula || '';
       document.getElementById('al_nombre').value = nombre || '';
       if (categoria) document.getElementById('al_cat').value = categoria;
+      const estEl = document.getElementById('al_estado');
+      if (estEl && estadoCurso) {
+        const estUp = String(estadoCurso).toUpperCase();
+        if (estUp.includes('FINAL')) estEl.value = 'FINALIZADO';
+        else if (estUp.includes('SUSP')) estEl.value = 'Suspendido';
+        else if (estUp.includes('RETIR')) estEl.value = 'Retirado';
+        else estEl.value = 'En curso';
+      }
       const runtEl = document.getElementById('al_runt');
       if (runtEl && estadoRunt) {
         runtEl.value = String(estadoRunt).toLowerCase().includes('cargue') ? 'Cargue RUNT' : 'No Registrado RUNT';
+      }
+      const frEl = document.getElementById('al_fecha_runt');
+      if (frEl) frEl.value = fechaRunt || '';
+      const fpEl = document.getElementById('al_fecha_primera_clase');
+      if (fpEl) fpEl.value = (fechaPrimeraClase || '').slice(0, 10);
+
+      const b = document.getElementById('alumnoEditBadge');
+      if (b) {
+        b.className = 'badge badge-warning';
+        b.textContent = `✏️ Editando: ${nombre} (${categoria})`;
       }
 
       document.getElementById('cl_cedula').value = cedula || '';
@@ -6830,7 +7106,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const toast = document.getElementById('alumnoToast');
       if (toast) {
         toast.className = 'status-toast ok';
-        toast.textContent = `✏️ Alumno cargado: ${nombre} (${categoria} - CC ${cedula} - ${estadoRunt || 'No Registrado RUNT'}). Puedes cambiar su Estado RUNT o registrarle las clases ${document.getElementById('cl_nums').value}.`;
+        toast.textContent = `✏️ Editando a ${nombre} (${categoria} - CC ${cedula}). Puedes modificar cualquier campo (Cédula, Nombre, Categoría, Estado, RUNT, Fecha 1ra clase o Teléfono) y pulsar "💾 Guardar Cambios del Alumno".`;
       }
       window.scrollTo({ top: 120, behavior: 'smooth' });
     }
@@ -6946,8 +7222,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const cedula = document.getElementById('al_cedula').value.trim();
       const nombre = document.getElementById('al_nombre').value.trim();
       const categoria = document.getElementById('al_cat').value;
+      const estado = (document.getElementById('al_estado') || {}).value || 'En curso';
       const estado_runt = (document.getElementById('al_runt') || {}).value || 'No Registrado RUNT';
+      const fecha_runt = ((document.getElementById('al_fecha_runt') || {}).value || '').trim();
+      const fecha_primera_clase = ((document.getElementById('al_fecha_primera_clase') || {}).value || '').trim();
       const telefono = document.getElementById('al_tel').value.trim();
+      const orig_cedula = ((document.getElementById('al_orig_cedula') || {}).value || '').trim();
+      const orig_nombre = ((document.getElementById('al_orig_nombre') || {}).value || '').trim();
+      const orig_categoria = ((document.getElementById('al_orig_cat') || {}).value || '').trim();
       const toast = document.getElementById('alumnoToast');
       if (!cedula || !nombre) {
         toast.className = 'status-toast err';
@@ -6955,19 +7237,29 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         return;
       }
       toast.className = 'status-toast ok';
-      toast.textContent = '⏳ Guardando y sincronizando alumno en Google Sheets...';
+      toast.textContent = '⏳ Guardando y sincronizando todos los datos del alumno en Google Sheets...';
       try {
         const res = await fetch('/api/bot/action', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'registrar_alumno', cedula, nombre, categoria, telefono, estado_runt })
+          body: JSON.stringify({
+            action: 'registrar_alumno',
+            cedula, nombre, categoria, estado, estado_runt,
+            fecha_runt, fecha_primera_clase, telefono,
+            orig_cedula, orig_nombre, orig_categoria
+          })
         });
         const rawTxt = await res.text();
         let data = {};
         try { data = JSON.parse(rawTxt); } catch (_) { data = { ok: false, message: 'Respuesta inesperada del servidor: ' + rawTxt.slice(0, 120) }; }
         toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
         toast.textContent = (data.ok ? '✅ ' : '❌ ') + (data.message || '');
-        if (data.ok) await cargarBotOverview();
+        if (data.ok) {
+          document.getElementById('al_orig_cedula').value = cedula;
+          document.getElementById('al_orig_nombre').value = nombre;
+          document.getElementById('al_orig_cat').value = categoria;
+          await cargarBotOverview();
+        }
       } catch (err) {
         toast.className = 'status-toast err';
         toast.textContent = '❌ Error de red: ' + err;
@@ -8909,13 +9201,32 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                 cedula = str(payload.get("cedula", "")).strip()
                 nombre = str(payload.get("nombre", "")).strip().upper()
                 categoria = str(payload.get("categoria", "A2")).strip().upper()
+                estado = str(payload.get("estado", "")).strip()
                 telefono = str(payload.get("telefono", "")).strip()
                 estado_runt = str(payload.get("estado_runt", "")).strip() or None
-                ok = clases_core.sheets_service.asegurar_alumno(cedula, nombre, categoria, telefono, estado_runt=estado_runt)
-                _registrar_bitacora_empleado(u_sesion["username"], u_sesion["nombre"], u_sesion["rol"], "MATRICULAR_ALUMNO", f"Registró alumno {nombre} ({categoria} - CC {cedula} - {estado_runt or 'No Registrado RUNT'})")
+                fecha_runt = str(payload.get("fecha_runt", "")).strip()
+                fecha_primera_clase = str(payload.get("fecha_primera_clase", "")).strip()
+                orig_cedula = str(payload.get("orig_cedula", "")).strip()
+                orig_nombre = str(payload.get("orig_nombre", "")).strip()
+                orig_categoria = str(payload.get("orig_categoria", "")).strip()
+                res_ed = clases_core.sheets_service.editar_alumno_completo(
+                    cedula=cedula,
+                    nombre=nombre,
+                    categoria=categoria,
+                    estado=estado,
+                    estado_runt=estado_runt,
+                    fecha_runt=fecha_runt,
+                    fecha_primera_clase=fecha_primera_clase,
+                    telefono=telefono,
+                    orig_cedula=orig_cedula,
+                    orig_nombre=orig_nombre,
+                    orig_categoria=orig_categoria,
+                )
+                extra_cl = f" • {res_ed.get('clases_actualizadas', 0)} clase(s) sincronizadas" if res_ed.get("clases_actualizadas") else ""
+                _registrar_bitacora_empleado(u_sesion["username"], u_sesion["nombre"], u_sesion["rol"], "EDITAR_ALUMNO", f"Actualizó alumno {nombre} ({categoria} - CC {cedula} - {estado or 'En curso'} - {estado_runt or 'No Registrado RUNT'})")
                 self._send_json({
-                    "ok": bool(ok),
-                    "message": f"Alumno {nombre} ({categoria} - C.C. {cedula}) guardado ({estado_runt or 'No Registrado RUNT'}).",
+                    "ok": bool(res_ed.get("ok")),
+                    "message": f"Alumno {nombre} ({categoria} - C.C. {cedula} - {res_ed.get('Estado', 'En curso')}) guardado ({res_ed.get('Estado_RUNT', 'No Registrado RUNT')}){extra_cl}.",
                 })
                 return
 
