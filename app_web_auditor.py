@@ -2123,6 +2123,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             <div>
               <label class="field-label">Prioridad</label>
               <select id="rn_prioridad">
+                <option value="">— Sin prioridad —</option>
                 <option value="EN PRACTICA">🚨 EN PRACTICA</option>
                 <option value="Termino">🔥 Termino (Listo Certificar)</option>
                 <option value="revisado">🔍 revisado</option>
@@ -5429,6 +5430,11 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         renderizarModuloInasistencias();
         renderizarModuloPesv();
         cargarBitacoraRobot();
+        if (RUNT_SHEET_DATA && Array.isArray(RUNT_SHEET_DATA.practica)) {
+          aplicarPrioridadBotEnVivoRunt();
+          actualizarKpisYContadoresRunt();
+          renderizarTablaHojaRunt();
+        }
         cargarPanoramaRuntDigital(false);
       } catch (err) {
         console.error('Error cargando panorama del bot:', err);
@@ -5608,6 +5614,143 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
     }
 
+    function aplicarPrioridadBotEnVivoRunt() {
+      if (!RUNT_SHEET_DATA || !Array.isArray(RUNT_SHEET_DATA.practica)) return;
+      if (!BOT_DATA || !BOT_DATA.clases || !Array.isArray(BOT_DATA.clases.alumnos)) return;
+
+      // Índice en vivo de alumnos ACTIVOS en Bot (Imagen 1: En Curso + Finalizaron sin Cargue RUNT)
+      const activosDoc = new Map();
+      const activosNom = new Map();
+      BOT_DATA.clases.alumnos.forEach(a => {
+        if (esCargadoRunt(a)) return;
+        const catA = String(a.categoria || '').toUpperCase().trim();
+        const cedA = _normCedRuntMatch(a.cedula);
+        const nomA = _normTextoRuntMatch(a.nombre);
+        if (cedA) activosDoc.set(`${cedA}|${catA}`, a);
+        if (nomA) activosNom.set(`${nomA}|${catA}`, a);
+      });
+
+      let cntTermSin = 0;
+      let cntUrgPrac = 0;
+      let cntDesfaseBot = 0;
+
+      RUNT_SHEET_DATA.practica.forEach(r => {
+        const esCarg = r.estado_runt === 'CARGADO RUNT';
+        const catR = String(r.categoria || '').toUpperCase().trim();
+        const cedR = _normCedRuntMatch(r.cedula);
+        const nomR = _normTextoRuntMatch(r.nombre);
+        const botAl = (cedR ? activosDoc.get(`${cedR}|${catR}`) : null)
+          || (nomR ? activosNom.get(`${nomR}|${catR}`) : null)
+          || null;
+
+        const teoFalta = Number(r.teoria || 0) < Number(r.meta_teoria || 0);
+        const talFalta = Number(r.taller || 0) < Number(r.meta_taller || 0);
+        const pracFalta = Number(r.practica || 0) < Number(r.meta_practica || 0);
+        const faltaAlgo = teoFalta || talFalta || pracFalta;
+
+        if (!esCarg && botAl) {
+          const pracBot = Math.max(Number(r.practica_bot || 0), Number(botAl.clases_completadas || 0));
+          const metaP = Math.max(1, Number(r.meta_practica || botAl.total_requerido || 1));
+          const avPct = Math.min(100, Math.max(Number(botAl.porcentaje_avance || 0), Math.round((pracBot / metaP) * 100)));
+          const botTerm = String(botAl.estado_curso || '').toUpperCase() === 'FINALIZADO'
+            || Number(botAl.porcentaje_avance || 0) >= 100
+            || pracBot >= metaP;
+
+          r.en_bot_practica = true;
+          r.practica_bot = pracBot;
+          r.pendiente_subir_bot = Math.max(0, pracBot - Number(r.practica || 0));
+          r.bot_avance_pct = avPct;
+          r.bot_termino_practica = botTerm;
+          r.es_terminado_sin_cargue = Boolean(botTerm || !faltaAlgo);
+          r.es_urgente_en_practica = Boolean(!r.es_terminado_sin_cargue && faltaAlgo);
+          r.es_prioridad_bot = Boolean(r.es_terminado_sin_cargue || r.es_urgente_en_practica);
+          r.orden_prioridad = r.es_terminado_sin_cargue ? 1 : 2;
+          r.etiqueta_prioridad_op = r.es_terminado_sin_cargue
+            ? '🔥 1. BOT TERMINÓ PRÁCTICA (PRIORIDAD #1)'
+            : '🤖 2. EN PRÁCTICA BOT (PRIORIDAD <100%)';
+        } else {
+          // Estricto: si NO está en la lista activa del Bot (Imagen 1), NUNCA se prioriza ni resalta como urgente
+          r.en_bot_practica = false;
+          r.practica_bot = 0;
+          r.pendiente_subir_bot = 0;
+          r.bot_avance_pct = 0;
+          r.bot_termino_practica = false;
+          r.es_terminado_sin_cargue = false;
+          r.es_urgente_en_practica = false;
+          r.es_prioridad_bot = false;
+          if (esCarg) {
+            r.orden_prioridad = 5;
+            r.etiqueta_prioridad_op = '✅ 5. YA CERTIFICADO / CARGADO RUNT';
+          } else {
+            const pLow = String(r.prioridad || '').trim().toLowerCase();
+            const tienePrioHoja = Boolean(pLow) && !['revisado', 'sin prioridad', '-'].includes(pLow);
+            r.orden_prioridad = tienePrioHoja ? 3 : 4;
+            r.etiqueta_prioridad_op = tienePrioHoja
+              ? '⏳ 3. PENDIENTE RUNT (SIN ACTIVIDAD BOT)'
+              : '⚪ 4. SIN PRIORIDAD / INACTIVO (SIN BOT)';
+          }
+        }
+
+        if (r.es_terminado_sin_cargue) cntTermSin++;
+        if (r.es_urgente_en_practica) cntUrgPrac++;
+        if (!esCarg && Number(r.pendiente_subir_bot || 0) > 0) cntDesfaseBot++;
+      });
+
+      if (RUNT_SHEET_DATA.kpis) {
+        RUNT_SHEET_DATA.kpis.terminaron_sin_cargue = cntTermSin;
+        RUNT_SHEET_DATA.kpis.urgentes_en_practica = cntUrgPrac;
+        RUNT_SHEET_DATA.kpis.en_bot_prioridad = cntTermSin + cntUrgPrac;
+        RUNT_SHEET_DATA.kpis.con_clases_bot_por_subir = cntDesfaseBot;
+      }
+    }
+
+    function actualizarKpisYContadoresRunt() {
+      if (!RUNT_SHEET_DATA) return;
+      const k = RUNT_SHEET_DATA.kpis || {};
+      const setCnt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+      setCnt('cnt_rn_pend', k.pendientes_runt || 0);
+      setCnt('cnt_rn_bot_prio', k.en_bot_prioridad || 0);
+      setCnt('cnt_rn_term_sin', k.terminaron_sin_cargue || 0);
+      setCnt('cnt_rn_urg_prac', k.urgentes_en_practica || 0);
+      setCnt('cnt_rn_vence', k.por_vencer_o_vencidos || 0);
+      setCnt('cnt_rn_cargados', k.cargados_runt || 0);
+      setCnt('cnt_rn_moto_teo', k.moto_sin_25_teoria || 0);
+      setCnt('cnt_rn_moto_tal', k.moto_sin_3_taller || 0);
+      setCnt('cnt_rn_carro_tt', k.carro_sin_teoria_taller || 0);
+      setCnt('cnt_rn_bot', k.con_clases_bot_por_subir || 0);
+      setCnt('cnt_rn_todos', k.total_practica || 0);
+      setCnt('cnt_rn_norunt', k.no_runt_pendientes || 0);
+      setCnt('cnt_rn_horarios', k.total_inicio_practica || 0);
+      setCnt('cnt_rn_codigos', k.total_codigos_runt || 0);
+      actualizarBotonVistaRunt();
+
+      const kpiEl = document.getElementById('kpiRuntSheetGrid');
+      if (kpiEl) {
+        kpiEl.innerHTML = `
+          <div class="kpi-card danger" style="cursor:pointer;" onclick="cambiarTabHojaRunt('BOT_PRIORIDAD_PRACTICA')">
+            <div class="kpi-label">🤖 Prioridad Bot en Práctica (&lt;100%)</div>
+            <div class="kpi-value" style="color:#fdba74;">${k.en_bot_prioridad || 0} Prioritarios</div>
+            <div class="kpi-sub"><b>🔥 ${k.terminaron_sin_cargue || 0}</b> terminaron • <b>🚨 ${k.urgentes_en_practica || 0}</b> en práctica</div>
+          </div>
+          <div class="kpi-card purple" style="cursor:pointer;" onclick="cambiarTabHojaRunt('MOTO_SIN_25_TEORIA')">
+            <div class="kpi-label">🏍️ Pendientes Teoría / Taller</div>
+            <div class="kpi-value" style="color:#d8b4fe;">${k.moto_sin_25_teoria || 0} Sin 25h Teoría</div>
+            <div class="kpi-sub"><b>${k.moto_sin_3_taller || 0}</b> sin taller • <b>${k.carro_sin_teoria_taller || 0}</b> carros</div>
+          </div>
+          <div class="kpi-card warning" style="cursor:pointer;" onclick="cambiarTabHojaRunt('POR_VENCER_90')">
+            <div class="kpi-label">⏰ Por Vencer / Vencidos (90d)</div>
+            <div class="kpi-value" style="color:#fca5a5;">${k.por_vencer_o_vencidos || 0} Alumnos</div>
+            <div class="kpi-sub"><b>${k.vencidos_sancion || 0} vencidos</b> para reiniciar</div>
+          </div>
+          <div class="kpi-card success" style="cursor:pointer;" onclick="cambiarTabHojaRunt('CARGADOS_PRACTICA')">
+            <div class="kpi-label">✅ Certificados en RUNT</div>
+            <div class="kpi-value" style="color:#34d399;">${k.cargados_runt || 0} Cargados</div>
+            <div class="kpi-sub"><b>${k.pendientes_runt || 0}</b> pendientes en total</div>
+          </div>
+        `;
+      }
+    }
+
     async function cargarPanoramaRuntDigital(forzar = false) {
       try {
         const elBatchF = document.getElementById('rn_batch_fecha');
@@ -5616,6 +5759,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         const data = await res.json();
         if (!data || !data.ok) return;
         RUNT_SHEET_DATA = data;
+        aplicarPrioridadBotEnVivoRunt();
 
         const stBadge = document.getElementById('runtSheetStatusBadge');
         const extLink = document.getElementById('runtSheetExternalLink');
@@ -5631,50 +5775,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           }
         }
 
-        const k = data.kpis || {};
-        const setCnt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-        setCnt('cnt_rn_pend', k.pendientes_runt || 0);
-        setCnt('cnt_rn_bot_prio', k.en_bot_prioridad || 0);
-        setCnt('cnt_rn_term_sin', k.terminaron_sin_cargue || 0);
-        setCnt('cnt_rn_urg_prac', k.urgentes_en_practica || 0);
-        setCnt('cnt_rn_vence', k.por_vencer_o_vencidos || 0);
-        setCnt('cnt_rn_cargados', k.cargados_runt || 0);
-        setCnt('cnt_rn_moto_teo', k.moto_sin_25_teoria || 0);
-        setCnt('cnt_rn_moto_tal', k.moto_sin_3_taller || 0);
-        setCnt('cnt_rn_carro_tt', k.carro_sin_teoria_taller || 0);
-        setCnt('cnt_rn_bot', k.con_clases_bot_por_subir || 0);
-        setCnt('cnt_rn_todos', k.total_practica || 0);
-        setCnt('cnt_rn_norunt', k.no_runt_pendientes || 0);
-        setCnt('cnt_rn_horarios', k.total_inicio_practica || 0);
-        setCnt('cnt_rn_codigos', k.total_codigos_runt || 0);
         poblarOpcionesFiltrosRunt();
-        actualizarBotonVistaRunt();
-
-        const kpiEl = document.getElementById('kpiRuntSheetGrid');
-        if (kpiEl) {
-          kpiEl.innerHTML = `
-            <div class="kpi-card danger" style="cursor:pointer;" onclick="cambiarTabHojaRunt('BOT_PRIORIDAD_PRACTICA')">
-              <div class="kpi-label">🤖 Prioridad Bot en Práctica (&lt;100%)</div>
-              <div class="kpi-value" style="color:#fdba74;">${k.en_bot_prioridad || 0} Prioritarios</div>
-              <div class="kpi-sub"><b>🔥 ${k.terminaron_sin_cargue || 0}</b> terminaron • <b>🚨 ${k.urgentes_en_practica || 0}</b> en práctica</div>
-            </div>
-            <div class="kpi-card purple" style="cursor:pointer;" onclick="cambiarTabHojaRunt('MOTO_SIN_25_TEORIA')">
-              <div class="kpi-label">🏍️ Pendientes Teoría / Taller</div>
-              <div class="kpi-value" style="color:#d8b4fe;">${k.moto_sin_25_teoria || 0} Sin 25h Teoría</div>
-              <div class="kpi-sub"><b>${k.moto_sin_3_taller || 0}</b> sin taller • <b>${k.carro_sin_teoria_taller || 0}</b> carros</div>
-            </div>
-            <div class="kpi-card warning" style="cursor:pointer;" onclick="cambiarTabHojaRunt('POR_VENCER_90')">
-              <div class="kpi-label">⏰ Por Vencer / Vencidos (90d)</div>
-              <div class="kpi-value" style="color:#fca5a5;">${k.por_vencer_o_vencidos || 0} Alumnos</div>
-              <div class="kpi-sub"><b>${k.vencidos_sancion || 0} vencidos</b> para reiniciar</div>
-            </div>
-            <div class="kpi-card success" style="cursor:pointer;" onclick="cambiarTabHojaRunt('CARGADOS_PRACTICA')">
-              <div class="kpi-label">✅ Certificados en RUNT</div>
-              <div class="kpi-value" style="color:#34d399;">${k.cargados_runt || 0} Cargados</div>
-              <div class="kpi-sub"><b>${k.pendientes_runt || 0}</b> pendientes en total</div>
-            </div>
-          `;
-        }
+        actualizarKpisYContadoresRunt();
 
         renderizarTablaHojaRunt();
         // Refrescar tabla superior (Imagen 1) para excluir automáticamente alumnos que ya existen en la hoja Practica RUNT
@@ -5716,7 +5818,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       document.getElementById('rn_cedula').value = item.cedula || '';
       document.getElementById('rn_nombre').value = item.nombre || '';
       document.getElementById('rn_cat').value = item.categoria || 'A2';
-      document.getElementById('rn_prioridad').value = item.prioridad || 'EN PRACTICA';
+      document.getElementById('rn_prioridad').value = item.prioridad || '';
       document.getElementById('rn_fecha_mat').value = item.fecha_matricula || '';
       const v90El = document.getElementById('rn_vence_90');
       if (v90El) v90El.value = (item.vence_90_dias || '').slice(0, 10);
@@ -5761,7 +5863,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         if (origen === 'cedula' && match.nombre) document.getElementById('rn_nombre').value = match.nombre;
         if (origen === 'nombre' && match.cedula) document.getElementById('rn_cedula').value = match.cedula;
         document.getElementById('rn_cat').value = match.categoria || 'A2';
-        document.getElementById('rn_prioridad').value = match.prioridad || 'EN PRACTICA';
+        document.getElementById('rn_prioridad').value = match.prioridad || '';
         if (match.fecha_matricula) document.getElementById('rn_fecha_mat').value = match.fecha_matricula;
         const v90El = document.getElementById('rn_vence_90');
         if (v90El) v90El.value = (match.vence_90_dias || '').slice(0, 10);
@@ -6224,7 +6326,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         cedula: item.cedula,
         nombre: item.nombre,
         categoria: item.categoria,
-        prioridad: marcarCargado ? 'Termino' : 'EN PRACTICA',
+        prioridad: marcarCargado ? 'Termino' : (item.prioridad || ''),
         fecha_matricula: item.fecha_matricula,
         teoria: marcarCargado ? item.meta_teoria : item.teoria,
         taller: marcarCargado ? item.meta_taller : item.taller,
@@ -6436,7 +6538,9 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           badgeVig = `<span class="badge badge-success">✅ VIGENTE (${r.dias_restantes_90}d)</span>`;
         }
 
-        let badgePrioridad = `<span class="badge">${r.prioridad || '-'}</span>`;
+        let badgePrioridad = r.prioridad
+          ? `<span class="badge">${r.prioridad}</span>`
+          : `<span style="color:var(--muted); font-size:11px;">—</span>`;
         if (r.es_terminado_sin_cargue) {
           badgePrioridad = `<span class="badge badge-danger" style="background:rgba(249,115,22,0.28); color:#fed7aa; border-color:#f97316; font-weight:800;">🔥 1. BOT TERMINÓ (FALTA RUNT)</span>`;
         } else if (r.es_urgente_en_practica) {
