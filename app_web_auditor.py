@@ -770,7 +770,7 @@ def _recalcular_estado_desde_bd_historica(
 
 
 def procesar_y_actualizar_estado(
-    origen: Any,
+    origen: Any = None,
     filename: str = "matriculas23112026.xlsx",
     periodicidad: str = "ANUAL",
     origen_ingresos: Any = None,
@@ -779,15 +779,17 @@ def procesar_y_actualizar_estado(
     config_override: Optional[Dict[str, Any]] = None,
     modo_incorporar: bool = True,
 ) -> Dict[str, Any]:
-    if isinstance(origen, (str, Path)):
-        mat_bytes = Path(origen).read_bytes()
-    elif isinstance(origen, bytes):
-        mat_bytes = origen
-    else:
-        mat_bytes = origen.read()
+    mat_bytes = None
+    if origen is not None:
+        if isinstance(origen, (str, Path)):
+            mat_bytes = Path(origen).read_bytes()
+        elif isinstance(origen, bytes):
+            mat_bytes = origen
+        else:
+            mat_bytes = origen.read()
 
     ing_bytes = None
-    if origen_ingresos:
+    if origen_ingresos is not None:
         if isinstance(origen_ingresos, (str, Path)):
             ing_bytes = Path(origen_ingresos).read_bytes()
         elif isinstance(origen_ingresos, bytes):
@@ -795,22 +797,79 @@ def procesar_y_actualizar_estado(
         else:
             ing_bytes = origen_ingresos.read()
 
-    tarifas_usar = tarifas_base or STATE.get("tarifas_base") or dict(auditor_cea.TARIFAS_BASE_DEFAULT)
+    # Autodetección inteligente: evita errores si el usuario sube Ingresos en el campo 1
+    # o invierte los dos archivos de Matrículas e Ingresos.
+    if mat_bytes:
+        tipo_1 = auditor_cea.detectar_tipo_archivo_financiero(mat_bytes)
+        tipo_2 = auditor_cea.detectar_tipo_archivo_financiero(ing_bytes) if ing_bytes else ""
+        if tipo_1 == "INGRESOS" and not ing_bytes:
+            ing_bytes = mat_bytes
+            ingresos_filename = filename or ingresos_filename or "ingresos.xlsx"
+            mat_bytes = None
+            filename = STATE.get("filename") or "Base_Historica_CEA.json"
+        elif tipo_1 == "INGRESOS" and tipo_2 == "MATRICULAS":
+            mat_bytes, ing_bytes = ing_bytes, mat_bytes
+            filename, ingresos_filename = (ingresos_filename or "matriculas.xlsx"), (filename or "ingresos.xlsx")
 
+    tarifas_usar = tarifas_base or STATE.get("tarifas_base") or dict(auditor_cea.TARIFAS_BASE_DEFAULT)
+    existentes = STATE.get("registros_historicos") or []
+    meta_prev = dict(STATE.get("metadata_historica") or {})
+    if not existentes:
+        existentes, meta_bd_prev = auditor_cea.cargar_bd_historica()
+        if meta_bd_prev and not meta_prev:
+            meta_prev = dict(meta_bd_prev)
+
+    # MODO SOLO INGRESOS: concilia abonos y recibos de caja directamente sobre la Base Histórica actual
+    if mat_bytes is None and ing_bytes is not None:
+        if not existentes:
+            raise ValueError("Primero debe existir una base de Matrículas cargada para conciliar el archivo de Ingresos.")
+        STATE["raw_ingresos_bytes"] = ing_bytes
+        corte_dt = auditor_cea._parse_date(meta_prev.get("fecha_final")) or datetime.datetime.now()
+        registros_finales, stats_ing = auditor_cea.conciliar_ingresos_en_bd(
+            registros=existentes,
+            origen_ingresos=ing_bytes,
+            fecha_corte=corte_dt,
+            tarifas_base=tarifas_usar,
+        )
+        metadata = dict(meta_prev)
+        metadata["recibos_externos_cargados"] = stats_ing.get("recibos_leidos", 0)
+        metadata["recibos_huerfanos_cruzados"] = stats_ing.get("recibos_huerfanos_cruzados", 0)
+        metadata["ingresos_stats"] = stats_ing
+        metadata["solo_ingresos"] = True
+        merge_stats = {
+            "total_antes": len(existentes),
+            "nuevos_insertados": 0,
+            "existentes_actualizados": stats_ing.get("matriculas_saldo_actualizado", 0),
+            "sin_cambios": max(0, len(registros_finales) - stats_ing.get("matriculas_saldo_actualizado", 0)),
+            "total_despues": len(registros_finales),
+            "solo_ingresos": True,
+            "ingresos_stats": stats_ing,
+        }
+        return _recalcular_estado_desde_bd_historica(
+            registros=registros_finales,
+            metadata=metadata,
+            filename=STATE.get("filename") or filename,
+            periodicidad=periodicidad,
+            ingresos_filename=ingresos_filename or "ingresos.xlsx",
+            tarifas_base=tarifas_usar,
+            config_override=config_override,
+            merge_stats=merge_stats,
+        )
+
+    if mat_bytes is None:
+        raise ValueError("No se recibió ningún archivo de Matrículas ni de Ingresos.")
+
+    # Cargar Matrículas (sin cruzar Ingresos aún para poder conciliar Ingresos contra TODA la BD histórica)
     nuevos_registros, metadata = auditor_cea.cargar_y_limpiar_datos(
         mat_bytes,
-        origen_ingresos=ing_bytes,
+        origen_ingresos=None,
         tarifas_base=tarifas_usar,
     )
     STATE["raw_matriculas_bytes"] = mat_bytes
-    STATE["raw_ingresos_bytes"] = ing_bytes
+    if ing_bytes is not None:
+        STATE["raw_ingresos_bytes"] = ing_bytes
 
-    # Si es un archivo de Auxiliar Contable Siigo/DIAN (4180/4175), se audita directamente;
-    # Si es de Matrículas SISEC y modo_incorporar=True, incorpora/actualiza sobre la Base Histórica sin perder años ni registros previos
     es_contabilidad = bool((metadata or {}).get("contabilidad_resumen", {}) and (metadata or {}).get("contabilidad_resumen", {}).get("es_contabilidad"))
-    existentes = STATE.get("registros_historicos") or []
-    if not existentes:
-        existentes, _ = auditor_cea.cargar_bd_historica()
 
     merge_stats = None
     if modo_incorporar and existentes and not es_contabilidad:
@@ -831,6 +890,21 @@ def procesar_y_actualizar_estado(
             "total_despues": len(nuevos_registros),
         }
 
+    # Si también se subió Reporte de Ingresos, conciliar recibos reales sobre TODA la BD (2024-2026)
+    if ing_bytes is not None and not es_contabilidad:
+        corte_dt = auditor_cea._parse_date((metadata or {}).get("fecha_final")) or datetime.datetime.now()
+        registros_finales, stats_ing = auditor_cea.conciliar_ingresos_en_bd(
+            registros=registros_finales,
+            origen_ingresos=ing_bytes,
+            fecha_corte=corte_dt,
+            tarifas_base=tarifas_usar,
+        )
+        metadata["recibos_externos_cargados"] = stats_ing.get("recibos_leidos", 0)
+        metadata["recibos_huerfanos_cruzados"] = stats_ing.get("recibos_huerfanos_cruzados", 0)
+        metadata["ingresos_stats"] = stats_ing
+        if isinstance(merge_stats, dict):
+            merge_stats["ingresos_stats"] = stats_ing
+
     return _recalcular_estado_desde_bd_historica(
         registros=registros_finales,
         metadata=metadata,
@@ -843,26 +917,66 @@ def procesar_y_actualizar_estado(
     )
 
 
-_CANDIDATOS_MATRICULAS = [
-    BASE_DIR / "matriculas23112026.xlsx",
-    BASE_DIR / "matriculas18112026.xlsx",
-    DEFAULT_EXCEL_PATH,
-]
+def _orden_archivo_reciente(p: Path):
+    """Prioriza archivos con fecha más reciente en su nombre (DDMMYYYY) o mtime."""
+    m = re.search(r"(\d{2})(\d{2})(\d{4})", p.name)
+    if m:
+        dd, mm, yyyy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 2020 <= yyyy <= 2035 and 1 <= mm <= 12 and 1 <= dd <= 31:
+            return (1, yyyy * 10000 + mm * 100 + dd, p.stat().st_mtime)
+    return (0, 0, p.stat().st_mtime)
+
+
+_CANDIDATOS_MATRICULAS = sorted(
+    [p for p in BASE_DIR.glob("matriculas*.xlsx") if p.is_file()],
+    key=_orden_archivo_reciente,
+    reverse=True,
+)
+if DEFAULT_EXCEL_PATH.exists() and DEFAULT_EXCEL_PATH not in _CANDIDATOS_MATRICULAS:
+    _CANDIDATOS_MATRICULAS.append(DEFAULT_EXCEL_PATH)
+
+_CANDIDATOS_INGRESOS = sorted(
+    [p for p in BASE_DIR.glob("ingresos*.xlsx") if p.is_file()],
+    key=_orden_archivo_reciente,
+    reverse=True,
+)
+_ing_seed = _CANDIDATOS_INGRESOS[0] if _CANDIDATOS_INGRESOS else None
+
 _regs_bd_init, _meta_bd_init = auditor_cea.cargar_bd_historica()
-for _cand_excel in _CANDIDATOS_MATRICULAS:
-    if _cand_excel.exists():
+if _regs_bd_init:
+    # Nunca sobreescribir una BD histórica ya actualizada con un Excel semilla más antiguo;
+    # solo cargar la BD persistente y, si hay un archivo ingresos*.xlsx en carpeta, conciliarlo sin retroceder abonos.
+    STATE["registros_historicos"] = _regs_bd_init
+    STATE["metadata_historica"] = _meta_bd_init
+    if _ing_seed and _ing_seed.exists():
         try:
-            # Sembrar o fusionar siempre el archivo maestro de 3,262 registros con la BD histórica persistente
-            if _regs_bd_init:
-                STATE["registros_historicos"] = _regs_bd_init
-                STATE["metadata_historica"] = _meta_bd_init
-            procesar_y_actualizar_estado(_cand_excel, filename=_cand_excel.name, periodicidad="ANUAL", modo_incorporar=True)
-            break
+            procesar_y_actualizar_estado(
+                origen=None,
+                origen_ingresos=_ing_seed,
+                ingresos_filename=_ing_seed.name,
+                periodicidad="ANUAL",
+                modo_incorporar=True,
+            )
         except Exception as exc:
-            logger.warning("No se pudo precargar %s: %s", _cand_excel.name, exc)
-else:
-    if _regs_bd_init:
+            logger.warning("No se pudo conciliar ingresos semilla %s: %s", _ing_seed.name, exc)
+            _recalcular_estado_desde_bd_historica(_regs_bd_init, _meta_bd_init, filename="Base_Historica_CEA.json")
+    else:
         _recalcular_estado_desde_bd_historica(_regs_bd_init, _meta_bd_init, filename="Base_Historica_CEA.json")
+else:
+    for _cand_excel in _CANDIDATOS_MATRICULAS:
+        if _cand_excel.exists():
+            try:
+                procesar_y_actualizar_estado(
+                    _cand_excel,
+                    filename=_cand_excel.name,
+                    periodicidad="ANUAL",
+                    origen_ingresos=_ing_seed if (_ing_seed and _ing_seed.exists()) else None,
+                    ingresos_filename=_ing_seed.name if (_ing_seed and _ing_seed.exists()) else "",
+                    modo_incorporar=True,
+                )
+                break
+            except Exception as exc:
+                logger.warning("No se pudo precargar %s: %s", _cand_excel.name, exc)
 
 
 HTML_DASHBOARD = r"""<!DOCTYPE html>
@@ -1516,10 +1630,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <span id="currentFileBadge" class="badge badge-info">matriculas23112026.xlsx</span>
         </div>
         <form id="uploadForm">
-          <div class="upload-grid">
+          <div class="upload-grid" style="grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); align-items:end;">
             <div>
-              <label class="field-label">📋 Archivo a Incorporar / Actualizar en Base de Datos (.xlsx / .csv) *</label>
-              <input type="file" id="fileInput" name="file" accept=".xlsx,.xls,.csv" required />
+              <label class="field-label">📋 1. Archivo Matrículas (.xlsx / .csv)</label>
+              <input type="file" id="fileInput" name="file" accept=".xlsx,.xls,.csv" />
+            </div>
+            <div>
+              <label class="field-label" style="color:#6ee7b7;">🧾 2. Archivo Ingresos / Recibos de Caja (.xlsx / .csv)</label>
+              <input type="file" id="ingresosInput" name="ingresos_file" accept=".xlsx,.xls,.csv" title="Sube Reporte de Ingresos junto con Matrículas o SOLO Ingresos para actualizar abonos y saldos al instante" style="border-color:#10b981;" />
             </div>
             <div>
               <label class="field-label">🔄 Modo de Base de Datos Histórica</label>
@@ -1529,14 +1647,16 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               </select>
             </div>
             <div style="display:flex; gap:6px; align-items:center;">
-              <input type="file" id="ingresosInput" name="ingresos_file" accept=".xlsx,.xls,.csv" title="Opcional: Recibos de Caja o Auxiliar Contable" style="max-width:140px; font-size:11px;" />
               <select id="periodoInput" name="periodicidad" style="width:auto;">
                 <option value="ANUAL">Anual</option>
                 <option value="MENSUAL">Mensual</option>
                 <option value="SEMANAL">Semanal</option>
               </select>
-              <button type="submit" class="btn btn-primary">⚡ Incorporar a BD</button>
+              <button type="submit" class="btn btn-primary" style="flex:1; justify-content:center;">⚡ Cargar y Conciliar</button>
             </div>
+          </div>
+          <div style="margin-top:6px; font-size:11.5px; color:#94a3b8;">
+            💡 Puedes subir <b>ambos archivos juntos</b> (Matrículas + Ingresos) o subir <b>SOLO Ingresos</b> para conciliar abonos reales por matrícula sin duplicar recibos y separando RUNT / Refuerzos / Refrendaciones.
           </div>
         </form>
         <div id="uploadToast" class="status-toast"></div>
@@ -4927,15 +5047,24 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             </tr>
           `).join('');
 
-          const recibosHtml = (c.RECIBOS_DETALLE || []).map(rc => `
-            <tr>
+          const recibosHtml = (c.RECIBOS_DETALLE || []).map(rc => {
+            const esOtro = !!rc.ES_OTRO_SERVICIO;
+            const matCell = esOtro
+              ? `<span class="badge badge-info" title="No suma ni descuenta del saldo del curso">🏷️ ${rc.CONCEPTO_SERVICIO || 'OTRO SERVICIO'}</span>`
+              : (rc.NUMEROMATRICULA || '<span class="badge badge-warning">HUÉRFANO (Por Cédula)</span>');
+            const valClass = esOtro ? 'style="color:#94a3b8;"' : 'class="money-pos"';
+            const tipoCell = esOtro
+              ? `${rc.TIPOPAGO || 'CAJA'} <small style="color:#94a3b8;">(No aplica a curso)</small>`
+              : `${rc.TIPOPAGO || 'CAJA'}${rc.OBSERVACION && rc.OBSERVACION !== rc.TIPOPAGO ? ' • <small style="color:#94a3b8;">' + rc.OBSERVACION + '</small>' : ''}`;
+            return `
+            <tr${esOtro ? ' style="opacity:0.78;"' : ''}>
               <td><b>${rc.RECIBO}</b></td>
               <td>${rc.FECHA}</td>
-              <td>${rc.NUMEROMATRICULA || '<span class="badge badge-warning">HUÉRFANO (Por Cédula)</span>'}</td>
-              <td class="money-pos">${fmtCOP(rc.VALOR)}</td>
-              <td>${rc.TIPOPAGO}</td>
-            </tr>
-          `).join('') || '<tr><td colspan="5" style="color:var(--muted);">Sin recibos registrados</td></tr>';
+              <td>${matCell}</td>
+              <td ${valClass}>${fmtCOP(rc.VALOR)}</td>
+              <td>${tipoCell}</td>
+            </tr>`;
+          }).join('') || '<tr><td colspan="5" style="color:var(--muted);">Sin recibos registrados</td></tr>';
 
           return `
             <tr class="data-row" onclick="toggleExpander('${expId}')">
@@ -5085,15 +5214,24 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           </tr>
         `).join('');
 
-        const recibosHtml = (r.RECIBOS_CLIENTE || []).map(rc => `
-          <tr>
+        const recibosHtml = (r.RECIBOS_CLIENTE || []).map(rc => {
+          const esOtro = !!rc.ES_OTRO_SERVICIO;
+          const matCell = esOtro
+            ? `<span class="badge badge-info" title="No suma ni descuenta del saldo del curso">🏷️ ${rc.CONCEPTO_SERVICIO || 'OTRO SERVICIO'}</span>`
+            : (rc.NUMEROMATRICULA || '<span class="badge badge-warning">HUÉRFANO (Cédula)</span>');
+          const valClass = esOtro ? 'style="color:#94a3b8;"' : 'class="money-pos"';
+          const tipoCell = esOtro
+            ? `${rc.TIPOPAGO || 'CAJA'} <small style="color:#94a3b8;">(No aplica a curso)</small>`
+            : `${rc.TIPOPAGO || 'CAJA'}${rc.OBSERVACION && rc.OBSERVACION !== rc.TIPOPAGO ? ' • <small style="color:#94a3b8;">' + rc.OBSERVACION + '</small>' : ''}`;
+          return `
+          <tr${esOtro ? ' style="opacity:0.78;"' : ''}>
             <td><b>${rc.RECIBO}</b></td>
             <td>${rc.FECHA}</td>
-            <td>${rc.NUMEROMATRICULA || '<span class="badge badge-warning">HUÉRFANO (Cédula)</span>'}</td>
-            <td class="money-pos">${fmtCOP(rc.VALOR)}</td>
-            <td>${rc.TIPOPAGO}</td>
-          </tr>
-        `).join('') || '<tr><td colspan="5" style="color:#fca5a5;">🚨 Sin recibos ni abonos registrados en caja ($0 Global)</td></tr>';
+            <td>${matCell}</td>
+            <td ${valClass}>${fmtCOP(rc.VALOR)}</td>
+            <td>${tipoCell}</td>
+          </tr>`;
+        }).join('') || '<tr><td colspan="5" style="color:#fca5a5;">🚨 Sin recibos ni abonos registrados en caja ($0 Global)</td></tr>';
 
         return `
           <tr class="${rowClass}" onclick="toggleExpander('${expId}')">
@@ -5105,7 +5243,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             <td><span class="badge">${r.CATEGORIA}</span></td>
             <td>${fmtCOP(r.VALORCURSO)}</td>
             <td>${abonoCellHtml}</td>
-            <td class="${Number(r.VALORPENDIENTE || 0) > 0 ? 'money-neg' : 'money-pos'}">${fmtCOP(Math.max(0, Number(r.VALORPENDIENTE || 0)))}</td>
+            <td class="${Number(r.VALORPENDIENTE || 0) > 0 && !['INACTIVA','ANULADA','CANCELADA'].includes(String(r.ESTADO || '').toUpperCase()) ? 'money-neg' : 'money-pos'}">${fmtCOP(Math.max(0, ['INACTIVA','ANULADA','CANCELADA'].includes(String(r.ESTADO || '').toUpperCase()) ? 0 : Number(r.VALORPENDIENTE || 0)))}</td>
             <td>${badgeCtx}</td>
             <td><span class="badge ${r.DIAS_ANTIGUEDAD > 90 ? 'badge-danger' : (r.DIAS_ANTIGUEDAD > 30 ? 'badge-warning' : '')}">${r.DIAS_ANTIGUEDAD} días</span></td>
             <td>
@@ -5124,7 +5262,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
                   <p style="font-size:12px; color:#cbd5e1; margin:4px 0;">
                     Total Contratado Cliente: <b>${fmtCOP(r.TOTAL_CONTRATADO_CLIENTE)}</b> |
                     Total Pagado Cliente: <b style="color:#34d399;">${fmtCOP(r.TOTAL_ABONADO_CLIENTE)}</b> |
-                    Saldo Real Cliente: <b style="color:#f87171;">${fmtCOP(r.SALDO_REAL_CLIENTE)}</b>
+                    Saldo Real Cliente: <b style="color:${Number(r.SALDO_REAL_CLIENTE || 0) > 0 ? '#f87171' : '#34d399'};">${fmtCOP(Math.max(0, Number(r.SALDO_REAL_CLIENTE || 0)))}</b>
                   </p>
                   <table class="mini-table">
                     <thead><tr><th>Matrícula</th><th>Cat.</th><th>Fecha Insc.</th><th>Valor Curso</th><th>Abono Reg.</th><th>Saldo Reg.</th><th>Estado</th></tr></thead>
@@ -5134,7 +5272,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
                 <div>
                   <b style="color:#6ee7b7;">🧾 Recibos de Caja Asociados a la Cédula (${r.NUMERODOCUMENTO})</b>
                   <table class="mini-table">
-                    <thead><tr><th>N° Recibo</th><th>Fecha</th><th>Matrícula</th><th>Valor</th><th>Medio de Pago</th></tr></thead>
+                    <thead><tr><th>N° Recibo</th><th>Fecha</th><th>Matrícula / Servicio</th><th>Valor</th><th>Medio de Pago / Obs.</th></tr></thead>
                     <tbody>${recibosHtml}</tbody>
                   </table>
                 </div>
@@ -5149,9 +5287,16 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       e.preventDefault();
       const fileEl = document.getElementById('fileInput');
       const ingEl = document.getElementById('ingresosInput');
-      if (!fileEl.files.length) return;
+      const toast = document.getElementById('uploadToast');
+      if (!fileEl.files.length && !ingEl.files.length) {
+        toast.className = 'status-toast err';
+        toast.textContent = '⚠️ Selecciona al menos un archivo: Matrículas, Ingresos (Recibos de Caja) o ambos.';
+        return;
+      }
       const fd = new FormData();
-      fd.append('file', fileEl.files[0]);
+      if (fileEl.files.length) {
+        fd.append('file', fileEl.files[0]);
+      }
       if (ingEl.files.length) {
         fd.append('ingresos_file', ingEl.files[0]);
       }
@@ -5159,9 +5304,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const modoBdEl = document.getElementById('modoBdInput');
       fd.append('modo_bd', modoBdEl ? modoBdEl.value : 'INCORPORAR');
 
-      const toast = document.getElementById('uploadToast');
       toast.className = 'status-toast ok';
-      toast.textContent = '⏳ Incorporando archivo en la Base de Datos Histórica y recalculando...';
+      toast.textContent = '⏳ Cargando archivos, conciliando recibos de caja y recalculando saldos...';
 
       try {
         const res = await fetch('/api/upload', { method: 'POST', body: fd });
@@ -5170,14 +5314,24 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           AUDIT_DATA = data;
           actualizarVista();
           await cargarBotOverview();
+          fileEl.value = '';
+          ingEl.value = '';
           toast.className = 'status-toast ok';
           const k = data.hallazgos.kpis;
           const ms = data.merge_stats || {};
-          if (ms.total_despues) {
-            toast.textContent = `✅ Base Histórica actualizada: ${ms.total_despues} matrículas conservadas (+${ms.nuevos_insertados || 0} nuevas, ${ms.existentes_actualizados || 0} modificadas).`;
+          const ist = data.ingresos_stats || ms.ingresos_stats || (data.hallazgos.metadata || {}).ingresos_stats || null;
+          let msg = '';
+          if (ms.solo_ingresos && ist) {
+            msg = `✅ Ingresos conciliados: ${ist.recibos_leidos || 0} recibos procesados • ${ist.matriculas_saldo_actualizado || 0} matrículas actualizaron abono (${ist.matriculas_pasaron_paz_y_salvo || 0} pasaron a Paz y Salvo $0) • ${ist.recibos_otros_servicios || 0} otros servicios (RUNT/Refuerzo/Refrendación) separados.`;
+          } else if (ms.total_despues) {
+            msg = `✅ Base Histórica actualizada: ${ms.total_despues} matrículas (+${ms.nuevos_insertados || 0} nuevas, ${ms.existentes_actualizados || 0} modificadas).`;
+            if (ist && ist.recibos_leidos) {
+              msg += ` 🧾 Ingresos: ${ist.recibos_leidos} recibos • ${ist.matriculas_con_recibos || 0} matrículas detalladas • ${ist.matriculas_pasaron_paz_y_salvo || 0} a Paz y Salvo ($0) • ${ist.recibos_otros_servicios || 0} otros servicios separados.`;
+            }
           } else {
-            toast.textContent = `✅ Auditado: ${k.total_matriculas} matrículas (${k.total_clientes_unicos} clientes únicos, ${k.clientes_multicurso_count} multi-curso).`;
+            msg = `✅ Auditado: ${k.total_matriculas} matrículas (${k.total_clientes_unicos} clientes únicos, ${k.clientes_multicurso_count} multi-curso).`;
           }
+          toast.textContent = msg;
         } else {
           toast.className = 'status-toast err';
           toast.textContent = `❌ Error: ${data.error}`;
@@ -9502,26 +9656,29 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                         modo_bd = val_m.decode("utf-8", errors="ignore").strip().upper() or "INCORPORAR"
                 modo_incorporar = modo_bd != "REEMPLAZAR"
 
-                if not file_bytes:
-                    self._send_json({"ok": False, "error": "No se recibió el archivo de matrículas."}, 400)
+                if not file_bytes and not ingresos_bytes:
+                    self._send_json({"ok": False, "error": "No se recibió ningún archivo (Matrículas ni Ingresos)."}, 400)
                     return
 
                 hallazgos = procesar_y_actualizar_estado(
-                    file_bytes,
-                    filename=filename,
+                    origen=file_bytes,
+                    filename=filename if file_bytes else (STATE.get("filename") or "Base_Historica_CEA.json"),
                     periodicidad=periodicidad,
                     origen_ingresos=ingresos_bytes,
                     ingresos_filename=ingresos_filename,
                     modo_incorporar=modo_incorporar,
                 )
-                m_stats = (hallazgos.get("metadata") or {}).get("merge_stats") or {}
+                meta_h = hallazgos.get("metadata") or {}
+                m_stats = meta_h.get("merge_stats") or {}
+                ing_stats = meta_h.get("ingresos_stats") or m_stats.get("ingresos_stats") or None
                 self._send_json({
                     "ok": True,
-                    "filename": filename,
-                    "ingresos_filename": ingresos_filename,
+                    "filename": STATE.get("filename") or filename,
+                    "ingresos_filename": STATE.get("ingresos_filename") or ingresos_filename,
                     "periodicidad": periodicidad,
                     "modo_bd": modo_bd,
                     "merge_stats": m_stats,
+                    "ingresos_stats": ing_stats,
                     "updated_at": STATE["updated_at"],
                     "hallazgos": hallazgos,
                 })

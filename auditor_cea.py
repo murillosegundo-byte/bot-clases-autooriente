@@ -357,10 +357,83 @@ def _inferir_categoria_por_monto_contable(monto: float, codigo_contable: str = "
     return "A2"
 
 
+def detectar_tipo_archivo_financiero(origen: Any) -> str:
+    """
+    Detecta automáticamente si un archivo Excel/CSV corresponde a:
+    - 'AUXILIAR_CONTABLE' (Siigo / DIAN con CODIGOCONTABLE / COMPROBANTE / CREDITO / DEBITO)
+    - 'INGRESOS' (Reporte de Ingresos / Recibos de Caja con NUMERORECIBO / SEDEINGRESO / CENTROCOSTO)
+    - 'MATRICULAS' (Reporte de Matrículas SISEC con VALORCURSO / CLASESCONTRATADAS / VALORPENDIENTE)
+    """
+    if not origen:
+        return "MATRICULAS"
+    try:
+        file_bytes, is_csv = _extraer_bytes(origen)
+        filas = _leer_filas_csv(file_bytes) if is_csv else _leer_filas_xlsx_nativo(file_bytes)
+    except Exception:
+        return "MATRICULAS"
+
+    titulo_ingresos = False
+    titulo_matriculas = False
+    for fila in filas[:30]:
+        texto_fila = " ".join(str(c).strip().upper() for c in fila if str(c).strip())
+        if "REPORTE INGRESOS" in texto_fila or "RECIBOS DE CAJA" in texto_fila:
+            titulo_ingresos = True
+        if "REPORTE MATRICULAS" in texto_fila or "REPORTE MATRÍCULAS" in texto_fila:
+            titulo_matriculas = True
+
+        fila_norm = [_norm_header(c) for c in fila]
+        if any(k in fila_norm for k in ("CODIGOCONTABLE", "CUENTACONTABLE", "SALDOMOVIMIENTO")) and any(
+            k in fila_norm for k in ("CREDITO", "DEBITO", "IDENTIFICACION", "COMPROBANTE")
+        ):
+            return "AUXILIAR_CONTABLE"
+
+        tiene_cols_mat = any(
+            k in fila_norm for k in ("VALORCURSO", "VALORPENDIENTE", "CLASESCONTRATADAS", "CLASESRECIBIDAS", "CONVENIO")
+        )
+        tiene_cols_ing = any(
+            k in fila_norm for k in ("NUMERORECIBO", "SEDEINGRESO", "CENTROCOSTO", "TIPOPAGO", "MEDIOPAGO", "SEDECOBROMATRICULA")
+        )
+        if tiene_cols_mat:
+            return "MATRICULAS"
+        if tiene_cols_ing and any(
+            k in fila_norm for k in ("VALOR", "ABONO", "MONTO", "TOTAL", "NUMERODOCUMENTO", "NUMEROMATRICULA")
+        ):
+            return "INGRESOS"
+
+    if titulo_ingresos and not titulo_matriculas:
+        return "INGRESOS"
+    return "MATRICULAS"
+
+
+def _clave_dedup_recibo(rc: Dict[str, Any]) -> str:
+    """Genera una clave única estable para no duplicar recibos de caja al recargar reportes de ingresos."""
+    rec_id = str(rc.get("ID_RECIBO") or "").strip().upper()
+    num_rec = str(rc.get("RECIBO") or "").strip().upper()
+    mat = str(rc.get("NUMEROMATRICULA") or "").strip().upper()
+    doc = str(rc.get("NUMERODOCUMENTO") or "").strip().upper()
+    fec = str(rc.get("FECHA") or "").strip()
+    val = f"{round(_to_float(rc.get('VALOR', 0)), 2):.2f}"
+    if rec_id:
+        return f"ID:{rec_id}|{num_rec}|{mat}"
+    if num_rec and not num_rec.startswith("AB-") and not num_rec.startswith("RC-"):
+        return f"REC:{num_rec}|{mat}|{doc}|{val}"
+    return f"FALLBACK:{num_rec}|{mat}|{doc}|{fec}|{val}"
+
+
+def _es_estado_inactivo_matricula(estado: Any) -> bool:
+    est = str(estado or "").strip().upper()
+    return est in ("INACTIVA", "INACTIVO", "ANULADA", "ANULADO", "CANCELADA", "CANCELADO", "RETIRADA", "RETIRADO")
+
+
 def cargar_recibos_ingresos(origen_ingresos: Any) -> List[Dict[str, Any]]:
     """
     Lee un archivo opcional de recibos de caja (`ingresos.xlsx` o `.csv`) O un Auxiliar Contable
     (`Movimiento auxiliar de tercero por cuenta contable` con `FV-2-...` y `NC-2-...`).
+    Separa con precisión:
+    - Recibos de matrícula (tienen `NUMEROMATRICULA` válida) -> se suman al abono del curso.
+    - Otros servicios (`CENTROMEDICO` / `NUMEROREMISION`, ej. INSCRIPCION RUNT, CLASE REFUERZO,
+      REFRENDACION, INASISTENCIA, VENCIMIENTO) -> NO alteran ni descuentan el saldo del curso.
+    - Pagos huérfanos reales (sin matrícula y sin otro servicio) -> se pueden acreditar a saldo activo.
     """
     if not origen_ingresos:
         return []
@@ -413,6 +486,7 @@ def cargar_recibos_ingresos(origen_ingresos: Any) -> List[Dict[str, Any]]:
             fecha_str = fecha_dt.strftime("%Y-%m-%d") if fecha_dt else str(raw.get("FECHAELABORACION", "")).strip()
             recibos.append({
                 "RECIBO": comprobante,
+                "ID_RECIBO": comprobante,
                 "NUMERODOCUMENTO": doc,
                 "TERCERO": tercero,
                 "NUMEROMATRICULA": "",
@@ -426,11 +500,14 @@ def cargar_recibos_ingresos(origen_ingresos: Any) -> List[Dict[str, Any]]:
                 "ESTADO": "DEVOLUCION" if es_nc else "FACTURADO DIAN",
                 "HUERFANO": True,
                 "ES_CONTABLE": True,
+                "ES_OTRO_SERVICIO": False,
+                "CONCEPTO_SERVICIO": "",
+                "APLICADO_CURSO": False,
             })
             continue
 
         estado = str(raw.get("ESTADO", "ACTIVO")).strip().upper()
-        if estado in ("ANULADO", "ANULADA", "CANCELADO", "RECHAZADO"):
+        if estado in ("ANULADO", "ANULADA", "CANCELADO", "CANCELADA", "RECHAZADO", "RECHAZADA", "INACTIVO", "INACTIVA"):
             continue
 
         doc = (
@@ -444,28 +521,243 @@ def cargar_recibos_ingresos(origen_ingresos: Any) -> List[Dict[str, Any]]:
         if mat.upper() in ("NAN", "NONE", "NULL", "0", "-"):
             mat = ""
 
+        centro_medico = (raw.get("CENTROMEDICO") or raw.get("SERVICIO") or "").strip().upper()
+        num_remision = (raw.get("NUMEROREMISION") or "").strip()
+        if num_remision.upper() in ("NAN", "NONE", "NULL", "-"):
+            num_remision = ""
+
         val = _to_float(raw.get("VALOR") or raw.get("MONTO") or raw.get("ABONO") or raw.get("TOTAL") or 0)
         fecha_dt = _parse_date(raw.get("FECHA") or raw.get("FECHAPAGO") or raw.get("FECHARECIBO") or "")
         fecha_str = fecha_dt.strftime("%Y-%m-%d") if fecha_dt else str(raw.get("FECHA", "")).strip()
-        num_recibo = (raw.get("NUMERORECIBO") or raw.get("RECIBO") or raw.get("ID") or f"RC-{i:04d}").strip()
+        id_recibo = str(raw.get("ID") or "").strip()
+        num_recibo = (raw.get("NUMERORECIBO") or raw.get("RECIBO") or id_recibo or f"RC-{i:04d}").strip()
         tipo_pago = (raw.get("TIPOPAGO") or raw.get("MEDIOPAGO") or raw.get("FORMA_PAGO") or "CAJA").strip().upper()
         obs = (raw.get("OBSERVACION") or raw.get("OBSERVACIONES") or raw.get("CONCEPTO") or "").strip()
 
         if not doc and not mat and val == 0:
             continue
 
+        # Otros servicios (RUNT, Refuerzos, Refrendaciones, Inasistencias, Vencimientos, etc.):
+        # No tienen NUMEROMATRICULA y sí tienen CENTROMEDICO o NUMEROREMISION.
+        es_otro_servicio = bool((not mat) and (centro_medico or num_remision))
+        es_huerfano = bool(doc and not mat and not es_otro_servicio)
+
         recibos.append({
             "RECIBO": num_recibo,
+            "ID_RECIBO": id_recibo,
             "NUMERODOCUMENTO": doc,
             "NUMEROMATRICULA": mat,
             "VALOR": val,
             "FECHA": fecha_str,
             "TIPOPAGO": tipo_pago,
             "OBSERVACION": obs,
-            "ESTADO": estado or "APROBADO",
-            "HUERFANO": bool(doc and not mat),
+            "ESTADO": estado or "ACTIVO",
+            "HUERFANO": es_huerfano,
+            "ES_OTRO_SERVICIO": es_otro_servicio,
+            "CONCEPTO_SERVICIO": centro_medico,
+            "APLICADO_CURSO": bool(mat),
         })
     return recibos
+
+
+def conciliar_ingresos_en_bd(
+    registros: List[Dict[str, Any]],
+    origen_ingresos: Any,
+    fecha_corte: Optional[datetime.datetime] = None,
+    tarifas_base: Optional[Dict[str, float]] = None,
+) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Concilia un archivo de Reporte de Ingresos / Recibos de Caja contra TODA la Base de Datos Histórica:
+    - Deduplica recibos por número/ID (subir reportes solapados NUNCA duplica pagos).
+    - Cruza pagos de matrícula estrictamente por `NUMEROMATRICULA` y recalcula `ABONOS`,
+      `VALORPENDIENTE`, `SALDO_CALCULADO` y `ERROR_CUADRE` al instante.
+    - Conserva `max(abono_previo, suma_recibos_curso)` para no perder pagos de años anteriores
+      cuando el archivo de ingresos cubre solo un rango parcial de fechas.
+    - Separa los recibos de otros servicios (INSCRIPCION RUNT, CLASE REFUERZO, REFRENDACION,
+      INASISTENCIA, etc.) en `OTROS_SERVICIOS_CAJA` para mostrarlos sin distorsionar el saldo del curso.
+    """
+    stats: Dict[str, Any] = {
+        "recibos_leidos": 0,
+        "recibos_curso_cruzados": 0,
+        "recibos_otros_servicios": 0,
+        "recibos_huerfanos_cruzados": 0,
+        "matriculas_con_recibos": 0,
+        "matriculas_saldo_actualizado": 0,
+        "matriculas_pasaron_paz_y_salvo": 0,
+    }
+    if not origen_ingresos or not registros:
+        return registros, stats
+
+    recibos_ext = cargar_recibos_ingresos(origen_ingresos)
+    stats["recibos_leidos"] = len(recibos_ext)
+    if not recibos_ext:
+        return registros, stats
+
+    corte = fecha_corte or datetime.datetime.now()
+    tarifas = {**TARIFAS_BASE_DEFAULT, **(tarifas_base or {})}
+    regs = [dict(r) for r in registros]
+
+    por_mat: Dict[str, Dict[str, Any]] = {}
+    por_doc: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for r in regs:
+        mat_k = str(r.get("NUMEROMATRICULA") or "").strip()
+        doc_k = str(r.get("NUMERODOCUMENTO") or "").strip()
+        if mat_k:
+            por_mat[mat_k] = r
+        if doc_k:
+            por_doc[doc_k].append(r)
+
+    # Preparar mapas de recibos reales por matrícula (descartando recibos sintéticos AB-...)
+    recibos_reales_por_mat: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    otros_servicios_por_doc: Dict[str, Dict[str, Dict[str, Any]]] = defaultdict(dict)
+    for r in regs:
+        mat_k = str(r.get("NUMEROMATRICULA") or "").strip()
+        doc_k = str(r.get("NUMERODOCUMENTO") or "").strip()
+        mapa_r: Dict[str, Dict[str, Any]] = {}
+        for rc_old in (r.get("RECIBOS_CAJA") or []):
+            rec_code = str(rc_old.get("RECIBO") or "").strip().upper()
+            if rec_code.startswith("AB-") or rc_old.get("ES_SINTETICO"):
+                continue
+            if rc_old.get("ES_OTRO_SERVICIO"):
+                if doc_k:
+                    otros_servicios_por_doc[doc_k][_clave_dedup_recibo(rc_old)] = dict(rc_old)
+                continue
+            mapa_r[_clave_dedup_recibo(rc_old)] = dict(rc_old)
+        recibos_reales_por_mat[mat_k] = mapa_r
+        for os_old in (r.get("OTROS_SERVICIOS_CAJA") or []):
+            if doc_k:
+                otros_servicios_por_doc[doc_k][_clave_dedup_recibo(os_old)] = dict(os_old)
+
+    # 1) Procesar recibos con NUMEROMATRICULA y separar OTROS_SERVICIOS / HUÉRFANOS
+    huerfanos_pendientes: List[Dict[str, Any]] = []
+    mats_tocadas = set()
+
+    for rc in recibos_ext:
+        mat_id = str(rc.get("NUMEROMATRICULA") or "").strip()
+        doc_id = str(rc.get("NUMERODOCUMENTO") or "").strip()
+        if rc.get("ES_OTRO_SERVICIO"):
+            stats["recibos_otros_servicios"] += 1
+            if doc_id and doc_id in por_doc:
+                otros_servicios_por_doc[doc_id][_clave_dedup_recibo(rc)] = {
+                    **rc,
+                    "APLICADO_CURSO": False,
+                }
+            continue
+
+        if mat_id and mat_id in por_mat:
+            k_dedup = _clave_dedup_recibo(rc)
+            recibos_reales_por_mat[mat_id][k_dedup] = {**rc, "APLICADO_CURSO": True}
+            mats_tocadas.add(mat_id)
+            stats["recibos_curso_cruzados"] += 1
+        elif doc_id and doc_id in por_doc and not rc.get("ES_CONTABLE"):
+            huerfanos_pendientes.append(rc)
+
+    # 2) Recalcular abonos y saldos de matrículas con recibos directos por NUMEROMATRICULA
+    for mat_k, r in por_mat.items():
+        mapa_r = recibos_reales_por_mat.get(mat_k) or {}
+        if not mapa_r:
+            continue
+        recibos_lista = sorted(
+            mapa_r.values(),
+            key=lambda x: (str(x.get("FECHA") or ""), str(x.get("RECIBO") or "")),
+        )
+        # Si hay recibos con valor > 0, ocultar los $0 "SIN ABONO" para dejar el historial limpio
+        recibos_positivos = [x for x in recibos_lista if _to_float(x.get("VALOR", 0)) > 0]
+        recibos_mostrar = recibos_positivos if recibos_positivos else recibos_lista
+
+        suma_recibos = sum(_to_float(x.get("VALOR", 0)) for x in recibos_lista if _to_float(x.get("VALOR", 0)) > 0)
+        ab_prev = _to_float(r.get("ABONOS", 0))
+        vp_prev = _to_float(r.get("VALORPENDIENTE", 0))
+        vc = _to_float(r.get("VALORCURSO", 0))
+        if vc <= 0:
+            vc = tarifas.get(str(r.get("CATEGORIA", "A2")).strip().upper(), 1000000.0)
+
+        ab_final = max(ab_prev, suma_recibos)
+        vp_final = vc - ab_final
+
+        r["RECIBOS_CAJA"] = recibos_mostrar
+        r["ABONOS"] = ab_final
+        r["ABONOS_ORIGINAL"] = ab_final
+        r["VALORPENDIENTE"] = vp_final
+        r["VALORPENDIENTE_ORIGINAL"] = vp_final
+        r["SALDO_CALCULADO"] = vc - ab_final
+        r["ERROR_CUADRE"] = 0.0
+        r["_INGRESOS_CONCILIADOS"] = True
+
+        stats["matriculas_con_recibos"] += 1
+        if ab_final - ab_prev > 0.5:
+            stats["matriculas_saldo_actualizado"] += 1
+            if vp_prev > 0.5 and vp_final <= 0.5:
+                stats["matriculas_pasaron_paz_y_salvo"] += 1
+
+    # 3) Acreditar pagos huérfanos reales (sin matrícula y sin CENTROMEDICO) solo a matrículas ACTIVAS con saldo > 0
+    for rc in huerfanos_pendientes:
+        doc_id = str(rc.get("NUMERODOCUMENTO") or "").strip()
+        val_rc = _to_float(rc.get("VALOR", 0))
+        if not doc_id or doc_id not in por_doc or val_rc <= 0:
+            continue
+        candidatas = [
+            h for h in por_doc[doc_id]
+            if not _es_estado_inactivo_matricula(h.get("ESTADO"))
+            and (_to_float(h.get("VALORCURSO", 0)) - _to_float(h.get("ABONOS", 0))) > 0.5
+        ]
+        if not candidatas:
+            continue
+        candidatas.sort(key=lambda h: (_to_float(h.get("VALORCURSO", 0)) - _to_float(h.get("ABONOS", 0))), reverse=True)
+        restante = val_rc
+        aplicado_alguno = False
+        for h in candidatas:
+            if restante <= 0.5:
+                break
+            vc_h = _to_float(h.get("VALORCURSO", 0))
+            ab_h = _to_float(h.get("ABONOS", 0))
+            vp_prev_h = _to_float(h.get("VALORPENDIENTE", vc_h - ab_h))
+            falta = max(0.0, vc_h - ab_h)
+            if falta <= 0.5:
+                continue
+            k_dedup = _clave_dedup_recibo(rc)
+            ya_existe = any(_clave_dedup_recibo(x) == k_dedup for x in (h.get("RECIBOS_CAJA") or []))
+            if ya_existe:
+                continue
+            aplicar = min(restante, falta)
+            rec_item = {
+                **rc,
+                "VALOR": aplicar,
+                "APLICADO_CURSO": True,
+                "NOTA_CRUCE": "Acreditado por Cédula (Recibo sin matrícula)",
+            }
+            rec_exist = [x for x in (h.get("RECIBOS_CAJA") or []) if not str(x.get("RECIBO", "")).startswith("AB-")]
+            rec_exist.append(rec_item)
+            h["RECIBOS_CAJA"] = rec_exist
+            h["ABONOS"] = ab_h + aplicar
+            h["ABONOS_ORIGINAL"] = h["ABONOS"]
+            h["VALORPENDIENTE"] = vc_h - h["ABONOS"]
+            h["VALORPENDIENTE_ORIGINAL"] = h["VALORPENDIENTE"]
+            h["SALDO_CALCULADO"] = vc_h - h["ABONOS"]
+            h["ERROR_CUADRE"] = 0.0
+            h["_INGRESOS_CONCILIADOS"] = True
+            restante -= aplicar
+            aplicado_alguno = True
+            stats["matriculas_saldo_actualizado"] += 1
+            if vp_prev_h > 0.5 and h["VALORPENDIENTE"] <= 0.5:
+                stats["matriculas_pasaron_paz_y_salvo"] += 1
+        if aplicado_alguno:
+            stats["recibos_huerfanos_cruzados"] += 1
+
+    # 4) Guardar OTROS_SERVICIOS_CAJA en la primera matrícula de cada cédula (para mostrarlos sin duplicar)
+    for doc_id, hermanas in por_doc.items():
+        mapa_os = otros_servicios_por_doc.get(doc_id)
+        if not mapa_os:
+            continue
+        lista_os = sorted(
+            mapa_os.values(),
+            key=lambda x: (str(x.get("FECHA") or ""), str(x.get("RECIBO") or "")),
+        )
+        for idx_h, h in enumerate(hermanas):
+            h["OTROS_SERVICIOS_CAJA"] = lista_os if idx_h == 0 else []
+
+    regs_norm = [normalizar_registro_bd(r, fecha_corte=corte, tarifas_base=tarifas) for r in regs]
+    return regs_norm, stats
 
 
 def cargar_y_limpiar_datos(
@@ -820,45 +1112,17 @@ def cargar_y_limpiar_datos(
         }
         registros.append(reg)
 
-    # Si se subió archivo de recibos de caja (ingresos.xlsx), cruzar por matrícula y por cédula
-    recibos_ext = cargar_recibos_ingresos(origen_ingresos) if origen_ingresos else []
-    if recibos_ext:
-        metadata["recibos_externos_cargados"] = len(recibos_ext)
-        por_mat = {r["NUMEROMATRICULA"]: r for r in registros if r["NUMEROMATRICULA"]}
-        por_doc = defaultdict(list)
-        for r in registros:
-            if r["NUMERODOCUMENTO"]:
-                por_doc[r["NUMERODOCUMENTO"]].append(r)
-
-        # Reiniciar abonos para calcular desde recibos si el archivo de ingresos trae la caja detallada
-        tiene_pagos_mat = any(rc["NUMEROMATRICULA"] in por_mat for rc in recibos_ext)
-        if tiene_pagos_mat:
-            for r in registros:
-                r["ABONOS"] = 0.0
-
-        huerfanos_cruzados = 0
-        for rc in recibos_ext:
-            mat_id = rc["NUMEROMATRICULA"]
-            doc_id = rc["NUMERODOCUMENTO"]
-            if mat_id and mat_id in por_mat:
-                target = por_mat[mat_id]
-                target["RECIBOS_CAJA"].append(rc)
-                if tiene_pagos_mat:
-                    target["ABONOS"] += rc["VALOR"]
-            elif doc_id and doc_id in por_doc:
-                # Pago Huérfano (sin matrícula o matrícula no encontrada, pero cédula sí existe)
-                huerfanos_cruzados += 1
-                hermanas = por_doc[doc_id]
-                # Acreditar empezando por la matrícula con mayor saldo pendiente
-                restante = rc["VALOR"]
-                for h in hermanas:
-                    h["RECIBOS_CAJA"].append({**rc, "NOTA_CRUCE": "Acreditado por Cédula (Recibo sin matrícula)"})
-                    if tiene_pagos_mat and restante > 0:
-                        falta = max(0.0, h["VALORCURSO"] - h["ABONOS"])
-                        aplicar = min(restante, falta) if falta > 0 else restante
-                        h["ABONOS"] += aplicar
-                        restante -= aplicar
-        metadata["recibos_huerfanos_cruzados"] = huerfanos_cruzados
+    # Si se subió archivo de recibos de caja (ingresos.xlsx), conciliar por matrícula separando otros servicios
+    if origen_ingresos:
+        registros, stats_ing = conciliar_ingresos_en_bd(
+            registros=registros,
+            origen_ingresos=origen_ingresos,
+            fecha_corte=fecha_corte,
+            tarifas_base=tarifas,
+        )
+        metadata["recibos_externos_cargados"] = stats_ing.get("recibos_leidos", 0)
+        metadata["recibos_huerfanos_cruzados"] = stats_ing.get("recibos_huerfanos_cruzados", 0)
+        metadata["ingresos_stats"] = stats_ing
     else:
         # Generar recibo sintético a partir del abono consolidado para visualización en el Expander
         for r in registros:
@@ -873,6 +1137,7 @@ def cargar_y_limpiar_datos(
                     "OBSERVACION": f"Abono acumulado matrícula {r['CATEGORIA']}",
                     "ESTADO": "APLICADO",
                     "HUERFANO": False,
+                    "ES_SINTETICO": True,
                 })
 
     metadata["fecha_corte_usada"] = fecha_corte.strftime("%Y-%m-%d")
@@ -913,8 +1178,8 @@ def normalizar_registro_bd(
     if vc <= 0:
         vc = tarifa_est
     ab = _to_float(r.get("ABONOS", 0))
-    # Si se editó manualmente o si viene de archivo, si VALORPENDIENTE no coincide y fue edición manual, recalcular
-    if r.get("_EDITADO_MANUAL"):
+    # Si se editó manualmente o fue conciliado con Ingresos, recalcular siempre el saldo exacto
+    if r.get("_EDITADO_MANUAL") or r.get("_INGRESOS_CONCILIADOS"):
         vp = vc - ab
     else:
         vp_raw = r.get("VALORPENDIENTE")
@@ -953,10 +1218,13 @@ def normalizar_registro_bd(
             "OBSERVACION": f"Abono acumulado matrícula {cat}",
             "ESTADO": "APLICADO",
             "HUERFANO": False,
+            "ES_SINTETICO": True,
         }]
     elif recibos and r.get("_EDITADO_MANUAL"):
         recibos[0]["VALOR"] = ab
         recibos[0]["FECHA"] = f_str
+
+    otros_servicios = list(r.get("OTROS_SERVICIOS_CAJA") or [])
 
     return {
         **r,
@@ -986,11 +1254,12 @@ def normalizar_registro_bd(
         "DIAS_ANTIGUEDAD": dias_ant,
         "ESTADO": str(r.get("ESTADO", "ACTIVA") or "ACTIVA").strip().upper(),
         "RECIBOS_CAJA": recibos,
+        "OTROS_SERVICIOS_CAJA": otros_servicios,
     }
 
 
 def _limpiar_registro_para_json(r: Dict[str, Any]) -> Dict[str, Any]:
-    """Extrae solo los campos base persistibles de una matrícula para guardar en bd_historica_matriculas_cea.json."""
+    """Extrae los campos base persistibles (incluidos recibos reales de caja) para guardar en bd_historica_matriculas_cea.json."""
     campos_base = (
         "NUMEROMATRICULA", "NUMERODOCUMENTO", "TIPODOCUMENTO", "NOMBRES", "APELLIDOS",
         "ALUMNO", "CONVENIO", "CONVENIO_NORM", "CONVENIO_VACIO", "PUBLICIDAD",
@@ -998,7 +1267,8 @@ def _limpiar_registro_para_json(r: Dict[str, Any]) -> Dict[str, Any]:
         "VALORHORA", "CLASESCONTRATADAS", "CLASESRECIBIDAS", "CLASESPENDIENTES",
         "VALORCURSO", "TARIFA_BASE_CAT", "ABONOS_ORIGINAL", "ABONOS",
         "VALORPENDIENTE_ORIGINAL", "VALORPENDIENTE", "SALDO_CALCULADO", "ERROR_CUADRE",
-        "DIAS_ANTIGUEDAD", "ESTADO", "FECHAEXAMENMEDICO", "_EDITADO_MANUAL", "ULTIMA_ACTUALIZACION",
+        "DIAS_ANTIGUEDAD", "ESTADO", "FECHAEXAMENMEDICO", "_EDITADO_MANUAL",
+        "_INGRESOS_CONCILIADOS", "ULTIMA_ACTUALIZACION", "RECIBOS_CAJA", "OTROS_SERVICIOS_CAJA",
     )
     return {k: r.get(k) for k in campos_base if k in r}
 
@@ -1191,6 +1461,36 @@ def fusionar_registros_bd_historica(
         k = _clave_unica_registro(r_n)
         if k in mapa:
             prev = mapa[k]
+            prev_reales = [
+                rc for rc in (prev.get("RECIBOS_CAJA") or [])
+                if not str(rc.get("RECIBO", "")).strip().upper().startswith("AB-") and not rc.get("ES_SINTETICO")
+            ]
+            new_reales = [
+                rc for rc in (r_n.get("RECIBOS_CAJA") or [])
+                if not str(rc.get("RECIBO", "")).strip().upper().startswith("AB-") and not rc.get("ES_SINTETICO")
+            ]
+
+            # Preservar recibos reales de caja si el archivo nuevo de Matrículas no trajo recibos detallados
+            if prev_reales and not new_reales:
+                r_n["RECIBOS_CAJA"] = prev_reales
+                if prev.get("OTROS_SERVICIOS_CAJA") and not r_n.get("OTROS_SERVICIOS_CAJA"):
+                    r_n["OTROS_SERVICIOS_CAJA"] = list(prev.get("OTROS_SERVICIOS_CAJA") or [])
+                # Si la BD previa ya tenía un abono conciliado mayor (por Ingresos previos), no retroceder el saldo
+                ab_prev = _to_float(prev.get("ABONOS", 0))
+                ab_new = _to_float(r_n.get("ABONOS", 0))
+                if ab_prev > ab_new + 0.5 and (prev.get("_INGRESOS_CONCILIADOS") or prev.get("_EDITADO_MANUAL")):
+                    vc_n = _to_float(r_n.get("VALORCURSO", 0))
+                    r_n["ABONOS"] = ab_prev
+                    r_n["ABONOS_ORIGINAL"] = ab_prev
+                    r_n["VALORPENDIENTE"] = vc_n - ab_prev
+                    r_n["VALORPENDIENTE_ORIGINAL"] = r_n["VALORPENDIENTE"]
+                    r_n["SALDO_CALCULADO"] = vc_n - ab_prev
+                    r_n["ERROR_CUADRE"] = 0.0
+                    r_n["_INGRESOS_CONCILIADOS"] = bool(prev.get("_INGRESOS_CONCILIADOS"))
+                    r_n["_EDITADO_MANUAL"] = bool(prev.get("_EDITADO_MANUAL"))
+            elif prev.get("OTROS_SERVICIOS_CAJA") and not r_n.get("OTROS_SERVICIOS_CAJA"):
+                r_n["OTROS_SERVICIOS_CAJA"] = list(prev.get("OTROS_SERVICIOS_CAJA") or [])
+
             cambio = (
                 abs(_to_float(prev.get("ABONOS")) - _to_float(r_n.get("ABONOS"))) > 0.5
                 or abs(_to_float(prev.get("VALORCURSO")) - _to_float(r_n.get("VALORCURSO"))) > 0.5
@@ -1254,8 +1554,10 @@ def auditar_riesgos(
             clientes_multicurso_count += 1
             matriculas_en_multicurso_count += len(regs_cliente)
 
-        total_contratado_cliente = sum(x["VALORCURSO"] for x in regs_cliente)
-        total_pagado_cliente = sum(x["ABONOS"] for x in regs_cliente)
+        # Excluir matrículas INACTIVAS/ANULADAS del cálculo de cartera exigible del cliente
+        regs_activas_cliente = [x for x in regs_cliente if not _es_estado_inactivo_matricula(x.get("ESTADO"))]
+        total_contratado_cliente = sum(x["VALORCURSO"] for x in regs_activas_cliente)
+        total_pagado_cliente = sum(x["ABONOS"] for x in regs_activas_cliente)
         saldo_real_cliente = total_contratado_cliente - total_pagado_cliente
 
         categorias_cliente = [x["CATEGORIA"] for x in regs_cliente]
@@ -1266,15 +1568,33 @@ def auditar_riesgos(
                 "FECHAINSCRIPCION": x["FECHAINSCRIPCION"],
                 "CONVENIO": x["CONVENIO_NORM"],
                 "VALORCURSO": x["VALORCURSO"],
-                "ABONOS_ORIGINAL": x["ABONOS_ORIGINAL"],
-                "VALORPENDIENTE_ORIGINAL": x["VALORPENDIENTE_ORIGINAL"],
+                "ABONOS_ORIGINAL": x["ABONOS"],
+                "VALORPENDIENTE_ORIGINAL": 0.0 if _es_estado_inactivo_matricula(x.get("ESTADO")) else x["VALORPENDIENTE"],
                 "ESTADO": x["ESTADO"],
             }
             for x in regs_cliente
         ]
         todos_recibos_cliente = []
+        recibos_vistos_cl = set()
         for x in regs_cliente:
-            todos_recibos_cliente.extend(x.get("RECIBOS_CAJA", []))
+            for rc in (x.get("RECIBOS_CAJA") or []):
+                k_rc = _clave_dedup_recibo(rc)
+                if k_rc not in recibos_vistos_cl:
+                    recibos_vistos_cl.add(k_rc)
+                    todos_recibos_cliente.append(rc)
+        for x in regs_cliente:
+            for rc_os in (x.get("OTROS_SERVICIOS_CAJA") or []):
+                k_os = _clave_dedup_recibo(rc_os)
+                if k_os not in recibos_vistos_cl:
+                    recibos_vistos_cl.add(k_os)
+                    todos_recibos_cliente.append(rc_os)
+        todos_recibos_cliente.sort(
+            key=lambda rc: (
+                1 if rc.get("ES_OTRO_SERVICIO") else 0,
+                str(rc.get("FECHA") or ""),
+                str(rc.get("RECIBO") or ""),
+            )
+        )
 
         # Redistribución / Compensación de saldos entre matrículas hermanas:
         # Si una matrícula tiene sobrecobro (ABONOS > VALORCURSO) y otra tiene deuda,
@@ -1311,7 +1631,10 @@ def auditar_riesgos(
             x["RECIBOS_CLIENTE"] = todos_recibos_cliente
 
             # Clasificación inteligente del Abono $0:
-            if x["ABONOS"] == 0 and x["VALORCURSO"] > 0:
+            if _es_estado_inactivo_matricula(x.get("ESTADO")):
+                x["TIPO_RIESGO_CERO"] = "INACTIVA"
+                x["ETIQUETA_MULTICURSO"] = f"⚪ Matrícula {x.get('ESTADO', 'INACTIVA')} (Sin cartera exigible)"
+            elif x["ABONOS"] == 0 and x["VALORCURSO"] > 0:
                 if total_pagado_cliente == 0:
                     x["TIPO_RIESGO_CERO"] = "RIESGO_CERO_REAL"
                     x["ETIQUETA_MULTICURSO"] = "🚨 $0 Global (Sin abono en ningún curso)"
@@ -1440,9 +1763,10 @@ def auditar_riesgos(
     convenios_vacios_count = 0
 
     for r in registros:
+        es_inactiva = _es_estado_inactivo_matricula(r.get("ESTADO"))
         vc = r["VALORCURSO"]
         ab = r["ABONOS"]
-        vp = r["VALORPENDIENTE"]
+        vp = 0.0 if es_inactiva else r["VALORPENDIENTE"]
         vp_pos = max(0.0, vp)
         vh = r["VALORHORA"]
         cc = r["CLASESCONTRATADAS"]
@@ -1453,26 +1777,26 @@ def auditar_riesgos(
         anio = r.get("ANIO") or (mes.split("-")[0] if "-" in mes else "SIN_ANIO")
         r["ANIO"] = anio
 
-        total_facturado += vc
+        total_facturado += (0.0 if es_inactiva else vc)
         total_abonos += ab
         total_pendiente += vp_pos
         total_pendiente_neto += vp
         if r["CONVENIO_VACIO"]:
             convenios_vacios_count += 1
 
-        if vp > 0:
+        if (not es_inactiva) and vp > 0:
             alumnos_con_saldo += 1
 
-        # Bandera 1: Matrículas en $0 (Separando Riesgo Real vs Combo Multi-Curso)
-        if ab == 0 and vc > 0:
+        # Bandera 1: Matrículas en $0 (Separando Riesgo Real vs Combo Multi-Curso; excluyendo INACTIVAS)
+        if (not es_inactiva) and ab == 0 and vc > 0:
             abono_cero_todos.append(r)
             if r["TIPO_RIESGO_CERO"] == "RIESGO_CERO_REAL":
                 abono_cero_real_global.append(r)
             else:
                 abono_cero_falso_multicurso.append(r)
 
-        # Bandera 2: Antigüedad de Cartera
-        if vp > 0:
+        # Bandera 2: Antigüedad de Cartera (solo activas con saldo exigible)
+        if (not es_inactiva) and vp > 0:
             if dias > cfg["DIAS_ALERTA_MORA_CRITICA"]:
                 cartera_critica_90.append(r)
             elif dias > cfg["DIAS_ALERTA_MORA_MEDIA"]:
@@ -1506,12 +1830,14 @@ def auditar_riesgos(
         # Convenio Javier Torres
         if conv == "JAVIER TORRES":
             jt_todos.append(r)
-            if vp > 0:
+            if (not es_inactiva) and vp > 0:
                 jt_cartera.append(r)
-            if ab == 0 and vc > 0:
+            if (not es_inactiva) and ab == 0 and vc > 0:
                 jt_abono_cero.append(r)
                 if r["TIPO_RIESGO_CERO"] == "RIESGO_CERO_REAL":
                     jt_abono_cero_real.append(r)
+
+        vc_ef = 0.0 if es_inactiva else vc
 
         # Agrupación Mensual (Bandera 4)
         m_item = por_mes[mes]
@@ -1528,13 +1854,13 @@ def auditar_riesgos(
         m_item["total_matriculas"] += 1
         if conv == "JAVIER TORRES":
             m_item["matriculas_jt"] += 1
-        m_item["facturado"] += vc
+        m_item["facturado"] += vc_ef
         m_item["recaudado"] += ab
         m_item["pendiente"] += vp_pos
         m_item["pendiente_neto"] += vp
-        if vp > 0:
+        if (not es_inactiva) and vp > 0:
             m_item["con_saldo_count"] += 1
-        if ab == 0 and vc > 0:
+        if (not es_inactiva) and ab == 0 and vc > 0:
             m_item["abono_cero_count"] += 1
             if r["TIPO_RIESGO_CERO"] == "RIESGO_CERO_REAL":
                 m_item["abono_cero_real_count"] += 1
@@ -1545,17 +1871,17 @@ def auditar_riesgos(
         a_item["matriculas"] += 1
         if r["NUMERODOCUMENTO"]:
             a_item["clientes_unicos_set"].add(r["NUMERODOCUMENTO"])
-        a_item["facturado"] += vc
+        a_item["facturado"] += vc_ef
         a_item["recaudado"] += ab
         a_item["pendiente"] += vp_pos
         a_item["pendiente_neto"] += vp
-        if vp > 0:
+        if (not es_inactiva) and vp > 0:
             a_item["con_saldo"] += 1
-        if ab == 0 and vc > 0 and r["TIPO_RIESGO_CERO"] == "RIESGO_CERO_REAL":
+        if (not es_inactiva) and ab == 0 and vc > 0 and r["TIPO_RIESGO_CERO"] == "RIESGO_CERO_REAL":
             a_item["abono_cero_real"] += 1
         if conv == "JAVIER TORRES":
             a_item["matriculas_jt"] += 1
-            if vp > 0:
+            if (not es_inactiva) and vp > 0:
                 a_item["pendiente_jt"] += vp_pos
 
         # Agrupación por Convenio
@@ -1564,13 +1890,13 @@ def auditar_riesgos(
         c_item["matriculas"] += 1
         if r["NUMERODOCUMENTO"]:
             c_item["clientes_unicos"].add(r["NUMERODOCUMENTO"])
-        c_item["facturado"] += vc
+        c_item["facturado"] += vc_ef
         c_item["recaudado"] += ab
         c_item["pendiente"] += vp_pos
         c_item["pendiente_neto"] += vp
-        if vp > 0:
+        if (not es_inactiva) and vp > 0:
             c_item["con_saldo"] += 1
-        if ab == 0 and vc > 0:
+        if (not es_inactiva) and ab == 0 and vc > 0:
             c_item["abono_cero"] += 1
             if r["TIPO_RIESGO_CERO"] == "RIESGO_CERO_REAL":
                 c_item["abono_cero_real"] += 1
@@ -1579,7 +1905,7 @@ def auditar_riesgos(
         cat_item = por_categoria[cat]
         cat_item["categoria"] = cat
         cat_item["matriculas"] += 1
-        cat_item["facturado"] += vc
+        cat_item["facturado"] += vc_ef
         cat_item["recaudado"] += ab
         cat_item["pendiente"] += vp_pos
 
