@@ -2215,15 +2215,19 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               <div class="header-dropdown" id="runtVistasDropdown" style="left:0; right:auto; min-width:315px; max-height:430px; overflow-y:auto;">
                 <div class="header-dropdown-section">🎯 Operación Diaria</div>
                 <button type="button" class="header-dropdown-item runt-vista-item" data-tab="PENDIENTES_PRACTICA" onclick="cambiarTabHojaRunt('PENDIENTES_PRACTICA', this)">
-                  <span>📋 Todos Pendientes</span>
+                  <span>📋 Todos Pendientes (Bot Primero)</span>
                   <span class="badge badge-warning" id="cnt_rn_pend">0</span>
                 </button>
+                <button type="button" class="header-dropdown-item runt-vista-item" data-tab="BOT_PRIORIDAD_PRACTICA" onclick="cambiarTabHojaRunt('BOT_PRIORIDAD_PRACTICA', this)">
+                  <span>🤖 Prioridad Bot en Práctica (&lt;100%)</span>
+                  <span class="badge badge-info" id="cnt_rn_bot_prio">0</span>
+                </button>
                 <button type="button" class="header-dropdown-item runt-vista-item" data-tab="TERMINARON_SIN_CARGUE" onclick="cambiarTabHojaRunt('TERMINARON_SIN_CARGUE', this)">
-                  <span>🔥 Listos por Cargar RUNT</span>
+                  <span>🔥 Bot Terminaron (Listos RUNT)</span>
                   <span class="badge badge-danger" id="cnt_rn_term_sin">0</span>
                 </button>
                 <button type="button" class="header-dropdown-item runt-vista-item" data-tab="URGENTES_EN_PRACTICA" onclick="cambiarTabHojaRunt('URGENTES_EN_PRACTICA', this)">
-                  <span>🚨 Urgentes: En Práctica</span>
+                  <span>🚨 Bot en Práctica (En Curso)</span>
                   <span class="badge badge-info" id="cnt_rn_urg_prac">0</span>
                 </button>
                 <button type="button" class="header-dropdown-item runt-vista-item" data-tab="POR_VENCER_90" onclick="cambiarTabHojaRunt('POR_VENCER_90', this)">
@@ -5630,6 +5634,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         const k = data.kpis || {};
         const setCnt = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
         setCnt('cnt_rn_pend', k.pendientes_runt || 0);
+        setCnt('cnt_rn_bot_prio', k.en_bot_prioridad || 0);
         setCnt('cnt_rn_term_sin', k.terminaron_sin_cargue || 0);
         setCnt('cnt_rn_urg_prac', k.urgentes_en_practica || 0);
         setCnt('cnt_rn_vence', k.por_vencer_o_vencidos || 0);
@@ -5648,10 +5653,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         const kpiEl = document.getElementById('kpiRuntSheetGrid');
         if (kpiEl) {
           kpiEl.innerHTML = `
-            <div class="kpi-card danger" style="cursor:pointer;" onclick="cambiarTabHojaRunt('TERMINARON_SIN_CARGUE')">
-              <div class="kpi-label">🔥 Listos por Cargar RUNT</div>
-              <div class="kpi-value" style="color:#fdba74;">${k.terminaron_sin_cargue || 0} Listos</div>
-              <div class="kpi-sub"><b>🚨 ${k.urgentes_en_practica || 0}</b> en práctica activa</div>
+            <div class="kpi-card danger" style="cursor:pointer;" onclick="cambiarTabHojaRunt('BOT_PRIORIDAD_PRACTICA')">
+              <div class="kpi-label">🤖 Prioridad Bot en Práctica (&lt;100%)</div>
+              <div class="kpi-value" style="color:#fdba74;">${k.en_bot_prioridad || 0} Prioritarios</div>
+              <div class="kpi-sub"><b>🔥 ${k.terminaron_sin_cargue || 0}</b> terminaron • <b>🚨 ${k.urgentes_en_practica || 0}</b> en práctica</div>
             </div>
             <div class="kpi-card purple" style="cursor:pointer;" onclick="cambiarTabHojaRunt('MOTO_SIN_25_TEORIA')">
               <div class="kpi-label">🏍️ Pendientes Teoría / Taller</div>
@@ -6057,6 +6062,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         const esCarg = r.estado_runt === 'CARGADO RUNT';
         if (!ignorarTabEstado) {
           if (ACTIVE_RUNT_TAB === 'PENDIENTES_PRACTICA' && esCarg) return false;
+          if (ACTIVE_RUNT_TAB === 'BOT_PRIORIDAD_PRACTICA' && !r.es_prioridad_bot) return false;
           if (ACTIVE_RUNT_TAB === 'TERMINARON_SIN_CARGUE' && !r.es_terminado_sin_cargue) return false;
           if (ACTIVE_RUNT_TAB === 'URGENTES_EN_PRACTICA' && !r.es_urgente_en_practica) return false;
           if (ACTIVE_RUNT_TAB === 'MOTO_SIN_25_TEORIA' && (esCarg || !['A1', 'A2'].includes(r.categoria) || r.teoria >= r.meta_teoria)) return false;
@@ -6168,6 +6174,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           const pa = Number(a.orden_prioridad || 4);
           const pb = Number(b.orden_prioridad || 4);
           if (pa !== pb) return pa - pb;
+          // Dentro de alumnos activos en Bot (prioridad 1 y 2), ordenar primero los más cercanos a terminar práctica
+          if (pa <= 2) {
+            const avA = Number(a.bot_avance_pct || 0);
+            const avB = Number(b.bot_avance_pct || 0);
+            if (avA !== avB) return avB - avA;
+          }
           const da = a.dias_restantes_90 !== null && a.dias_restantes_90 !== undefined ? Number(a.dias_restantes_90) : 999;
           const db = b.dias_restantes_90 !== null && b.dias_restantes_90 !== undefined ? Number(b.dias_restantes_90) : 999;
           return da - db;
@@ -6353,9 +6365,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       actualizarBarraSeleccionRunt();
 
       const titulosTabRunt = {
-        'PENDIENTES_PRACTICA': '📋 Todos los Pendientes RUNT (Ordenados por Prioridad: 1° Terminaron Práctica → 2° En Práctica → 3° Por Vencer → 4° Teoría/Taller)',
-        'TERMINARON_SIN_CARGUE': '🔥 PRIORIDAD #1: Alumnos que YA TERMINARON Práctica y Falta el Cargue Manual a RUNT',
-        'URGENTES_EN_PRACTICA': '🚨 PRIORIDAD #2: Alumnos Urgentes EN PRÁCTICA (Próximos a Certificar)',
+        'PENDIENTES_PRACTICA': '📋 Todos los Pendientes RUNT (Prioridad: 1° Bot Terminaron → 2° Bot en Práctica <100% → 3° Otros Pendientes sin Bot)',
+        'BOT_PRIORIDAD_PRACTICA': '🤖 PRIORIDAD DE CARGUE: Alumnos activos en Práctica del Bot que aún no tienen el 100% (Teoría + Taller + Práctica)',
+        'TERMINARON_SIN_CARGUE': '🔥 PRIORIDAD #1: Alumnos activos del Bot que YA TERMINARON Práctica y falta cargue manual RUNT',
+        'URGENTES_EN_PRACTICA': '🤖 PRIORIDAD #2: Alumnos activos en Práctica del Bot pendientes de Teoría, Taller o Práctica',
         'MOTO_SIN_25_TEORIA': '🏍️ FILTRO MASIVO MOTO (A2/A1): Alumnos que Aún NO Tienen las 25 Clases Teóricas',
         'MOTO_SIN_3_TALLER': '🔧 FILTRO MASIVO MOTO (A2/A1): Alumnos que Aún NO Tienen las 3 Clases de Taller',
         'CARRO_SIN_TEO_TAL': '🚗 FILTRO MASIVO CARRO (B1/C1): Alumnos sin Completar Teoría o Taller',
@@ -6409,8 +6422,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       tbody.innerHTML = listP.map(r => {
         const esCarg = r.estado_runt === 'CARGADO RUNT';
         let trClass = esCarg ? 'row-sem-verde' : '';
-        if (!esCarg && (r.semaforo_90 === 'VENCIDO' || r.es_terminado_sin_cargue)) trClass = 'row-sem-rojo';
-        else if (!esCarg && (r.semaforo_90 === 'POR_VENCER' || r.es_urgente_en_practica || r.pendiente_subir_bot > 0)) trClass = 'row-sem-amarillo';
+        if (!esCarg && r.es_terminado_sin_cargue) trClass = 'row-sem-rojo';
+        else if (!esCarg && r.es_urgente_en_practica) trClass = 'row-sem-amarillo';
 
         let badgeVig = `<span class="badge badge-success">${r.vigente_texto || '✅ VIGENTE'}</span>`;
         if (r.semaforo_90 === 'VENCIDO') {
@@ -6423,9 +6436,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
         let badgePrioridad = `<span class="badge">${r.prioridad || '-'}</span>`;
         if (r.es_terminado_sin_cargue) {
-          badgePrioridad = `<span class="badge badge-danger" style="background:rgba(249,115,22,0.28); color:#fed7aa; border-color:#f97316; font-weight:800;">🔥 1. TERMINÓ (FALTA RUNT)</span>`;
+          badgePrioridad = `<span class="badge badge-danger" style="background:rgba(249,115,22,0.28); color:#fed7aa; border-color:#f97316; font-weight:800;">🔥 1. BOT TERMINÓ (FALTA RUNT)</span>`;
         } else if (r.es_urgente_en_practica) {
-          badgePrioridad = `<span class="badge badge-info" style="font-weight:800;">🚨 2. EN PRÁCTICA (URGENTE)</span>`;
+          const avTxt = r.practica_bot > 0 ? ` (${r.practica_bot}/${r.meta_practica}h)` : '';
+          badgePrioridad = `<span class="badge badge-info" style="font-weight:800;">🤖 2. EN PRÁCTICA BOT${avTxt}</span>`;
         } else if (esCarg) {
           badgePrioridad = `<span class="badge badge-success">✅ CERTIFICADO</span>`;
         }
