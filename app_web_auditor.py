@@ -1898,8 +1898,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
         <!-- Sub-Pestañas para Control Manual de Cargue RUNT por Categoría y Semáforo de Vencimiento 90 Días -->
         <div class="tabs-header" id="clasesTabsHeader">
-          <button type="button" class="tab-btn active" onclick="cambiarSubTabClases('PENDIENTE_RUNT', this)">
-            ⏳ Pendientes Cargue RUNT <span class="badge badge-warning" id="cnt_cl_runt_pend">0</span>
+          <button type="button" class="tab-btn active" onclick="cambiarSubTabClases('PENDIENTE_RUNT', this)" title="Muestra únicamente alumnos del Bot que aún NO aparecen registrados en la pestaña Practica de la hoja RUNT">
+            ⏳ Faltan en Hoja RUNT <span class="badge badge-warning" id="cnt_cl_runt_pend">0</span>
           </button>
           <button type="button" class="tab-btn" onclick="cambiarSubTabClases('SEMAFORO_ROJO', this)" style="border-color:rgba(239,68,68,0.65);">
             🔴 Semáforo Crítico / Próximos a Vencer 90d <span class="badge badge-danger" id="cnt_cl_sem_rojo">0</span>
@@ -5677,6 +5677,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         }
 
         renderizarTablaHojaRunt();
+        // Refrescar tabla superior (Imagen 1) para excluir automáticamente alumnos que ya existen en la hoja Practica RUNT
+        if (BOT_DATA && BOT_DATA.clases) renderizarModuloClases();
       } catch (err) {
         console.error('Error cargando hoja RUNT digital:', err);
       }
@@ -6541,15 +6543,68 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       renderizarModuloClases();
     }
 
+    function _normTextoRuntMatch(txt) {
+      return String(txt || '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .toUpperCase().replace(/\s+/g, ' ').trim();
+    }
+
+    function _normCedRuntMatch(ced) {
+      return String(ced || '').replace(/\D+/g, '').trim();
+    }
+
+    function buscarEnHojaPracticaRunt(alumno) {
+      if (!RUNT_SHEET_DATA || !Array.isArray(RUNT_SHEET_DATA.practica)) return null;
+      const cedA = _normCedRuntMatch(alumno.cedula);
+      const nomA = _normTextoRuntMatch(alumno.nombre);
+      const catA = String(alumno.categoria || '').toUpperCase().trim();
+      return RUNT_SHEET_DATA.practica.find(r => {
+        const catR = String(r.categoria || '').toUpperCase().trim();
+        if (catA && catR && catA !== catR) return false;
+        const cedR = _normCedRuntMatch(r.cedula);
+        if (cedA && cedR && cedA === cedR) return true;
+        const nomR = _normTextoRuntMatch(r.nombre);
+        return Boolean(nomA && nomR && (nomA === nomR || nomR.includes(nomA) || nomA.includes(nomR)));
+      }) || null;
+    }
+
+    function prepararAltaEnHojaRuntDesdeAlumno(cedula, nombre, categoria, fechaRef) {
+      document.getElementById('rn_fila').value = '0';
+      document.getElementById('rn_cedula').value = cedula || '';
+      document.getElementById('rn_nombre').value = (nombre || '').toUpperCase();
+      document.getElementById('rn_cat').value = categoria || 'A2';
+      document.getElementById('rn_prioridad').value = 'EN PRACTICA';
+      document.getElementById('rn_fecha_mat').value = (fechaRef || '').slice(0, 10);
+      const v90El = document.getElementById('rn_vence_90');
+      if (v90El) v90El.value = '';
+      const frEl = document.getElementById('rn_fecha_reg_runt');
+      if (frEl) frEl.value = obtenerIsoFechaOffsetRunt(0);
+      document.getElementById('rn_teoria').value = '0';
+      document.getElementById('rn_taller').value = '0';
+      document.getElementById('rn_practica').value = '0';
+      document.getElementById('rn_cargue_diario').value = '';
+      document.getElementById('rn_estado_runt').value = 'PENDIENTE RUNT';
+      const badge = document.getElementById('runtEditRowBadge');
+      if (badge) {
+        badge.className = 'badge badge-success';
+        badge.textContent = `➕ Agregando a Hoja Practica RUNT: ${nombre} (${categoria})`;
+      }
+      toggleRuntDrawer('individual', true);
+      const dr = document.getElementById('runtIndividualDrawer');
+      if (dr) dr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
     function renderizarModuloClases() {
       if (!BOT_DATA || !BOT_DATA.clases) return;
       const kc = BOT_DATA.clases.kpis;
       const todosAl = BOT_DATA.clases.alumnos || [];
 
       const esCargadoRunt = (a) => String(a.estado_runt || '').toLowerCase().includes('cargue') || String(a.estado_runt || '').toLowerCase().includes('cargado');
+      const enHojaPracticaRunt = (a) => Boolean(buscarEnHojaPracticaRunt(a));
 
-      // Contadores para las sub-pestañas (con control manual RUNT por categoría y Semáforo de 90 Días)
-      const cntRuntPend = todosAl.filter(a => !esCargadoRunt(a)).length;
+      // Contadores para las sub-pestañas (Faltan en Hoja RUNT excluye automáticamente a los que ya aparecen en Practica)
+      const cntRuntPend = todosAl.filter(a => !esCargadoRunt(a) && !enHojaPracticaRunt(a)).length;
+      const cntEnHojaRunt = todosAl.filter(a => !esCargadoRunt(a) && enHojaPracticaRunt(a)).length;
       const cntRuntOk = todosAl.filter(a => esCargadoRunt(a)).length;
       const cntActivos = todosAl.filter(a => a.estado_curso !== 'FINALIZADO' && !esCargadoRunt(a)).length;
       const cntFin = todosAl.filter(a => a.estado_curso === 'FINALIZADO' && !esCargadoRunt(a)).length;
@@ -6585,9 +6640,9 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <div class="kpi-sub"><b>🟡 ${cntSemAmarillo} en alerta preventiva</b> • <b>🟢 ${cntSemVerde} a tiempo</b> (clic para filtrar)</div>
         </div>
         <div class="kpi-card warning" style="cursor:pointer;" onclick="cambiarSubTabClases('PENDIENTE_RUNT')">
-          <div class="kpi-label">⏳ Pendientes Cargue RUNT (No Registrado)</div>
-          <div class="kpi-value" style="color:#fde68a;">${cntRuntPend} Matrículas</div>
-          <div class="kpi-sub"><b>${cntActivos} en curso</b> y <b>${cntFin} listos (100%)</b> por subir a RUNT</div>
+          <div class="kpi-label">⏳ Faltan por Registrar en Hoja RUNT</div>
+          <div class="kpi-value" style="color:#fde68a;">${cntRuntPend} Sin Registrar</div>
+          <div class="kpi-sub"><b>📋 ${cntEnHojaRunt} ya existen</b> en pestaña Practica (ocultos de este filtro)</div>
         </div>
         <div class="kpi-card success" style="cursor:pointer;" onclick="cambiarSubTabClases('CARGADOS_RUNT')">
           <div class="kpi-label">✅ Ya Cargados en RUNT (Ocultos del Filtro)</div>
@@ -6626,7 +6681,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       let rows = todosAl.filter(a => {
         if (catF !== 'TODAS' && a.categoria !== catF) return false;
         const yaRunt = esCargadoRunt(a);
-        if (alertaF === 'PENDIENTE_RUNT' && yaRunt) return false;
+        const yaEnPracticaSheet = enHojaPracticaRunt(a);
+        if (alertaF === 'PENDIENTE_RUNT' && (yaRunt || yaEnPracticaSheet)) return false;
         if (alertaF === 'SEMAFORO_ROJO' && (yaRunt || a.estado_curso === 'FINALIZADO' || a.semaforo_color !== 'ROJO')) return false;
         if (alertaF === 'SEMAFORO_AMARILLO' && (yaRunt || a.estado_curso === 'FINALIZADO' || a.semaforo_color !== 'AMARILLO')) return false;
         if (alertaF === 'CARGADOS_RUNT' && !yaRunt) return false;
@@ -6654,7 +6710,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
 
       const etiquetasVista = {
-        'PENDIENTE_RUNT': '⏳ Alumnos Matriculados Pendientes de Cargue RUNT (No Registrado RUNT)',
+        'PENDIENTE_RUNT': '⏳ Alumnos del Bot que AÚN NO están registrados en la pestaña "Practica" de la hoja RUNT',
         'SEMAFORO_ROJO': '🔴 SEMÁFORO CRÍTICO (90 DÍAS): Alumnos Próximos a Vencer o con Alto % de Clases Faltantes',
         'SEMAFORO_AMARILLO': '🟡 SEMÁFORO EN ALERTA PREVENTIVA (90 DÍAS): Alumnos que Requieren Acelerar Programación',
         'CARGADOS_RUNT': '✅ Alumnos con Cargue RUNT Realizado',
@@ -6680,14 +6736,20 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         }
 
         const yaRunt = esCargadoRunt(a);
+        const matchRuntHoja = buscarEnHojaPracticaRunt(a);
         const safeNombre = (a.nombre || '').replace(/'/g, "\\'");
         const safeCedula = (a.cedula || a.nombre || '').replace(/'/g, "\\'");
+        const safeFechaRef = (a.fecha_primera_clase || '').replace(/'/g, "\\'");
         const badgeRunt = yaRunt
           ? `<span class="badge badge-success" title="${a.fecha_runt || ''}">✅ Cargue RUNT</span>`
-          : `<span class="badge badge-warning">⏳ No Registrado RUNT</span>`;
+          : (matchRuntHoja
+            ? `<span class="badge badge-info" title="Ya existe en BD Americana 2 → Practica (Fila #${matchRuntHoja.fila})">📋 En Practica (${matchRuntHoja.clases_cargadas}/${matchRuntHoja.meta_total}h)</span>`
+            : `<span class="badge badge-warning">🆕 No está en Hoja RUNT</span>`);
         const btnRuntAccion = yaRunt
           ? `<button type="button" class="btn btn-outline" style="padding:4px 8px; font-size:11px;" title="Devolver a No Registrado RUNT para que vuelva a aparecer en pendientes" onclick="cambiarEstadoRuntWeb('${safeCedula}', '${safeNombre}', '${a.categoria}', 'No Registrado RUNT')">↩️ Quitar RUNT</button>`
-          : `<button type="button" class="btn btn-success" style="padding:4px 8px; font-size:11px;" title="Confirmar Cargue RUNT de esta categoría (${a.categoria}) y ocultarlo del filtro de pendientes" onclick="cambiarEstadoRuntWeb('${safeCedula}', '${safeNombre}', '${a.categoria}', 'Cargue RUNT')">✅ Cargue RUNT</button>`;
+          : (matchRuntHoja
+            ? `<button type="button" class="btn btn-success" style="padding:4px 8px; font-size:11px;" title="Confirmar Cargue RUNT 100% de esta categoría (${a.categoria})" onclick="cambiarEstadoRuntWeb('${safeCedula}', '${safeNombre}', '${a.categoria}', 'Cargue RUNT')">✅ Cargue RUNT</button>`
+            : `<button type="button" class="btn btn-primary" style="padding:4px 8px; font-size:11px;" title="Agregar este alumno directamente a la pestaña Practica de la hoja RUNT" onclick="prepararAltaEnHojaRuntDesdeAlumno('${safeCedula}', '${safeNombre}', '${a.categoria}', '${safeFechaRef}')">➕ Pasar a Hoja RUNT</button>`);
 
         // Renderizado visual del Semáforo de 90 Días (Desde 1ra Clase Práctica)
         const semColor = a.semaforo_color || 'AZUL';
