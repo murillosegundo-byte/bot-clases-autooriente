@@ -5614,74 +5614,107 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
     }
 
+    function esCargadoRunt(a) {
+      const s = String((a && a.estado_runt) || '').toLowerCase();
+      return s.includes('cargue') || s.includes('cargado');
+    }
+
     function aplicarPrioridadBotEnVivoRunt() {
       if (!RUNT_SHEET_DATA || !Array.isArray(RUNT_SHEET_DATA.practica)) return;
-      if (!BOT_DATA || !BOT_DATA.clases || !Array.isArray(BOT_DATA.clases.alumnos)) return;
 
+      const tieneBot = Boolean(BOT_DATA && BOT_DATA.clases && Array.isArray(BOT_DATA.clases.alumnos));
       // Índice en vivo de alumnos ACTIVOS en Bot (Imagen 1: En Curso + Finalizaron sin Cargue RUNT)
       const activosDoc = new Map();
       const activosNom = new Map();
-      BOT_DATA.clases.alumnos.forEach(a => {
-        if (esCargadoRunt(a)) return;
-        const catA = String(a.categoria || '').toUpperCase().trim();
-        const cedA = _normCedRuntMatch(a.cedula);
-        const nomA = _normTextoRuntMatch(a.nombre);
-        if (cedA) activosDoc.set(`${cedA}|${catA}`, a);
-        if (nomA) activosNom.set(`${nomA}|${catA}`, a);
-      });
+      if (tieneBot) {
+        BOT_DATA.clases.alumnos.forEach(a => {
+          if (esCargadoRunt(a)) return;
+          const catA = String(a.categoria || '').toUpperCase().trim();
+          const cedA = _normCedRuntMatch(a.cedula);
+          const nomA = _normTextoRuntMatch(a.nombre);
+          if (cedA) activosDoc.set(`${cedA}|${catA}`, a);
+          if (nomA) activosNom.set(`${nomA}|${catA}`, a);
+        });
+      }
 
+      let cntCargados = 0;
+      let cntPendientes = 0;
       let cntTermSin = 0;
       let cntUrgPrac = 0;
       let cntDesfaseBot = 0;
+      let cntPorVencer = 0;
+      let cntVencidos = 0;
 
       RUNT_SHEET_DATA.practica.forEach(r => {
+        const teo = Number(r.teoria || 0), mt = Number(r.meta_teoria || 0);
+        const tal = Number(r.taller || 0), mtl = Number(r.meta_taller || 0);
+        const prac = Number(r.practica || 0), mp = Number(r.meta_practica || 0);
+        const tot = Number(r.clases_cargadas || (teo + tal + prac));
+        const mtot = Number(r.meta_total || (mt + mtl + mp) || 1);
+        const completo100 = (teo >= mt && tal >= mtl && prac >= mp) || (tot >= mtot);
+        if (completo100) {
+          r.estado_runt = 'CARGADO RUNT';
+          r.semaforo_90 = 'COMPLETADO';
+        }
         const esCarg = r.estado_runt === 'CARGADO RUNT';
-        const catR = String(r.categoria || '').toUpperCase().trim();
-        const cedR = _normCedRuntMatch(r.cedula);
-        const nomR = _normTextoRuntMatch(r.nombre);
-        const botAl = (cedR ? activosDoc.get(`${cedR}|${catR}`) : null)
-          || (nomR ? activosNom.get(`${nomR}|${catR}`) : null)
-          || null;
+        if (esCarg) cntCargados++;
+        else {
+          cntPendientes++;
+          if (r.semaforo_90 === 'VENCIDO') { cntPorVencer++; cntVencidos++; }
+          else if (r.semaforo_90 === 'POR_VENCER') { cntPorVencer++; }
+        }
 
-        const teoFalta = Number(r.teoria || 0) < Number(r.meta_teoria || 0);
-        const talFalta = Number(r.taller || 0) < Number(r.meta_taller || 0);
-        const pracFalta = Number(r.practica || 0) < Number(r.meta_practica || 0);
+        const teoFalta = teo < mt;
+        const talFalta = tal < mtl;
+        const pracFalta = prac < mp;
         const faltaAlgo = teoFalta || talFalta || pracFalta;
 
-        if (!esCarg && botAl) {
-          const pracBot = Math.max(Number(r.practica_bot || 0), Number(botAl.clases_completadas || 0));
-          const metaP = Math.max(1, Number(r.meta_practica || botAl.total_requerido || 1));
-          const avPct = Math.min(100, Math.max(Number(botAl.porcentaje_avance || 0), Math.round((pracBot / metaP) * 100)));
-          const botTerm = String(botAl.estado_curso || '').toUpperCase() === 'FINALIZADO'
-            || Number(botAl.porcentaje_avance || 0) >= 100
-            || pracBot >= metaP;
-
-          r.en_bot_practica = true;
-          r.practica_bot = pracBot;
-          r.pendiente_subir_bot = Math.max(0, pracBot - Number(r.practica || 0));
-          r.bot_avance_pct = avPct;
-          r.bot_termino_practica = botTerm;
-          r.es_terminado_sin_cargue = Boolean(botTerm || !faltaAlgo);
-          r.es_urgente_en_practica = Boolean(!r.es_terminado_sin_cargue && faltaAlgo);
-          r.es_prioridad_bot = Boolean(r.es_terminado_sin_cargue || r.es_urgente_en_practica);
-          r.orden_prioridad = r.es_terminado_sin_cargue ? 1 : 2;
-          r.etiqueta_prioridad_op = r.es_terminado_sin_cargue
-            ? '🔥 1. BOT TERMINÓ PRÁCTICA (PRIORIDAD #1)'
-            : '🤖 2. EN PRÁCTICA BOT (PRIORIDAD <100%)';
-        } else {
-          // Estricto: si NO está en la lista activa del Bot (Imagen 1), NUNCA se prioriza ni resalta como urgente
+        if (esCarg) {
           r.en_bot_practica = false;
-          r.practica_bot = 0;
-          r.pendiente_subir_bot = 0;
-          r.bot_avance_pct = 0;
           r.bot_termino_practica = false;
           r.es_terminado_sin_cargue = false;
           r.es_urgente_en_practica = false;
           r.es_prioridad_bot = false;
-          if (esCarg) {
-            r.orden_prioridad = 5;
-            r.etiqueta_prioridad_op = '✅ 5. YA CERTIFICADO / CARGADO RUNT';
+          r.orden_prioridad = 5;
+          r.etiqueta_prioridad_op = '✅ 5. YA CERTIFICADO / CARGADO RUNT';
+        } else if (tieneBot) {
+          const catR = String(r.categoria || '').toUpperCase().trim();
+          const cedR = _normCedRuntMatch(r.cedula);
+          const nomR = _normTextoRuntMatch(r.nombre);
+          const botAl = (cedR ? activosDoc.get(`${cedR}|${catR}`) : null)
+            || (nomR ? activosNom.get(`${nomR}|${catR}`) : null)
+            || null;
+
+          if (botAl) {
+            const pracBot = Math.max(Number(r.practica_bot || 0), Number(botAl.clases_completadas || 0));
+            const metaP = Math.max(1, Number(r.meta_practica || botAl.total_requerido || 1));
+            const avPct = Math.min(100, Math.max(Number(botAl.porcentaje_avance || 0), Math.round((pracBot / metaP) * 100)));
+            const botTerm = String(botAl.estado_curso || '').toUpperCase() === 'FINALIZADO'
+              || Number(botAl.porcentaje_avance || 0) >= 100
+              || pracBot >= metaP;
+
+            r.en_bot_practica = true;
+            r.practica_bot = pracBot;
+            r.pendiente_subir_bot = Math.max(0, pracBot - prac);
+            r.bot_avance_pct = avPct;
+            r.bot_termino_practica = botTerm;
+            r.es_terminado_sin_cargue = Boolean(botTerm || !faltaAlgo);
+            r.es_urgente_en_practica = Boolean(!r.es_terminado_sin_cargue && faltaAlgo);
+            r.es_prioridad_bot = Boolean(r.es_terminado_sin_cargue || r.es_urgente_en_practica);
+            r.orden_prioridad = r.es_terminado_sin_cargue ? 1 : 2;
+            r.etiqueta_prioridad_op = r.es_terminado_sin_cargue
+              ? '🔥 1. BOT TERMINÓ PRÁCTICA (PRIORIDAD #1)'
+              : '🤖 2. EN PRÁCTICA BOT (PRIORIDAD <100%)';
           } else {
+            // Estricto: si NO está en la lista activa del Bot (Imagen 1), NUNCA se prioriza ni resalta como urgente
+            r.en_bot_practica = false;
+            r.practica_bot = 0;
+            r.pendiente_subir_bot = 0;
+            r.bot_avance_pct = 0;
+            r.bot_termino_practica = false;
+            r.es_terminado_sin_cargue = false;
+            r.es_urgente_en_practica = false;
+            r.es_prioridad_bot = false;
             const pLow = String(r.prioridad || '').trim().toLowerCase();
             const tienePrioHoja = Boolean(pLow) && !['revisado', 'sin prioridad', '-'].includes(pLow);
             r.orden_prioridad = tienePrioHoja ? 3 : 4;
@@ -5697,6 +5730,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       });
 
       if (RUNT_SHEET_DATA.kpis) {
+        RUNT_SHEET_DATA.kpis.cargados_runt = cntCargados;
+        RUNT_SHEET_DATA.kpis.pendientes_runt = cntPendientes;
+        RUNT_SHEET_DATA.kpis.por_vencer_o_vencidos = cntPorVencer;
+        RUNT_SHEET_DATA.kpis.vencidos_sancion = cntVencidos;
         RUNT_SHEET_DATA.kpis.terminaron_sin_cargue = cntTermSin;
         RUNT_SHEET_DATA.kpis.urgentes_en_practica = cntUrgPrac;
         RUNT_SHEET_DATA.kpis.en_bot_prioridad = cntTermSin + cntUrgPrac;
@@ -6332,7 +6369,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         taller: marcarCargado ? item.meta_taller : item.taller,
         practica: marcarCargado ? item.meta_practica : (item.practica || 0),
         cargue_diario: marcarCargado ? 'PRACTICA' : item.cargue_diario,
-        estado_runt: marcarCargado ? 'CARGADO RUNT' : 'PENDIENTE RUNT'
+        estado_runt: marcarCargado ? 'CARGADO RUNT' : 'PENDIENTE RUNT',
+        forzar_pendiente: !marcarCargado
       };
       const res = await fetch('/api/bot/action', {
         method: 'POST',
@@ -6589,7 +6627,9 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         else if (!esCarg && r.es_urgente_en_practica) trClass = 'row-sem-amarillo';
 
         let badgeVig = `<span class="badge badge-success">${r.vigente_texto || '✅ VIGENTE'}</span>`;
-        if (r.semaforo_90 === 'VENCIDO') {
+        if (esCarg || r.semaforo_90 === 'COMPLETADO') {
+          badgeVig = `<span class="badge badge-success">✅ COMPLETADO</span>`;
+        } else if (r.semaforo_90 === 'VENCIDO') {
           badgeVig = `<span class="badge badge-danger">❌ VENCIDO ${r.dias_restantes_90 !== null ? '(' + r.dias_restantes_90 + 'd)' : ''}</span>`;
         } else if (r.semaforo_90 === 'POR_VENCER') {
           badgeVig = `<span class="badge badge-warning">⚠️ POR VENCER (${r.dias_restantes_90}d)</span>`;
@@ -6862,30 +6902,90 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       if (tbl) tbl.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
-    function prepararAltaEnHojaRuntDesdeAlumno(cedula, nombre, categoria, fechaRef, fechaRegRunt = '', prioridadInit = 'EN PRACTICA') {
-      document.getElementById('rn_fila').value = '0';
-      document.getElementById('rn_cedula').value = cedula || '';
-      document.getElementById('rn_nombre').value = (nombre || '').toUpperCase();
-      document.getElementById('rn_cat').value = categoria || 'A2';
-      document.getElementById('rn_prioridad').value = prioridadInit !== undefined ? prioridadInit : '';
-      document.getElementById('rn_fecha_mat').value = (fechaRef || '').slice(0, 10);
-      const v90El = document.getElementById('rn_vence_90');
-      if (v90El) v90El.value = '';
-      const frEl = document.getElementById('rn_fecha_reg_runt');
-      if (frEl) frEl.value = (fechaRegRunt || '').slice(0, 10) || obtenerIsoFechaOffsetRunt(0);
-      document.getElementById('rn_teoria').value = '0';
-      document.getElementById('rn_taller').value = '0';
-      document.getElementById('rn_practica').value = '0';
-      document.getElementById('rn_cargue_diario').value = '';
-      document.getElementById('rn_estado_runt').value = 'PENDIENTE RUNT';
-      const badge = document.getElementById('runtEditRowBadge');
-      if (badge) {
-        badge.className = 'badge badge-success';
-        badge.textContent = `➕ Agregando a Hoja Practica RUNT: ${nombre} (${categoria})`;
+    async function prepararAltaEnHojaRuntDesdeAlumno(cedula, nombre, categoria, fechaRef, fechaRegRunt = '', prioridadInit = 'EN PRACTICA') {
+      const cedLimpia = String(cedula || '').trim();
+      const nomLimpio = String(nombre || '').trim().toUpperCase();
+      const catLimpia = normalizarCatRuntJs(categoria || 'A2');
+
+      // Buscar fecha de matrícula y fecha registro RUNT en No runt o Cartera si no venían completas
+      let fMat = String(fechaRef || '').slice(0, 10);
+      let fRegRunt = String(fechaRegRunt || '').slice(0, 10);
+      if (RUNT_SHEET_DATA && Array.isArray(RUNT_SHEET_DATA.no_runt)) {
+        const cedN = _normCedRuntMatch(cedLimpia);
+        const nomN = _normTextoRuntMatch(nomLimpio);
+        const mNr = RUNT_SHEET_DATA.no_runt.find(nr => {
+          const cN = _normCedRuntMatch(nr.cedula);
+          const nN = _normTextoRuntMatch(nr.nombre);
+          return (cedN && cN && cedN === cN) || (nomN && nN && (nomN === nN || nN.includes(nomN) || nomN.includes(nN)));
+        });
+        if (mNr) {
+          if (mNr.fecha_matricula) fMat = String(mNr.fecha_matricula).slice(0, 10);
+          if (!fRegRunt && mNr.fecha_registro_runt) fRegRunt = String(mNr.fecha_registro_runt).slice(0, 10);
+        }
       }
-      toggleRuntDrawer('individual', true);
-      const dr = document.getElementById('runtIndividualDrawer');
-      if (dr) dr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (!fRegRunt) fRegRunt = obtenerIsoFechaOffsetRunt(0);
+      const prioFinal = prioridadInit !== undefined ? String(prioridadInit) : '';
+
+      const okConfirm = confirm(
+        `➕ PASAR DIRECTAMENTE A LA PESTAÑA "Practica" (GOOGLE SHEETS)\n\n` +
+        `• Alumno: ${nomLimpio || cedLimpia}\n` +
+        `• Cédula: ${cedLimpia || 'S/D'}\n` +
+        `• Categoría: ${catLimpia}\n` +
+        `• Fecha Matrícula: ${fMat || '(sin fecha)'}\n` +
+        `• Fecha Registro RUNT: ${fRegRunt}\n` +
+        `• Prioridad: ${prioFinal || '(Sin prioridad)'}\n` +
+        `• Horas iniciales: Teoría 0 • Taller 0 • Práctica 0 (⚠️ PENDIENTE RUNT)\n\n` +
+        `¿Confirmas agregarlo ahora mismo a Google Sheets → Practica?`
+      );
+      if (!okConfirm) return;
+
+      const toast = document.getElementById('runtSheetToast');
+      const clasesToast = document.getElementById('clasesStatusToast');
+      const setMsg = (ok, txt) => {
+        if (toast) { toast.className = ok ? 'status-toast ok' : 'status-toast err'; toast.textContent = txt; }
+        if (clasesToast) { clasesToast.className = ok ? 'status-toast ok' : 'status-toast err'; clasesToast.textContent = txt; }
+      };
+      setMsg(true, `⏳ Agregando a ${nomLimpio || cedLimpia} (${catLimpia}) en BD Americana 2 → Practica...`);
+
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'runt_guardar_practica',
+            fila: 0,
+            cedula: cedLimpia,
+            nombre: nomLimpio,
+            categoria: catLimpia,
+            prioridad: prioFinal,
+            fecha_matricula: fMat,
+            fecha_registro_runt: fRegRunt,
+            teoria: 0,
+            taller: 0,
+            practica: 0,
+            cargue_diario: '',
+            estado_runt: 'PENDIENTE RUNT',
+            sin_fecha_cargue: true
+          })
+        });
+        const data = await res.json();
+        if (!data || !data.ok) {
+          const errMsg = (data && data.message) || 'No se pudo guardar en Google Sheets.';
+          setMsg(false, '❌ ' + errMsg);
+          alert('❌ Error al pasar a Practica:\n' + errMsg);
+          return;
+        }
+        const okMsg = data.guardado_google_sheets
+          ? `✅ ${nomLimpio} (${catLimpia}) agregado directamente a Google Sheets → Practica (Fila #${data.fila}).`
+          : `✅ ${nomLimpio} (${catLimpia}) agregado en el sistema (Fila #${data.fila}).`;
+        setMsg(true, okMsg);
+        await cargarPanoramaRuntDigital(true);
+        await cargarBotOverview();
+        alert(okMsg);
+      } catch (err) {
+        setMsg(false, '❌ Error pasando a Practica: ' + err);
+        alert('❌ Error de conexión al pasar a Practica: ' + err);
+      }
     }
 
     function renderizarModuloClases() {

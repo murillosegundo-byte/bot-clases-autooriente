@@ -694,8 +694,9 @@ class RuntControlService:
         act_2 = "CARGADO RUNT" if es_cargado else "PENDIENTE RUNT"
         cargue_diario = str(payload.get("cargue_diario", "")).strip().upper()
         ahora_col = datetime.datetime.now(clases_core.TZ_COLOMBIA)
-        fecha_cargue = str(payload.get("fecha_cargue", "")).strip() or ahora_col.strftime("%Y-%m-%d")
-        hora_reg = str(payload.get("hora_registro", "")).strip() or ahora_col.strftime("%H:%M:%S")
+        sin_fecha_cargue = bool(payload.get("sin_fecha_cargue", False))
+        fecha_cargue = "" if sin_fecha_cargue else (str(payload.get("fecha_cargue", "")).strip() or ahora_col.strftime("%Y-%m-%d"))
+        hora_reg = "" if sin_fecha_cargue else (str(payload.get("hora_registro", "")).strip() or ahora_col.strftime("%H:%M:%S"))
 
         vence_90 = _excel_serial_a_iso(payload.get("vence_90_dias", ""))
         if fecha_mat and len(fecha_mat) == 10 and not vence_90:
@@ -729,7 +730,7 @@ class RuntControlService:
             str(teoria) if teoria > 0 else "",
             str(taller) if taller > 0 else "",
             str(practica) if practica > 0 else "",
-            str(total_cargadas),
+            str(total_cargadas) if total_cargadas > 0 else "",
             instructor,
             hora_reg,
             act_1,
@@ -738,7 +739,7 @@ class RuntControlService:
             cargue_diario,
         ]
 
-        filas = self._obtener_filas_pestana(TAB_PRACTICA)
+        filas = self._obtener_filas_pestana(TAB_PRACTICA, forzar=(fila_idx < 2))
         if not filas:
             filas = [list(HEADERS_PRACTICA)]
 
