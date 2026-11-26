@@ -6392,34 +6392,93 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       if (!thead || !tbody) return;
 
       if (ACTIVE_RUNT_TAB === 'TAB_NO_RUNT') {
-        const rows = (RUNT_SHEET_DATA.no_runt || []).filter(r => {
+        const allNoRunt = (RUNT_SHEET_DATA.no_runt || []).map(r => ({
+          ...r,
+          _evalPrac: evaluarEstadoPracticaNoRunt(r)
+        }));
+        const cntRegFalta = allNoRunt.filter(r => r._evalPrac.pendientePasar).length;
+        const cntYaPrac = allNoRunt.filter(r => r._evalPrac.yaEnPractica).length;
+        const cntSinReg = allNoRunt.filter(r => !r._evalPrac.esReg && !r._evalPrac.yaEnPractica).length;
+
+        const rows = allNoRunt.filter(r => {
+          const ev = r._evalPrac;
+          if (NO_RUNT_SUBFILTRO === 'REGISTRADO_FALTA' && !ev.pendientePasar) return false;
+          if (NO_RUNT_SUBFILTRO === 'YA_EN_PRACTICA' && !ev.yaEnPractica) return false;
+          if (NO_RUNT_SUBFILTRO === 'SIN_REGISTRO' && (ev.esReg || ev.yaEnPractica)) return false;
           if (!q) return true;
-          return `${r.nombre} ${r.cedula} ${r.categoria} ${r.estado_registro} ${r.novedad}`.toLowerCase().includes(q);
+          const pracTxt = ev.yaEnPractica ? 'ya esta en practica' : (ev.pendientePasar ? 'registrado falta pasar practica' : '');
+          return `${r.nombre} ${r.cedula} ${r.categoria} ${r.estado_registro} ${r.novedad} ${pracTxt}`.toLowerCase().includes(q);
         });
-        infoEl.textContent = `Pestaña "No runt" — Mostrando ${rows.length} alumnos pendientes o verificados de inscripción RUNT`;
+
+        const pillStyle = (key) => NO_RUNT_SUBFILTRO === key
+          ? 'background:#2563eb; color:#fff; border-color:#3b82f6; font-weight:700;'
+          : 'background:rgba(15,23,42,0.55); color:#cbd5e1; border-color:rgba(148,163,184,0.3);';
+        infoEl.innerHTML = `
+          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+            <span>Pestaña <b>"No runt"</b> — Mostrando <b>${rows.length}</b>:</span>
+            <button type="button" class="btn btn-outline" style="padding:2px 8px; font-size:11px; ${pillStyle('TODOS')}" onclick="cambiarSubfiltroNoRunt('TODOS')">Todos (${allNoRunt.length})</button>
+            <button type="button" class="btn btn-outline" style="padding:2px 8px; font-size:11px; ${pillStyle('REGISTRADO_FALTA')}" onclick="cambiarSubfiltroNoRunt('REGISTRADO_FALTA')">🆕 REGISTRADO falta Practica (${cntRegFalta})</button>
+            <button type="button" class="btn btn-outline" style="padding:2px 8px; font-size:11px; ${pillStyle('YA_EN_PRACTICA')}" onclick="cambiarSubfiltroNoRunt('YA_EN_PRACTICA')">✅ Ya en Practica (${cntYaPrac})</button>
+            <button type="button" class="btn btn-outline" style="padding:2px 8px; font-size:11px; ${pillStyle('SIN_REGISTRO')}" onclick="cambiarSubfiltroNoRunt('SIN_REGISTRO')">🚫 Sin Registro (${cntSinReg})</button>
+          </div>
+        `;
         thead.innerHTML = `<tr>
           <th>Fila</th><th>Fecha Reporte</th><th>Nombre y Apellido</th><th>Cédula</th><th>Tipo Doc.</th>
-          <th>Cat.</th><th>Fecha Matrícula</th><th>Fecha Registro RUNT</th><th>Estado Registro</th><th>Acción 1 Clic</th>
+          <th>Cat.</th><th>Fecha Matrícula</th><th>Fecha Registro RUNT</th><th>Estado Registro</th><th>Estado en Practica (Auto)</th><th>Acción 1 Clic</th>
         </tr>`;
         tbody.innerHTML = rows.map(r => {
-          const esReg = r.estado_registro.includes('REGISTRADO') && !r.estado_registro.includes('SIN');
-          return `<tr class="${esReg ? 'row-sem-verde' : 'row-sem-rojo'}">
+          const ev = r._evalPrac;
+          const esReg = ev.esReg;
+          const rowCls = ev.yaEnPractica ? 'row-sem-verde' : (ev.pendientePasar ? 'row-sem-amarillo' : (esReg ? 'row-sem-verde' : 'row-sem-rojo'));
+          const safeNom = (r.nombre || '').replace(/'/g, "\\'");
+          const safeCed = (r.cedula || '').replace(/'/g, "\\'");
+          const safeFMat = (r.fecha_matricula || '').replace(/'/g, "\\'");
+          const safeFRunt = (r.fecha_registro_runt || '').replace(/'/g, "\\'");
+
+          let estadoPracHtml = `<span style="font-size:11px; color:var(--muted);">⏳ Sin registro RUNT</span>`;
+          if (ev.yaEnPractica) {
+            const detBadges = ev.enPractica.map(d =>
+              `<button type="button" class="badge badge-success" style="cursor:pointer; border:1px solid rgba(16,185,129,0.5);" title="Clic para abrir este alumno en el editor de Practica (Fila #${d.fila})" onclick="cargarFilaRuntEnFormulario(${d.fila})">✅ YA ESTÁ EN PRACTICA • ${d.categoria} (#${d.fila} • ${d.clases_cargadas}/${d.meta_total}h)</button>`
+            ).join(' ');
+            estadoPracHtml = `<div style="display:flex; gap:4px; flex-wrap:wrap;">${detBadges}</div>`;
+          } else if (ev.parcialEnPractica) {
+            const yaTxt = ev.enPractica.map(d => `<span class="badge badge-success" style="font-size:10.5px;">✅ ${d.categoria} ya en Practica (#${d.fila})</span>`).join(' ');
+            const falTxt = ev.faltanPractica.map(c => `<span class="badge badge-warning" style="font-size:10.5px;">⚠️ Falta ${c}</span>`).join(' ');
+            estadoPracHtml = `<div style="display:flex; gap:4px; flex-wrap:wrap;">${yaTxt} ${falTxt}</div>`;
+          } else if (ev.pendientePasar) {
+            estadoPracHtml = `<span class="badge badge-warning" style="font-weight:700;">🆕 REGISTRADO — Falta pasar a Practica</span>`;
+          }
+
+          const btnsPasar = ev.pendientePasar
+            ? ev.faltanPractica.map(catF =>
+                `<button type="button" class="btn btn-primary" style="padding:4px 8px; font-size:11px;" title="Abrir formulario prellenado para pasar ${r.nombre} (${catF}) manualmente a la pestaña Practica" onclick="prepararAltaEnHojaRuntDesdeAlumno('${safeCed}', '${safeNom}', '${catF}', '${safeFMat}', '${safeFRunt}', '')">➕ Pasar ${catF} a Practica</button>`
+              ).join(' ')
+            : '';
+
+          return `<tr class="${rowCls}">
             <td><code>#${r.fila}</code></td>
             <td>${r.timestamp || '-'}</td>
-            <td><b>${r.nombre || 'SIN NOMBRE'}</b></td>
+            <td>
+              <b>${r.nombre || 'SIN NOMBRE'}</b>
+              ${r.novedad ? `<div style="font-size:10.5px; color:#fde047;">📝 ${r.novedad}</div>` : ''}
+            </td>
             <td><code>${r.cedula}</code></td>
             <td>${r.tipo_documento}</td>
             <td><span class="badge badge-info">${r.categoria}</span></td>
             <td>${r.fecha_matricula || '-'}</td>
             <td>${r.fecha_registro_runt || '-'}</td>
             <td><span class="badge ${esReg ? 'badge-success' : 'badge-danger'}">${r.estado_registro}</span></td>
+            <td>${estadoPracHtml}</td>
             <td>
-              ${esReg
-                ? `<button type="button" class="btn btn-outline" style="padding:4px 8px; font-size:11px;" onclick="cambiarEstadoPestanaNoRunt(${r.fila}, 'SIN REGISTRO')">↩️ Marcar Sin Registro</button>`
-                : `<button type="button" class="btn btn-success" style="padding:4px 8px; font-size:11px;" onclick="cambiarEstadoPestanaNoRunt(${r.fila}, 'REGISTRADO')">✅ Marcar REGISTRADO</button>`}
+              <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:center;">
+                ${btnsPasar}
+                ${esReg
+                  ? `<button type="button" class="btn btn-outline" style="padding:4px 8px; font-size:11px;" onclick="cambiarEstadoPestanaNoRunt(${r.fila}, 'SIN REGISTRO')">↩️ Marcar Sin Registro</button>`
+                  : `<button type="button" class="btn btn-success" style="padding:4px 8px; font-size:11px;" onclick="cambiarEstadoPestanaNoRunt(${r.fila}, 'REGISTRADO')">✅ Marcar REGISTRADO</button>`}
+              </div>
             </td>
           </tr>`;
-        }).join('') || '<tr><td colspan="10" style="text-align:center; padding:18px; color:var(--muted);">Sin registros en pestaña No runt.</td></tr>';
+        }).join('') || '<tr><td colspan="11" style="text-align:center; padding:18px; color:var(--muted);">Sin registros que coincidan con este filtro en la pestaña No runt.</td></tr>';
         return;
       }
 
@@ -6672,17 +6731,148 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }) || null;
     }
 
-    function prepararAltaEnHojaRuntDesdeAlumno(cedula, nombre, categoria, fechaRef) {
+    let NO_RUNT_SUBFILTRO = 'TODOS';
+
+    function cambiarSubfiltroNoRunt(val) {
+      NO_RUNT_SUBFILTRO = val || 'TODOS';
+      renderizarTablaHojaRunt();
+    }
+
+    function normalizarCatRuntJs(catRaw) {
+      const s = String(catRaw || '').toUpperCase().replace(/\s+/g, ' ').trim();
+      if (s.includes('RECAT') && s.includes('C1')) return 'RECAT_C1';
+      if (s.includes('A1')) return 'A1';
+      if (s.includes('A2')) return 'A2';
+      if (s.includes('B1')) return 'B1';
+      if (s.includes('C1')) return 'C1';
+      return s || 'A2';
+    }
+
+    function dividirCategoriasRunt(catRaw) {
+      const s = String(catRaw || '').toUpperCase().trim();
+      if (!s) return ['A2'];
+      const partes = s.split(/[-/,+&]|\bY\b/i).map(p => p.trim()).filter(Boolean);
+      const out = [];
+      partes.forEach(p => {
+        const c = normalizarCatRuntJs(p);
+        if (c && !out.includes(c)) out.push(c);
+      });
+      return out.length ? out : [normalizarCatRuntJs(s)];
+    }
+
+    function evaluarEstadoPracticaNoRunt(nr) {
+      const estU = String((nr && nr.estado_registro) || '').toUpperCase();
+      const esReg = estU.includes('REGISTRADO') && !estU.includes('SIN');
+      const cats = dividirCategoriasRunt(nr && nr.categoria);
+      const enPractica = [];
+      const faltanPractica = [];
+      cats.forEach(cat => {
+        const m = buscarEnHojaPracticaRunt({ cedula: nr.cedula, nombre: nr.nombre, categoria: cat });
+        if (m) {
+          enPractica.push({
+            categoria: cat,
+            fila: m.fila,
+            clases_cargadas: m.clases_cargadas || 0,
+            meta_total: m.meta_total || 0,
+            estado_runt: m.estado_runt || ''
+          });
+        } else {
+          faltanPractica.push(cat);
+        }
+      });
+      const yaEnPractica = enPractica.length > 0 && faltanPractica.length === 0;
+      const parcialEnPractica = enPractica.length > 0 && faltanPractica.length > 0;
+      const pendientePasar = esReg && faltanPractica.length > 0;
+      return { esReg, cats, enPractica, faltanPractica, yaEnPractica, parcialEnPractica, pendientePasar };
+    }
+
+    function obtenerPendientesDesdeNoRunt(alumnosBotExistentes = []) {
+      if (!RUNT_SHEET_DATA || !Array.isArray(RUNT_SHEET_DATA.no_runt)) return [];
+      const yaEnBotPend = new Set();
+      (alumnosBotExistentes || []).forEach(a => {
+        const esCarg = String(a.estado_runt || '').toLowerCase().includes('cargue') || String(a.estado_runt || '').toLowerCase().includes('cargado');
+        if (esCarg || buscarEnHojaPracticaRunt(a)) return;
+        const catA = normalizarCatRuntJs(a.categoria);
+        const cedA = _normCedRuntMatch(a.cedula);
+        const nomA = _normTextoRuntMatch(a.nombre);
+        if (cedA) yaEnBotPend.add(`D:${cedA}|${catA}`);
+        if (nomA) yaEnBotPend.add(`N:${nomA}|${catA}`);
+      });
+
+      const vistos = new Set();
+      const metasPrac = { A1: 8, A2: 15, B1: 20, C1: 30, RECAT_C1: 8 };
+      const out = [];
+      RUNT_SHEET_DATA.no_runt.forEach(nr => {
+        const ev = evaluarEstadoPracticaNoRunt(nr);
+        if (!ev.pendientePasar) return;
+        const cedN = _normCedRuntMatch(nr.cedula);
+        const nomN = _normTextoRuntMatch(nr.nombre);
+        ev.faltanPractica.forEach(cat => {
+          const keyD = cedN ? `D:${cedN}|${cat}` : '';
+          const keyN = nomN ? `N:${nomN}|${cat}` : '';
+          if ((keyD && (vistos.has(keyD) || yaEnBotPend.has(keyD))) || (keyN && (vistos.has(keyN) || yaEnBotPend.has(keyN)))) {
+            return;
+          }
+          if (keyD) vistos.add(keyD);
+          if (keyN) vistos.add(keyN);
+          const metaP = metasPrac[cat] || 15;
+          out.push({
+            _origen_no_runt: true,
+            _fila_no_runt: nr.fila,
+            cedula: nr.cedula || '',
+            nombre: nr.nombre || 'SIN NOMBRE',
+            categoria: cat,
+            categoria_no_runt_raw: nr.categoria || cat,
+            tipo_documento: nr.tipo_documento || 'CC',
+            fecha_matricula: nr.fecha_matricula || '',
+            fecha_primera_clase: nr.fecha_matricula || '',
+            fecha_registro_runt: nr.fecha_registro_runt || '',
+            novedad_no_runt: nr.novedad || '',
+            estado_runt: 'No Registrado RUNT',
+            formato_codigo: 'Desde No RUNT',
+            clases_completadas: 0,
+            total_requerido: metaP,
+            clases_faltantes: metaP,
+            porcentaje_avance: 0,
+            porcentaje_faltante: 100,
+            estado_curso: 'REGISTRADO RUNT',
+            alerta_cartera: 'NO_CRUZADO',
+            alerta_texto: 'Pendiente pasar manual',
+            saldo_cartera: 0,
+            semaforo_color: 'AMARILLO',
+            semaforo_etiqueta: '📋 Desde No RUNT (REGISTRADO)',
+            semaforo_detalle: 'Listo para cargar en plataforma y pasar a Practica',
+            dias_transcurridos_90: 0,
+            dias_restantes_90: 90,
+            urgencia_score: 50
+          });
+        });
+      });
+      return out;
+    }
+
+    function verAlumnoEnNoRunt(cedula) {
+      ACTIVE_RUNT_TAB = 'TAB_NO_RUNT';
+      NO_RUNT_SUBFILTRO = 'TODOS';
+      const inp = document.getElementById('searchRuntSheetInput');
+      if (inp) inp.value = cedula || '';
+      actualizarBotonVistaRunt();
+      renderizarTablaHojaRunt();
+      const tbl = document.getElementById('runtSheetThead');
+      if (tbl) tbl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function prepararAltaEnHojaRuntDesdeAlumno(cedula, nombre, categoria, fechaRef, fechaRegRunt = '', prioridadInit = 'EN PRACTICA') {
       document.getElementById('rn_fila').value = '0';
       document.getElementById('rn_cedula').value = cedula || '';
       document.getElementById('rn_nombre').value = (nombre || '').toUpperCase();
       document.getElementById('rn_cat').value = categoria || 'A2';
-      document.getElementById('rn_prioridad').value = 'EN PRACTICA';
+      document.getElementById('rn_prioridad').value = prioridadInit !== undefined ? prioridadInit : '';
       document.getElementById('rn_fecha_mat').value = (fechaRef || '').slice(0, 10);
       const v90El = document.getElementById('rn_vence_90');
       if (v90El) v90El.value = '';
       const frEl = document.getElementById('rn_fecha_reg_runt');
-      if (frEl) frEl.value = obtenerIsoFechaOffsetRunt(0);
+      if (frEl) frEl.value = (fechaRegRunt || '').slice(0, 10) || obtenerIsoFechaOffsetRunt(0);
       document.getElementById('rn_teoria').value = '0';
       document.getElementById('rn_taller').value = '0';
       document.getElementById('rn_practica').value = '0';
@@ -6705,9 +6895,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
       const esCargadoRunt = (a) => String(a.estado_runt || '').toLowerCase().includes('cargue') || String(a.estado_runt || '').toLowerCase().includes('cargado');
       const enHojaPracticaRunt = (a) => Boolean(buscarEnHojaPracticaRunt(a));
+      const pendientesDesdeNoRunt = obtenerPendientesDesdeNoRunt(todosAl);
 
-      // Contadores para las sub-pestañas (Faltan en Hoja RUNT excluye automáticamente a los que ya aparecen en Practica)
-      const cntRuntPend = todosAl.filter(a => !esCargadoRunt(a) && !enHojaPracticaRunt(a)).length;
+      // Contadores para las sub-pestañas (Faltan en Hoja RUNT incluye Bot + No RUNT en estado REGISTRADO que aún no están en Practica)
+      const cntRuntPendBot = todosAl.filter(a => !esCargadoRunt(a) && !enHojaPracticaRunt(a)).length;
+      const cntRuntPendNoRunt = pendientesDesdeNoRunt.length;
+      const cntRuntPend = cntRuntPendBot + cntRuntPendNoRunt;
       const cntEnHojaRunt = todosAl.filter(a => !esCargadoRunt(a) && enHojaPracticaRunt(a)).length;
       const cntRuntOk = todosAl.filter(a => esCargadoRunt(a)).length;
       const cntActivos = todosAl.filter(a => a.estado_curso !== 'FINALIZADO' && !esCargadoRunt(a)).length;
@@ -6746,7 +6939,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         <div class="kpi-card warning" style="cursor:pointer;" onclick="cambiarSubTabClases('PENDIENTE_RUNT')">
           <div class="kpi-label">⏳ Faltan por Registrar en Hoja RUNT</div>
           <div class="kpi-value" style="color:#fde68a;">${cntRuntPend} Sin Registrar</div>
-          <div class="kpi-sub"><b>📋 ${cntEnHojaRunt} ya existen</b> en pestaña Practica (ocultos de este filtro)</div>
+          <div class="kpi-sub"><b>🤖 ${cntRuntPendBot} del Bot</b> • <b>📋 ${cntRuntPendNoRunt} de No RUNT (REGISTRADO)</b> • ${cntEnHojaRunt} ya en Practica</div>
         </div>
         <div class="kpi-card success" style="cursor:pointer;" onclick="cambiarSubTabClases('CARGADOS_RUNT')">
           <div class="kpi-label">✅ Ya Cargados en RUNT (Ocultos del Filtro)</div>
@@ -6798,6 +6991,16 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         return `${a.cedula} ${a.nombre} ${a.categoria} ${a.formato_codigo} ${a.estado_runt || ''} ${a.semaforo_etiqueta || ''} ${a.semaforo_detalle || ''}`.toLowerCase().includes(q);
       });
 
+      // Incluir automáticamente los alumnos marcados REGISTRADO en la pestaña "No runt" que aún no existen en "Practica"
+      if (alertaF === 'PENDIENTE_RUNT' && pendientesDesdeNoRunt.length) {
+        const extraNoRunt = pendientesDesdeNoRunt.filter(a => {
+          if (catF !== 'TODAS' && a.categoria !== catF) return false;
+          if (!q) return true;
+          return `${a.cedula} ${a.nombre} ${a.categoria} ${a.categoria_no_runt_raw || ''} ${a.novedad_no_runt || ''} no runt registrado`.toLowerCase().includes(q);
+        });
+        rows = [...extraNoRunt, ...rows];
+      }
+
       const sortClases = (document.getElementById('sortClasesSelect') || {}).value || 'RECIENTES';
       if (sortClases === 'ANTIGUOS') {
         rows = [...rows].reverse();
@@ -6814,7 +7017,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
 
       const etiquetasVista = {
-        'PENDIENTE_RUNT': '⏳ Alumnos del Bot que AÚN NO están registrados en la pestaña "Practica" de la hoja RUNT',
+        'PENDIENTE_RUNT': '⏳ Alumnos del Bot y de "No runt" (REGISTRADO) que AÚN NO están en la pestaña "Practica" — Pasar manualmente tras cargar en plataforma',
         'SEMAFORO_ROJO': '🔴 SEMÁFORO CRÍTICO (90 DÍAS): Alumnos Próximos a Vencer o con Alto % de Clases Faltantes',
         'SEMAFORO_AMARILLO': '🟡 SEMÁFORO EN ALERTA PREVENTIVA (90 DÍAS): Alumnos que Requieren Acelerar Programación',
         'CARGADOS_RUNT': '✅ Alumnos con Cargue RUNT Realizado',
@@ -6828,6 +7031,43 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         `${etiquetasVista[alertaF] || ''} — Mostrando <b>${rows.length}</b> (<span style="color:#fca5a5;">🔴 ${cntSemRojo} críticos</span> • <span style="color:#fde047;">🟡 ${cntSemAmarillo} en alerta</span> • <span style="color:#6ee7b7;">🟢 ${cntSemVerde} a tiempo</span>)`;
 
       document.getElementById('clasesTbody').innerHTML = rows.map(a => {
+        if (a._origen_no_runt) {
+          const safeNombre = (a.nombre || '').replace(/'/g, "\\'");
+          const safeCedula = (a.cedula || '').replace(/'/g, "\\'");
+          const safeFMat = (a.fecha_matricula || '').replace(/'/g, "\\'");
+          const safeFRunt = (a.fecha_registro_runt || '').replace(/'/g, "\\'");
+          return `<tr class="row-sem-amarillo">
+            <td><code>${a.cedula || 'S/D'}</code></td>
+            <td>
+              <b>${a.nombre}</b>
+              <div style="font-size:10.5px; color:#fde047;">📋 Origen: Pestaña "No runt" (Fila #${a._fila_no_runt})${a.novedad_no_runt ? ' • ' + a.novedad_no_runt : ''}</div>
+            </td>
+            <td><span class="badge badge-info">${a.categoria}</span></td>
+            <td>
+              <div style="min-width:195px;">
+                <span class="badge badge-warning" style="font-weight:800;">📋 Desde No RUNT (REGISTRADO)</span>
+                <div style="font-size:10.5px; color:#cbd5e1; margin-top:3px;">Matrícula: <b>${a.fecha_matricula || '-'}</b> • Reg. RUNT: <b>${a.fecha_registro_runt || '-'}</b></div>
+              </div>
+            </td>
+            <td>
+              <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                <span class="badge badge-warning">🆕 No está en Practica</span>
+                <button type="button" class="btn btn-primary" style="padding:4px 8px; font-size:11px;" title="Después de cargarlo en tu otra plataforma, pásalo manualmente a la pestaña Practica" onclick="prepararAltaEnHojaRuntDesdeAlumno('${safeCedula}', '${safeNombre}', '${a.categoria}', '${safeFMat}', '${safeFRunt}', '')">➕ Pasar a Hoja RUNT</button>
+              </div>
+            </td>
+            <td><span class="badge badge-purple">No RUNT (${a.tipo_documento || 'CC'})</span></td>
+            <td><b>0/${a.total_requerido}</b> (0%)<div style="font-size:10.5px; color:#94a3b8;">Pendiente alta manual</div></td>
+            <td><span class="badge badge-success">REGISTRADO RUNT</span></td>
+            <td><span class="badge">Pendiente plataforma</span></td>
+            <td style="color:var(--muted);">-</td>
+            <td>
+              <div style="display:flex; gap:5px; align-items:center; flex-wrap:wrap;">
+                <button type="button" class="btn btn-primary" style="padding:5px 9px; font-size:11px;" onclick="prepararAltaEnHojaRuntDesdeAlumno('${safeCedula}', '${safeNombre}', '${a.categoria}', '${safeFMat}', '${safeFRunt}', '')">➕ Pasar a Practica</button>
+                <button type="button" class="btn btn-outline" style="padding:5px 8px; font-size:11px;" onclick="verAlumnoEnNoRunt('${safeCedula}')">🔍 Ver en No RUNT</button>
+              </div>
+            </td>
+          </tr>`;
+        }
         let badgeCartera = `<span class="badge badge-success">${a.alerta_texto || '✅ PAZ Y SALVO'}</span>`;
         if (a.alerta_cartera === 'RIESGO_CERO_REAL') {
           badgeCartera = `<span class="badge badge-danger">${a.alerta_texto}</span>`;

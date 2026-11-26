@@ -1225,11 +1225,72 @@ class RuntControlService:
             "detalle": res_runt,
         }
 
+    def _dividir_categorias_no_runt(self, cat_raw: str) -> List[str]:
+        s = str(cat_raw or "").upper().strip()
+        if not s:
+            return ["A2"]
+        partes = [p.strip() for p in re.split(r"[-/,+&]|\bY\b", s) if p.strip()]
+        cats: List[str] = []
+        for p in partes:
+            c = _normalizar_cat_runt(p)
+            if c and c not in cats:
+                cats.append(c)
+        return cats or [_normalizar_cat_runt(s)]
+
     def obtener_panorama_runt_web(self, forzar: bool = False) -> Dict[str, Any]:
         practica = self.listar_practica_runt(forzar=forzar)
         no_runt = self.listar_no_runt()
         inicio_practica = self.listar_inicio_practica()
         codigos_runt = self.listar_codigos_runt()
+
+        # Cruce automático (solo lectura, sin escribir nada en Google Sheets) entre 'No runt' y 'Practica'
+        prac_by_doc: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        prac_by_nom: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for pr in practica:
+            c_p = str(pr.get("categoria", "")).upper().strip()
+            d_p = _norm(_limpiar_cedula(pr.get("cedula", "")))
+            n_p = _norm(clases_core.limpiar_solo_nombre_persona(str(pr.get("nombre", ""))) or str(pr.get("nombre", "")))
+            if d_p and c_p:
+                prac_by_doc[(d_p, c_p)] = pr
+            if n_p and c_p:
+                prac_by_nom[(n_p, c_p)] = pr
+
+        no_runt_reg_faltan_cnt = 0
+        no_runt_ya_prac_cnt = 0
+        for nr in no_runt:
+            est_u = str(nr.get("estado_registro", "")).upper()
+            es_reg = ("REGISTRADO" in est_u) and ("SIN" not in est_u)
+            cats_nr = self._dividir_categorias_no_runt(nr.get("categoria", ""))
+            d_n = _norm(_limpiar_cedula(nr.get("cedula", "")))
+            n_n = _norm(clases_core.limpiar_solo_nombre_persona(str(nr.get("nombre", ""))) or str(nr.get("nombre", "")))
+            en_prac_det: List[Dict[str, Any]] = []
+            faltan_cats: List[str] = []
+            for c_n in cats_nr:
+                m_pr = (prac_by_doc.get((d_n, c_n)) if d_n else None) or (prac_by_nom.get((n_n, c_n)) if n_n else None)
+                if m_pr:
+                    en_prac_det.append({
+                        "categoria": c_n,
+                        "fila": m_pr.get("fila", 0),
+                        "clases_cargadas": m_pr.get("clases_cargadas", 0),
+                        "meta_total": m_pr.get("meta_total", 0),
+                        "estado_runt": m_pr.get("estado_runt", ""),
+                    })
+                else:
+                    faltan_cats.append(c_n)
+
+            ya_en_practica = bool(en_prac_det) and len(faltan_cats) == 0
+            pendiente_pasar = es_reg and len(faltan_cats) > 0
+            nr["es_registrado"] = es_reg
+            nr["categorias_lista"] = cats_nr
+            nr["en_practica_detalle"] = en_prac_det
+            nr["faltan_practica_cats"] = faltan_cats
+            nr["ya_en_practica"] = ya_en_practica
+            nr["parcial_en_practica"] = bool(en_prac_det) and len(faltan_cats) > 0
+            nr["pendiente_pasar_practica"] = pendiente_pasar
+            if ya_en_practica:
+                no_runt_ya_prac_cnt += 1
+            if pendiente_pasar:
+                no_runt_reg_faltan_cnt += 1
 
         cargados_cnt = sum(1 for x in practica if x["estado_runt"] == "CARGADO RUNT")
         pendientes_cnt = len(practica) - cargados_cnt
@@ -1264,6 +1325,8 @@ class RuntControlService:
                 "vencidos_sancion": vencidos_sancion_cnt,
                 "con_clases_bot_por_subir": con_desfase_bot_cnt,
                 "no_runt_pendientes": sin_registro_no_runt_cnt,
+                "no_runt_registrados_faltan_practica": no_runt_reg_faltan_cnt,
+                "no_runt_ya_en_practica": no_runt_ya_prac_cnt,
                 "total_no_runt": len(no_runt),
                 "total_inicio_practica": len(inicio_practica),
                 "total_codigos_runt": len(codigos_runt),
