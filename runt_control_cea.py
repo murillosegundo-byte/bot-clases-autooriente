@@ -387,9 +387,6 @@ class RuntControlService:
             f_cargue = _excel_serial_a_iso(r[16] if len(r) > 16 else "")
             cargue_diario = str(r[17]).strip().upper() if len(r) > 17 else ""
 
-            es_cargado = "CARGADO" in act_1.upper() or "CARGADO" in act_2.upper() or "CARGUE" in act_1.upper()
-            estado_runt = "CARGADO RUNT" if es_cargado else "PENDIENTE RUNT"
-
             # Metas reglamentarias por categoría (Teoría + Taller + Práctica)
             metas_cat = {
                 "A1": {"teoria": 25, "taller": 3, "practica": 8, "total": 36},
@@ -398,6 +395,19 @@ class RuntControlService:
                 "C1": {"teoria": 30, "taller": 5, "practica": 30, "total": 65},
                 "RECAT_C1": {"teoria": 8, "taller": 0, "practica": 8, "total": 16},
             }.get(cat, {"teoria": 25, "taller": 5, "practica": 20, "total": 50})
+
+            completo_100 = (
+                teoria >= metas_cat["teoria"]
+                and taller >= metas_cat["taller"]
+                and practica >= metas_cat["practica"]
+            ) or (total_cargadas >= metas_cat["total"])
+            es_cargado = (
+                "CARGADO" in act_1.upper()
+                or "CARGADO" in act_2.upper()
+                or "CARGUE" in act_1.upper()
+                or completo_100
+            )
+            estado_runt = "CARGADO RUNT" if es_cargado else "PENDIENTE RUNT"
 
             # Cruce con clases prácticas dictadas en el Bot de Telegram y con la lista activa del Bot (Imagen 1)
             doc_norm = _norm(ced)
@@ -663,8 +673,23 @@ class RuntControlService:
         practica = _limpiar_entero(payload.get("practica", 0), 0)
         total_cargadas = teoria + taller + practica
         instructor = str(payload.get("instructor", "")).strip().upper()
+        metas_cat_g = {
+            "A1": {"teoria": 25, "taller": 3, "practica": 8, "total": 36},
+            "A2": {"teoria": 25, "taller": 3, "practica": 15, "total": 43},
+            "B1": {"teoria": 25, "taller": 5, "practica": 20, "total": 50},
+            "C1": {"teoria": 30, "taller": 5, "practica": 30, "total": 65},
+            "RECAT_C1": {"teoria": 8, "taller": 0, "practica": 8, "total": 16},
+        }.get(categoria, {"teoria": 25, "taller": 5, "practica": 20, "total": 50})
+        completo_100_g = (
+            teoria >= metas_cat_g["teoria"]
+            and taller >= metas_cat_g["taller"]
+            and practica >= metas_cat_g["practica"]
+        ) or (total_cargadas >= metas_cat_g["total"])
+        forzar_pendiente = bool(payload.get("forzar_pendiente", False))
         estado_raw = str(payload.get("estado_runt", "PENDIENTE RUNT")).strip().upper()
-        es_cargado = "CARGADO" in estado_raw or "CARGUE" in estado_raw
+        es_cargado = ("CARGADO" in estado_raw or "CARGUE" in estado_raw) or (completo_100_g and not forzar_pendiente)
+        if es_cargado and not prioridad:
+            prioridad = "Termino"
         act_1 = "✅ CARGADO RUNT" if es_cargado else "⚠️ PENDIENTE RUNT"
         act_2 = "CARGADO RUNT" if es_cargado else "PENDIENTE RUNT"
         cargue_diario = str(payload.get("cargue_diario", "")).strip().upper()
@@ -1131,7 +1156,7 @@ class RuntControlService:
             nueva_prac = min(item["meta_practica"], item["practica"] + max(1, horas_sumar))
 
         llego_al_100 = (teo >= item["meta_teoria"] and tal >= item["meta_taller"] and nueva_prac >= item["meta_practica"])
-        nuevo_estado = "CARGADO RUNT" if (completar_todo or (llego_al_100 and payload.get("auto_certificar", False))) else item["estado_runt"]
+        nuevo_estado = "CARGADO RUNT" if (completar_todo or (llego_al_100 and payload.get("auto_certificar", True))) else item["estado_runt"]
         nueva_prioridad = "Termino" if nueva_prac >= item["meta_practica"] else "EN PRACTICA"
 
         res = self.guardar_o_actualizar_practica_runt({
