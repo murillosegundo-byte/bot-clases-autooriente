@@ -1094,12 +1094,32 @@ class _MemoriaWorksheet:
                 fila_dest[c_idx - 1] = str(val)
 
 
-class _CachedWorksheet:
-    """Wrapper con caché de 120 segundos y respaldo anti-caídas/429 de Google Sheets."""
+def _a1_col_to_index(col_letters: str) -> int:
+    idx = 0
+    for ch in col_letters.upper():
+        idx = idx * 26 + (ord(ch) - ord("A") + 1)
+    return idx
 
-    def __init__(self, ws: Any, cache_dict: Dict[str, Tuple[float, List[List[str]]]]):
+
+def _parsear_inicio_rango_a1(range_name: str) -> Optional[Tuple[int, int]]:
+    """Extrae (fila_1based, col_1based) iniciales desde un rango A1 como 'F12:G12' o 'Hoja!A5:K5'."""
+    if not range_name or not isinstance(range_name, str):
+        return None
+    rango = range_name.split("!")[-1].strip()
+    inicio = rango.split(":")[0].strip().replace("$", "")
+    m = re.match(r"^([A-Za-z]+)(\d+)$", inicio)
+    if not m:
+        return None
+    return int(m.group(2)), _a1_col_to_index(m.group(1))
+
+
+class _CachedWorksheet:
+    """Wrapper thread-safe con caché de 120 segundos, parcheo en RAM y respaldo anti-429 de Google Sheets."""
+
+    def __init__(self, ws: Any, cache_dict: Dict[str, Tuple[float, List[List[str]]]], lock: Optional[threading.RLock] = None):
         self._ws = ws
         self._cache = cache_dict
+        self._lock = lock or threading.RLock()
         self.title = getattr(ws, "title", "Sheet")
 
     @property
@@ -1107,26 +1127,31 @@ class _CachedWorksheet:
         return getattr(self._ws, "row_count", 1000)
 
     def _invalidate(self) -> None:
-        self._cache.pop(self.title, None)
+        with self._lock:
+            self._cache.pop(self.title, None)
 
     def get_all_values(self) -> List[List[str]]:
         now = time.time()
-        cached = self._cache.get(self.title)
-        if cached and (now - cached[0] < 120.0):
-            return [list(r) for r in cached[1]]
+        with self._lock:
+            cached = self._cache.get(self.title)
+            if cached and (now - cached[0] < 120.0):
+                return [list(r) for r in cached[1]]
         last_err = None
         for intento in range(3):
             try:
                 vals = self._ws.get_all_values()
-                self._cache[self.title] = (time.time(), vals)
+                with self._lock:
+                    self._cache[self.title] = (time.time(), vals)
                 return [list(r) for r in vals]
             except Exception as exc:
                 last_err = exc
                 if intento < 2:
                     time.sleep(0.9 * (intento + 1))
-        if cached:
-            logger.warning("Usando caché de respaldo para hoja '%s' tras límite/error temporal de Google API: %s", self.title, last_err)
-            return [list(r) for r in cached[1]]
+        with self._lock:
+            cached = self._cache.get(self.title)
+            if cached:
+                logger.warning("Usando caché de respaldo para hoja '%s' tras límite/error temporal de Google API: %s", self.title, last_err)
+                return [list(r) for r in cached[1]]
         if last_err:
             raise last_err
         return []
@@ -1139,27 +1164,34 @@ class _CachedWorksheet:
 
     def append_row(self, values: List[Any], **kwargs: Any) -> Any:
         res = self._ws.append_row(values, **kwargs)
-        self._invalidate()
+        with self._lock:
+            cached = self._cache.get(self.title)
+            if cached:
+                vals = [list(r) for r in cached[1]]
+                vals.append(["" if v is None else str(v) for v in values])
+                self._cache[self.title] = (time.time(), vals)
+            else:
+                self._cache.pop(self.title, None)
         return res
 
     def add_rows(self, count: int) -> Any:
         res = self._ws.add_rows(count)
-        self._invalidate()
         return res
 
     def update_cell(self, row: int, col: int, value: Any) -> Any:
         res = self._ws.update_cell(row, col, value)
-        cached = self._cache.get(self.title)
-        if cached:
-            vals = [list(r) for r in cached[1]]
-            while len(vals) < row:
-                vals.append([])
-            while len(vals[row - 1]) < col:
-                vals[row - 1].append("")
-            vals[row - 1][col - 1] = str(value)
-            self._cache[self.title] = (time.time(), vals)
-        else:
-            self._invalidate()
+        with self._lock:
+            cached = self._cache.get(self.title)
+            if cached:
+                vals = [list(r) for r in cached[1]]
+                while len(vals) < row:
+                    vals.append([])
+                while len(vals[row - 1]) < col:
+                    vals[row - 1].append("")
+                vals[row - 1][col - 1] = "" if value is None else str(value)
+                self._cache[self.title] = (time.time(), vals)
+            else:
+                self._cache.pop(self.title, None)
         return res
 
     def cell(self, row: int, col: int) -> Any:
@@ -1178,6 +1210,38 @@ class _CachedWorksheet:
 
     def update(self, *args: Any, **kwargs: Any) -> Any:
         res = self._ws.update(*args, **kwargs)
+        # Parchear el rango en caché RAM para evitar re-descargar toda la hoja tras cada edición
+        range_name = kwargs.get("range_name")
+        values = kwargs.get("values")
+        if range_name is None and values is None and len(args) >= 2:
+            if isinstance(args[0], str) and isinstance(args[1], list):
+                range_name, values = args[0], args[1]
+            elif isinstance(args[0], list) and isinstance(args[1], str):
+                values, range_name = args[0], args[1]
+        elif values is None and len(args) >= 1 and isinstance(args[0], list):
+            values = args[0]
+        elif range_name is None and len(args) >= 1 and isinstance(args[0], str):
+            range_name = args[0]
+
+        inicio = _parsear_inicio_rango_a1(range_name) if isinstance(range_name, str) else None
+        if inicio and isinstance(values, list) and all(isinstance(r, (list, tuple)) for r in values):
+            row0, col0 = inicio
+            with self._lock:
+                cached = self._cache.get(self.title)
+                if cached:
+                    vals = [list(r) for r in cached[1]]
+                    for r_off, row_data in enumerate(values):
+                        r_idx = row0 + r_off
+                        while len(vals) < r_idx:
+                            vals.append([])
+                        need_cols = col0 + len(row_data) - 1
+                        while len(vals[r_idx - 1]) < need_cols:
+                            vals[r_idx - 1].append("")
+                        for c_off, cell_val in enumerate(row_data):
+                            vals[r_idx - 1][col0 - 1 + c_off] = "" if cell_val is None else str(cell_val)
+                    self._cache[self.title] = (time.time(), vals)
+                    return res
+
         self._invalidate()
         return res
 
@@ -1193,6 +1257,7 @@ class SheetsService:
         self._ultimo_fallo_ts: float = 0.0
         self._ultimo_error_msg: str = ""
         self._sembrado_ejecutado: bool = False
+        self._cache_lock = threading.RLock()
 
     @property
     def conectado_en_vivo(self) -> bool:
@@ -1259,7 +1324,7 @@ class SheetsService:
             book = self.conectar()
             try:
                 ws_raw = book.worksheet(nombre_hoja)
-                ws = _CachedWorksheet(ws_raw, self._cache_lecturas)
+                ws = _CachedWorksheet(ws_raw, self._cache_lecturas, lock=self._cache_lock)
                 primera_fila = ws.row_values(1)
                 if not primera_fila:
                     ws.append_row(encabezados)
@@ -1272,7 +1337,7 @@ class SheetsService:
             except gspread.WorksheetNotFound:
                 ws_raw = book.add_worksheet(title=nombre_hoja, rows=1000, cols=len(encabezados) + 2)
                 ws_raw.append_row(encabezados)
-                ws = _CachedWorksheet(ws_raw, self._cache_lecturas)
+                ws = _CachedWorksheet(ws_raw, self._cache_lecturas, lock=self._cache_lock)
                 self._worksheets_cache[nombre_hoja] = ws
                 return ws
         except Exception as exc:
@@ -2051,11 +2116,18 @@ class SheetsService:
                     coincide = True
 
                 if coincide:
-                    ws.update(
-                        values=[[runt_val, fecha_runt]],
-                        range_name=f"F{idx_f}:G{idx_f}",
-                        value_input_option="USER_ENTERED",
+                    est_actual = str(fila[5]).strip() if len(fila) > 5 else ""
+                    fecha_actual = str(fila[6]).strip() if len(fila) > 6 else ""
+                    sin_cambio = (
+                        est_actual.lower() == runt_val.lower()
+                        and ((es_cargado and bool(fecha_actual)) or (not es_cargado and not fecha_actual))
                     )
+                    if not sin_cambio:
+                        ws.update(
+                            values=[[runt_val, fecha_runt]],
+                            range_name=f"F{idx_f}:G{idx_f}",
+                            value_input_option="USER_ENTERED",
+                        )
                     return {
                         "ok": True,
                         "ID_Matricula": fila[0] if len(fila) > 0 else "",
@@ -2063,7 +2135,7 @@ class SheetsService:
                         "Nombre_Completo": fila[2] if len(fila) > 2 else (nombre_alumno or documento_o_nombre),
                         "Categoria": cat_norm,
                         "Estado_RUNT": runt_val,
-                        "Fecha_RUNT": fecha_runt,
+                        "Fecha_RUNT": fecha_actual if sin_cambio else fecha_runt,
                     }
         except Exception as exc:
             logger.warning("Aviso buscando fila para actualizar_estado_runt_alumno: %s", exc)

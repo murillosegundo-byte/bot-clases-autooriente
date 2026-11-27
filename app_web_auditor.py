@@ -5505,7 +5505,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
     }
 
-    async function cargarBotOverview() {
+    let _BOT_OVERVIEW_INFLIGHT = null;
+
+    async function cargarBotOverview(opciones = {}) {
+      const omitirRunt = Boolean(opciones && opciones.omitirRunt);
       const nomPeriodo = (document.getElementById('nom_periodo') || {}).value || 'mes';
       const nomInst = (document.getElementById('nom_instructor') || {}).value || 'TODOS';
       const inasPeriodo = (document.getElementById('inas_periodo') || {}).value || 'todo';
@@ -5522,8 +5525,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         placa_mantenimientos: pesvPlaca,
       });
 
+      const reqKey = qs.toString();
+      if (_BOT_OVERVIEW_INFLIGHT && _BOT_OVERVIEW_INFLIGHT.key === reqKey) {
+        return _BOT_OVERVIEW_INFLIGHT.promise;
+      }
+
+      const tarea = (async () => {
       try {
-        const res = await fetch('/api/bot/overview?' + qs.toString());
+        const res = await fetch('/api/bot/overview?' + reqKey);
         const data = await res.json();
         if (!data.ok) return;
         if (BOT_DATA && BOT_DATA.clases && (BOT_DATA.clases.alumnos || []).length > 0 && data.clases && (data.clases.alumnos || []).length === 0) {
@@ -5635,10 +5644,19 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           actualizarKpisYContadoresRunt();
           renderizarTablaHojaRunt();
         }
-        cargarPanoramaRuntDigital(false);
+        if (!omitirRunt && !RUNT_SHEET_DATA) {
+          cargarPanoramaRuntDigital(false);
+        }
       } catch (err) {
         console.error('Error cargando panorama del bot:', err);
+      } finally {
+        if (_BOT_OVERVIEW_INFLIGHT && _BOT_OVERVIEW_INFLIGHT.key === reqKey) {
+          _BOT_OVERVIEW_INFLIGHT = null;
+        }
       }
+      })();
+      _BOT_OVERVIEW_INFLIGHT = { key: reqKey, promise: tarea };
+      return tarea;
     }
 
     let RUNT_SHEET_DATA = null;
@@ -6041,7 +6059,13 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
     }
 
+    let _RUNT_FETCH_INFLIGHT = null;
+
     async function cargarPanoramaRuntDigital(forzar = false) {
+      if (!forzar && _RUNT_FETCH_INFLIGHT) {
+        return _RUNT_FETCH_INFLIGHT;
+      }
+      const tarea = (async () => {
       try {
         const elBatchF = document.getElementById('rn_batch_fecha');
         if (elBatchF && !elBatchF.value) ajustarFechaBatchRunt(0);
@@ -6073,7 +6097,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         if (BOT_DATA && BOT_DATA.clases) renderizarModuloClases();
       } catch (err) {
         console.error('Error cargando hoja RUNT digital:', err);
+      } finally {
+        _RUNT_FETCH_INFLIGHT = null;
       }
+      })();
+      if (!forzar) _RUNT_FETCH_INFLIGHT = tarea;
+      return tarea;
     }
 
     function cambiarTabHojaRunt(tabVal, btnEl) {
@@ -6238,8 +6267,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
         toast.textContent = data.message || 'Actualizado.';
         if (data.ok) {
-          await cargarPanoramaRuntDigital(false);
-          await cargarBotOverview();
+          await Promise.all([
+            cargarPanoramaRuntDigital(false),
+            cargarBotOverview({ omitirRunt: true }),
+          ]);
         }
       } catch (err) {
         toast.className = 'status-toast err';
@@ -6393,8 +6424,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
           toast.textContent = data.message || '';
         }
-        await cargarPanoramaRuntDigital(false);
-        if (completarTodo) await cargarBotOverview();
+        if (completarTodo) {
+          await Promise.all([
+            cargarPanoramaRuntDigital(false),
+            cargarBotOverview({ omitirRunt: true }),
+          ]);
+        } else {
+          await cargarPanoramaRuntDigital(false);
+        }
       } catch (err) {
         if (toast) {
           toast.className = 'status-toast err';
@@ -6437,8 +6474,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
           toast.textContent = data.message || '';
         }
-        await cargarPanoramaRuntDigital(false);
-        await cargarBotOverview();
+        await Promise.all([
+          cargarPanoramaRuntDigital(false),
+          cargarBotOverview({ omitirRunt: true }),
+        ]);
       } catch (err) {
         if (toast) {
           toast.className = 'status-toast err';
@@ -6642,8 +6681,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
         toast.textContent = data.message || '';
       }
-      await cargarPanoramaRuntDigital(false);
-      await cargarBotOverview();
+      await Promise.all([
+        cargarPanoramaRuntDigital(false),
+        cargarBotOverview({ omitirRunt: true }),
+      ]);
     }
 
     async function sincronizarHorasBotHaciaHojaRunt() {
@@ -7238,8 +7279,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           ? `✅ ${nomLimpio} (${catLimpia}) agregado directamente a Google Sheets → Practica (Fila #${data.fila}).`
           : `✅ ${nomLimpio} (${catLimpia}) agregado en el sistema (Fila #${data.fila}).`;
         setMsg(true, okMsg);
-        await cargarPanoramaRuntDigital(true);
-        await cargarBotOverview();
+        await Promise.all([
+          cargarPanoramaRuntDigital(true),
+          cargarBotOverview({ omitirRunt: true }),
+        ]);
         alert(okMsg);
       } catch (err) {
         setMsg(false, '❌ Error pasando a Practica: ' + err);

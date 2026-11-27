@@ -13,6 +13,7 @@ import datetime
 import logging
 import os
 import re
+import threading
 import time
 import unicodedata
 import zipfile
@@ -219,6 +220,7 @@ class RuntControlService:
         self._ultimo_fallo_ts: float = 0.0
         self._ultimo_error_msg: str = ""
         self._historial_lotes_masivos: List[List[Dict[str, Any]]] = []
+        self._lock = threading.RLock()
         self._inicializar_memoria_local()
 
     def _inicializar_memoria_local(self) -> None:
@@ -259,31 +261,91 @@ class RuntControlService:
             }
 
     def conectar(self) -> Any:
-        if self._spreadsheet is None:
-            ahora = time.time()
-            if self._ultimo_fallo_ts > 0 and (ahora - self._ultimo_fallo_ts < 25.0):
-                raise ConnectionError(self._ultimo_error_msg or "Reintento en espera.")
-            try:
-                creds = clases_core.obtener_credenciales_google(clases_core.SCOPES)
-                client = clases_core.gspread.authorize(creds)
-                self._spreadsheet = client.open_by_key(self.sheet_id)
-                self._ultimo_fallo_ts = 0.0
-                self._ultimo_error_msg = ""
-            except Exception as exc:
-                self._ultimo_fallo_ts = ahora
-                self._ultimo_error_msg = str(exc)
-                raise
-        return self._spreadsheet
+        with self._lock:
+            if self._spreadsheet is None:
+                ahora = time.time()
+                if self._ultimo_fallo_ts > 0 and (ahora - self._ultimo_fallo_ts < 25.0):
+                    raise ConnectionError(self._ultimo_error_msg or "Reintento en espera.")
+                try:
+                    creds = clases_core.obtener_credenciales_google(clases_core.SCOPES)
+                    client = clases_core.gspread.authorize(creds)
+                    self._spreadsheet = client.open_by_key(self.sheet_id)
+                    self._ultimo_fallo_ts = 0.0
+                    self._ultimo_error_msg = ""
+                except Exception as exc:
+                    self._ultimo_fallo_ts = ahora
+                    self._ultimo_error_msg = str(exc)
+                    raise
+            return self._spreadsheet
+
+    def _precargar_pestanas_batch(self, nombres_pestanas: List[str], forzar: bool = False) -> bool:
+        """
+        Descarga múltiples pestañas en UNA sola llamada HTTP (values_batch_get) en lugar de
+        4 peticiones secuenciales, llenando _cache_lecturas y _memoria_hojas.
+        """
+        ahora = time.time()
+        with self._lock:
+            pendientes: List[str] = []
+            for nom in nombres_pestanas:
+                key = nom.strip()
+                if forzar or key not in self._cache_lecturas or (ahora - self._cache_lecturas[key][0] >= 90.0):
+                    pendientes.append(nom)
+            if len(pendientes) < 2:
+                return False
+
+        try:
+            book = self.conectar()
+            with self._lock:
+                faltan_ws = [nom for nom in pendientes if nom.strip() not in self._worksheets_cache]
+            if faltan_ws:
+                ws_lista = book.worksheets()
+                with self._lock:
+                    for w_cand in ws_lista:
+                        self._worksheets_cache[w_cand.title.strip()] = w_cand
+                        self._worksheets_cache[w_cand.title.strip().lower()] = w_cand
+
+            rangos: List[str] = []
+            claves_orden: List[str] = []
+            with self._lock:
+                for nom in pendientes:
+                    key = nom.strip()
+                    ws = self._worksheets_cache.get(key) or self._worksheets_cache.get(key.lower())
+                    if ws is not None:
+                        self._worksheets_cache[key] = ws
+                        titulo_real = ws.title.replace("'", "''")
+                        rangos.append(f"'{titulo_real}'!A:Z")
+                        claves_orden.append(key)
+
+            if len(rangos) < 2:
+                return False
+
+            resp = book.values_batch_get(rangos)
+            v_ranges = resp.get("valueRanges", []) if isinstance(resp, dict) else []
+            ts_fin = time.time()
+            actualizadas = 0
+            with self._lock:
+                for key, vr in zip(claves_orden, v_ranges):
+                    vals = vr.get("values", []) if isinstance(vr, dict) else []
+                    if vals:
+                        self._cache_lecturas[key] = (ts_fin, vals)
+                        self._memoria_hojas[key] = vals
+                        actualizadas += 1
+            return actualizadas > 0
+        except Exception as exc:
+            logger.debug("Batch read RUNT omitido (fallback individual): %s", exc)
+            return False
 
     def _obtener_filas_pestana(self, nombre_pestana: str, forzar: bool = False) -> List[List[str]]:
         key = nombre_pestana.strip()
         ahora = time.time()
-        if not forzar and key in self._cache_lecturas and (ahora - self._cache_lecturas[key][0] < 90.0):
-            return [list(r) for r in self._cache_lecturas[key][1]]
+        with self._lock:
+            if not forzar and key in self._cache_lecturas and (ahora - self._cache_lecturas[key][0] < 90.0):
+                return [list(r) for r in self._cache_lecturas[key][1]]
 
         try:
             book = self.conectar()
-            ws = self._worksheets_cache.get(key)
+            with self._lock:
+                ws = self._worksheets_cache.get(key) or self._worksheets_cache.get(key.lower())
             if ws is None:
                 # Buscar coincidencia exacta o ignorando espacios al final
                 for w_cand in book.worksheets():
@@ -292,28 +354,36 @@ class RuntControlService:
                         break
                 if ws is None:
                     ws = book.worksheet(nombre_pestana)
-                self._worksheets_cache[key] = ws
+                with self._lock:
+                    self._worksheets_cache[key] = ws
             vals = ws.get_all_values()
             if vals:
-                self._cache_lecturas[key] = (ahora, vals)
-                self._memoria_hojas[key] = vals
+                with self._lock:
+                    self._cache_lecturas[key] = (time.time(), vals)
+                    self._memoria_hojas[key] = vals
                 return [list(r) for r in vals]
         except Exception as exc:
-            self._ultimo_error_msg = str(exc)
-            if key in self._cache_lecturas:
-                return [list(r) for r in self._cache_lecturas[key][1]]
+            with self._lock:
+                self._ultimo_error_msg = str(exc)
+                if key in self._cache_lecturas:
+                    return [list(r) for r in self._cache_lecturas[key][1]]
 
-        return [list(r) for r in self._memoria_hojas.get(key, [])]
+        with self._lock:
+            return [list(r) for r in self._memoria_hojas.get(key, [])]
 
     def _obtener_ws_en_vivo(self, nombre_pestana: str) -> Optional[Any]:
         key = nombre_pestana.strip()
         try:
             book = self.conectar()
-            if key in self._worksheets_cache:
-                return self._worksheets_cache[key]
+            with self._lock:
+                ws_cached = self._worksheets_cache.get(key) or self._worksheets_cache.get(key.lower())
+                if ws_cached is not None:
+                    self._worksheets_cache[key] = ws_cached
+                    return ws_cached
             for w_cand in book.worksheets():
                 if w_cand.title.strip().lower() == key.lower():
-                    self._worksheets_cache[key] = w_cand
+                    with self._lock:
+                        self._worksheets_cache[key] = w_cand
                     return w_cand
         except Exception as exc:
             logger.warning("Aviso obteniendo worksheet en vivo '%s': %s", nombre_pestana, exc)
@@ -662,11 +732,8 @@ class RuntControlService:
             })
         return out[:250]
 
-    def guardar_o_actualizar_practica_runt(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Actualiza o inserta una fila en la pestaña 'Practica' del Google Sheet RUNT
-        (y también sincroniza el Estado_RUNT en la hoja 'Alumnos' del Bot).
-        """
+    def _preparar_fila_practica(self, payload: Dict[str, Any], filas: List[List[str]]) -> Dict[str, Any]:
+        """Calcula los 18 valores de una fila de 'Practica' y determina si cambió el estado RUNT."""
         fila_idx = _limpiar_entero(payload.get("fila", 0), 0)
         nombre = str(payload.get("nombre", "")).strip().upper()
         cedula = _limpiar_cedula(payload.get("cedula", ""))
@@ -750,9 +817,8 @@ class RuntControlService:
             cargue_diario,
         ]
 
-        filas = self._obtener_filas_pestana(TAB_PRACTICA, forzar=(fila_idx < 2))
-        if not filas:
-            filas = [list(HEADERS_PRACTICA)]
+        es_nuevo = False
+        estado_previo_cargado: Optional[bool] = None
 
         # Si no viene fila_idx, buscar por (cedula, categoria) o (nombre, categoria)
         if fila_idx < 2:
@@ -772,52 +838,144 @@ class RuntControlService:
                         elif not tiene_param_fecha_reg:
                             nueva_fila[6] = ""
                     break
-        elif fila_idx <= len(filas) and not tiene_param_fecha_reg:
-            fc_act = filas[fila_idx - 1]
-            if len(fc_act) > 6 and fc_act[6]:
-                nueva_fila[6] = _excel_serial_a_iso(fc_act[6])
 
-        guardado_sheets = False
-        ws = self._obtener_ws_en_vivo(TAB_PRACTICA)
-        if fila_idx >= 2 and fila_idx <= len(filas):
+        if 2 <= fila_idx <= len(filas):
+            fc_act = filas[fila_idx - 1]
+            if not tiene_param_fecha_reg and len(fc_act) > 6 and fc_act[6]:
+                nueva_fila[6] = _excel_serial_a_iso(fc_act[6])
+            prev_a1 = str(fc_act[14]).upper() if len(fc_act) > 14 else ""
+            prev_a2 = str(fc_act[15]).upper() if len(fc_act) > 15 else ""
+            estado_previo_cargado = ("CARGADO" in prev_a1) or ("CARGADO" in prev_a2) or ("CARGUE" in prev_a1)
             filas[fila_idx - 1] = nueva_fila
-            if ws is not None:
-                try:
-                    ws.update(
-                        values=[nueva_fila],
-                        range_name=f"A{fila_idx}:R{fila_idx}",
-                        value_input_option="USER_ENTERED",
-                    )
-                    guardado_sheets = True
-                except Exception as exc:
-                    logger.warning("No se pudo actualizar fila %d en hoja Practica RUNT: %s", fila_idx, exc)
         else:
             filas.append(nueva_fila)
             fila_idx = len(filas)
-            if ws is not None:
-                try:
-                    if fila_idx > ws.row_count:
-                        ws.add_rows(100)
-                    ws.update(
-                        values=[nueva_fila],
-                        range_name=f"A{fila_idx}:R{fila_idx}",
-                        value_input_option="USER_ENTERED",
-                    )
-                    guardado_sheets = True
-                except Exception as exc:
-                    logger.warning("No se pudo insertar fila nueva en hoja Practica RUNT: %s", exc)
+            es_nuevo = True
 
-        self._memoria_hojas[TAB_PRACTICA] = filas
-        self._cache_lecturas[TAB_PRACTICA] = (time.time(), filas)
+        return {
+            "fila_idx": fila_idx,
+            "nueva_fila": nueva_fila,
+            "es_nuevo": es_nuevo,
+            "es_cargado": es_cargado,
+            "estado_cambio": es_nuevo or (estado_previo_cargado != es_cargado),
+            "nombre": nombre,
+            "cedula": cedula,
+            "categoria": categoria,
+            "teoria": teoria,
+            "taller": taller,
+            "practica": practica,
+            "total_cargadas": total_cargadas,
+            "act_1": act_1,
+        }
+
+    def _guardar_lote_practica_runt(self, payloads: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        Guarda múltiples filas en 'Practica' mediante UNA sola llamada ws.batch_update()
+        y sincroniza la hoja 'Alumnos' del Bot únicamente para quienes cambiaron de estado RUNT.
+        """
+        if not payloads:
+            return {"ok": True, "actualizados": 0, "guardado_google_sheets": False}
+
+        with self._lock:
+            filas = self._obtener_filas_pestana(TAB_PRACTICA, forzar=False)
+            if not filas:
+                filas = [list(HEADERS_PRACTICA)]
+
+            batch_map: Dict[int, List[str]] = {}
+            cambios_bot: List[Dict[str, Any]] = []
+            max_fila_idx = 0
+            for p in payloads:
+                prep = self._preparar_fila_practica(p, filas)
+                f_idx = prep["fila_idx"]
+                batch_map[f_idx] = prep["nueva_fila"]
+                if f_idx > max_fila_idx:
+                    max_fila_idx = f_idx
+                if prep["estado_cambio"]:
+                    cambios_bot.append(prep)
+
+            self._memoria_hojas[TAB_PRACTICA] = filas
+            self._cache_lecturas[TAB_PRACTICA] = (time.time(), filas)
+
+        batch_updates = [
+            {"range": f"A{f_idx}:R{f_idx}", "values": [vals]}
+            for f_idx, vals in sorted(batch_map.items())
+        ]
+        guardado_sheets = False
+        ws = self._obtener_ws_en_vivo(TAB_PRACTICA)
+        if ws is not None and batch_updates:
+            try:
+                if max_fila_idx > ws.row_count:
+                    ws.add_rows(max(100, max_fila_idx - ws.row_count + 20))
+                ws.batch_update(batch_updates, value_input_option="USER_ENTERED")
+                guardado_sheets = True
+            except Exception as exc:
+                logger.warning("Aviso batch_update lote Practica RUNT (fallback individual): %s", exc)
+                for upd in batch_updates:
+                    try:
+                        ws.update(values=upd["values"], range_name=upd["range"], value_input_option="USER_ENTERED")
+                        guardado_sheets = True
+                    except Exception as exc_u:
+                        logger.warning("No se pudo actualizar rango %s en hoja Practica RUNT: %s", upd["range"], exc_u)
+
+        # Sincronizar bidireccionalmente con hoja 'Alumnos' del Bot SOLO cuando cambió el estado RUNT
+        for ch in cambios_bot:
+            try:
+                est_bot = "Cargue RUNT" if ch["es_cargado"] else "No Registrado RUNT"
+                clases_core.sheets_service.actualizar_estado_runt_alumno(
+                    documento_o_nombre=ch["cedula"] or ch["nombre"],
+                    categoria=ch["categoria"],
+                    estado_runt=est_bot,
+                    nombre_alumno=ch["nombre"],
+                )
+            except Exception as exc_sync:
+                logger.warning("Aviso sincronizando lote RUNT hacia hoja Alumnos del Bot: %s", exc_sync)
+
+        return {
+            "ok": True,
+            "actualizados": len(batch_map),
+            "guardado_google_sheets": guardado_sheets,
+            "sincronizados_bot": len(cambios_bot),
+        }
+
+    def guardar_o_actualizar_practica_runt(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Actualiza o inserta una fila en la pestaña 'Practica' del Google Sheet RUNT
+        (y también sincroniza el Estado_RUNT en la hoja 'Alumnos' del Bot).
+        """
+        fila_in = _limpiar_entero(payload.get("fila", 0), 0)
+        with self._lock:
+            filas = self._obtener_filas_pestana(TAB_PRACTICA, forzar=(fila_in < 2))
+            if not filas:
+                filas = [list(HEADERS_PRACTICA)]
+            prep = self._preparar_fila_practica(payload, filas)
+            self._memoria_hojas[TAB_PRACTICA] = filas
+            self._cache_lecturas[TAB_PRACTICA] = (time.time(), filas)
+
+        fila_idx = prep["fila_idx"]
+        nueva_fila = prep["nueva_fila"]
+        guardado_sheets = False
+        ws = self._obtener_ws_en_vivo(TAB_PRACTICA)
+        if ws is not None:
+            try:
+                if prep["es_nuevo"] and fila_idx > ws.row_count:
+                    ws.add_rows(100)
+                ws.update(
+                    values=[nueva_fila],
+                    range_name=f"A{fila_idx}:R{fila_idx}",
+                    value_input_option="USER_ENTERED",
+                )
+                guardado_sheets = True
+            except Exception as exc:
+                logger.warning("No se pudo actualizar fila %d en hoja Practica RUNT: %s", fila_idx, exc)
 
         # Sincronizar bidireccionalmente con la hoja 'Alumnos' del Bot (Módulo 2)
         try:
-            est_bot = "Cargue RUNT" if es_cargado else "No Registrado RUNT"
+            est_bot = "Cargue RUNT" if prep["es_cargado"] else "No Registrado RUNT"
             clases_core.sheets_service.actualizar_estado_runt_alumno(
-                documento_o_nombre=cedula or nombre,
-                categoria=categoria,
+                documento_o_nombre=prep["cedula"] or prep["nombre"],
+                categoria=prep["categoria"],
                 estado_runt=est_bot,
-                nombre_alumno=nombre,
+                nombre_alumno=prep["nombre"],
             )
         except Exception as exc_sync:
             logger.warning("Aviso sincronizando estado RUNT hacia hoja Alumnos del Bot: %s", exc_sync)
@@ -827,8 +985,8 @@ class RuntControlService:
             "fila": fila_idx,
             "guardado_google_sheets": guardado_sheets,
             "message": (
-                f"✅ {nombre or cedula} ({categoria}) actualizado: Teoría={teoria}, Taller={taller}, Práctica={practica} "
-                f"(Total: {total_cargadas} h) • {act_1}"
+                f"✅ {prep['nombre'] or prep['cedula']} ({prep['categoria']}) actualizado: Teoría={prep['teoria']}, Taller={prep['taller']}, Práctica={prep['practica']} "
+                f"(Total: {prep['total_cargadas']} h) • {prep['act_1']}"
                 + (" [Sincronizado en Google Sheets RUNT]" if guardado_sheets else " [Guardado en base activa y sincronizado con Módulo 2]")
             ),
         }
@@ -866,13 +1024,13 @@ class RuntControlService:
         """
         Toma las clases prácticas reales reportadas por los instructores en el Bot
         y actualiza el conteo de 'Practica' y 'Clases Cargadas' en la hoja RUNT
-        para todos los alumnos donde el Bot tenga más horas registradas.
+        en un solo lote batch_update para todos los alumnos donde el Bot tenga más horas registradas.
         """
         practica_list = self.listar_practica_runt(forzar=False)
-        actualizados = 0
+        lote_payloads: List[Dict[str, Any]] = []
         for item in practica_list:
             if item["practica_bot"] > item["practica"]:
-                self.guardar_o_actualizar_practica_runt({
+                lote_payloads.append({
                     "fila": item["fila"],
                     "nombre": item["nombre"],
                     "cedula": item["cedula"],
@@ -888,7 +1046,9 @@ class RuntControlService:
                     "estado_runt": item["estado_runt"],
                     "cargue_diario": "PRACTICA",
                 })
-                actualizados += 1
+        if lote_payloads:
+            self._guardar_lote_practica_runt(lote_payloads)
+        actualizados = len(lote_payloads)
         return {
             "ok": True,
             "actualizados": actualizados,
@@ -920,6 +1080,7 @@ class RuntControlService:
         actualizados = 0
         nombres_act: List[str] = []
         snapshot_lote: List[Dict[str, Any]] = []
+        lote_payloads: List[Dict[str, Any]] = []
 
         for item in practica_list:
             if item["estado_runt"] == "CARGADO RUNT":
@@ -984,7 +1145,7 @@ class RuntControlService:
                     "fecha_cargue": item["fecha_cargue"],
                     "cargue_diario": item["cargue_diario"],
                 })
-                self.guardar_o_actualizar_practica_runt({
+                lote_payloads.append({
                     "fila": item["fila"],
                     "nombre": item["nombre"],
                     "cedula": item["cedula"],
@@ -1011,6 +1172,9 @@ class RuntControlService:
                         nombres_act.append(f"{item['nombre']} ({prac_actual}→{nuevo_prac}/{meta_prac}h Prác)")
                     else:
                         nombres_act.append(f"{item['nombre']} ({nuevo_teo}/{meta_teo}T, {nuevo_tal}/{meta_tal}Tl)")
+
+        if lote_payloads:
+            self._guardar_lote_practica_runt(lote_payloads)
 
         if snapshot_lote:
             self._historial_lotes_masivos.append(snapshot_lote)
@@ -1040,13 +1204,12 @@ class RuntControlService:
 
         if modo == "DESHACER_ULTIMO" and self._historial_lotes_masivos:
             lote_previo = self._historial_lotes_masivos.pop()
-            restaurados = 0
-            noms: List[str] = []
-            for snap in lote_previo:
-                self.guardar_o_actualizar_practica_runt(snap)
-                restaurados += 1
-                if len(noms) < 6:
-                    noms.append(f"{snap['nombre']} ({snap['teoria']}T/{snap['taller']}Tl)")
+            self._guardar_lote_practica_runt(lote_previo)
+            restaurados = len(lote_previo)
+            noms: List[str] = [
+                f"{snap['nombre']} ({snap['teoria']}T/{snap['taller']}Tl)"
+                for snap in lote_previo[:6]
+            ]
             resumen = ", ".join(noms) + (f" y {restaurados - len(noms)} más" if restaurados > len(noms) else "")
             return {
                 "ok": True,
@@ -1091,6 +1254,7 @@ class RuntControlService:
         practica_actual = self.listar_practica_runt(forzar=False)
         restaurados = 0
         noms_rest: List[str] = []
+        lote_rest: List[Dict[str, Any]] = []
 
         for item in practica_actual:
             if filas_set:
@@ -1119,7 +1283,7 @@ class RuntControlService:
                 nueva_fecha = item["fecha_cargue"]
                 nuevo_diario = item["cargue_diario"]
 
-            self.guardar_o_actualizar_practica_runt({
+            lote_rest.append({
                 "fila": item["fila"],
                 "nombre": item["nombre"],
                 "cedula": item["cedula"],
@@ -1139,6 +1303,9 @@ class RuntControlService:
             restaurados += 1
             if len(noms_rest) < 7:
                 noms_rest.append(f"{item['nombre']} ({nuevo_teo}/{item['meta_teoria']}T)")
+
+        if lote_rest:
+            self._guardar_lote_practica_runt(lote_rest)
 
         resumen = ", ".join(noms_rest) + (f" y {restaurados - len(noms_rest)} más" if restaurados > len(noms_rest) else "")
         return {
@@ -1312,8 +1479,9 @@ class RuntControlService:
                     except Exception:
                         pass
 
-        self._memoria_hojas[TAB_PRACTICA] = filas
-        self._cache_lecturas[TAB_PRACTICA] = (time.time(), filas)
+        with self._lock:
+            self._memoria_hojas[TAB_PRACTICA] = filas
+            self._cache_lecturas[TAB_PRACTICA] = (time.time(), filas)
 
         return {
             "ok": True,
@@ -1339,7 +1507,11 @@ class RuntControlService:
         return cats or [_normalizar_cat_runt(s)]
 
     def obtener_panorama_runt_web(self, forzar: bool = False) -> Dict[str, Any]:
-        practica = self.listar_practica_runt(forzar=forzar)
+        batch_ok = self._precargar_pestanas_batch(
+            [TAB_PRACTICA, TAB_NO_RUNT, TAB_INICIO_PRACTICA, TAB_CODIGO_RUNT],
+            forzar=forzar,
+        )
+        practica = self.listar_practica_runt(forzar=(forzar and not batch_ok))
         no_runt = self.listar_no_runt()
         inicio_practica = self.listar_inicio_practica()
         codigos_runt = self.listar_codigos_runt()
