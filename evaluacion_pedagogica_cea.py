@@ -45,8 +45,11 @@ EVAL_FORM_URL_DEFAULT = os.getenv(
 
 EVAL_CACHE_LOCAL_FILE = BASE_DIR / "cache_evaluacion_docente_cea.json"
 OBS_LOCAL_FILE = BASE_DIR / "observaciones_pedagogicas_cea.json"
+INST_ESTADO_LOCAL_FILE = BASE_DIR / "instructores_estado_cea.json"
 
 SHEET_OBSERVACIONES = "Observaciones_Alumnos"
+SHEET_ESTADO_INSTRUCTORES = "Estado_Instructores_CEA"
+HEADERS_ESTADO_INSTRUCTORES = ["Instructor", "Estado", "Tipo", "Fecha_Cambio"]
 HEADERS_OBSERVACIONES = [
     "ID_Obs",
     "Timestamp",
@@ -124,17 +127,20 @@ def _normalizar_nombre_profesor(raw: Any) -> str:
         return "DAYRON ANDRES SERRANO LOAIZA"
 
     reglas = [
+        (["carreno", "jhoan sebastian", "jhon carreno"], "JHOAN SEBASTIAN CARREÑO SIERRA"),
+        (["oscar mantilla", "mantilla"], "OSCAR MANTILLA"),
+        (["yulian", "camacho"], "YULIAN CAMACHO"),
         (["carlos", "carlo", "caros", "gras", "grass"], "CARLOS ARTURO GOMEZ GRASS"),
         (["medaglia", "cesar"], "CESAR MAURICIO MEDAGLIA APARICIO"),
-        (["dayron", "dairon", "dairo", "dayro", "dario", "serrano", "cerrano"], "DAYRON ANDRES SERRANO LOAIZA"),
+        (["dayron", "dairon", "dairo", "dayro", "dario", "serrano", "cerrano", "laoiza", "loaiza"], "DAYRON ANDRES SERRANO LOAIZA"),
         (["marco", "marcos", "villamizar", "villamisar"], "MARCO ANTONIO VILLAMIZAR"),
         (["rolando", "robando", "ramirez", "ramires"], "ROLANDO ANTONIO RAMIREZ GIRALDO"),
         (["martin", "parra"], "MARTIN FERNANDO SANCHEZ PARRA"),
         (["jesus", "sanchez", "sanches"], "JESUS SANCHEZ"),
         (["jhon alexander", "gomez sierra"], "JHON ALEXANDER GOMEZ SIERRA"),
         (["juan david", "mejia", "meca"], "JUAN DAVID MEJIA"),
-        (["hermes", "becerra"], "HERMES BECERRA"),
-        (["alcibiades"], "ALCIBIADES BUENO"),
+        (["hermes", "becerra"], "HERMES GIOVANNY BECERRA MONTAÑEZ"),
+        (["alcibiades"], "ALCIBIADES BUENO RIVERO"),
         (["leidy", "salamanca"], "LEIDY SALAMANCA"),
         (["segundo", "murillo"], "SEGUNDO MURILLO"),
         (["victor", "anaya"], "VICTOR ANAYA"),
@@ -145,6 +151,8 @@ def _normalizar_nombre_profesor(raw: Any) -> str:
         return "CESAR MAURICIO MEDAGLIA APARICIO"
     if "mauricio" in n and "castro" not in n:
         return "CESAR MAURICIO MEDAGLIA APARICIO"
+    if n == "juan":
+        return "JUAN DAVID MEJIA"
 
     for claves, canonico in reglas:
         if any(cl in n for cl in claves):
@@ -765,6 +773,183 @@ class EvaluacionPedagogicaService:
             "message": f"✅ {actualizados} refuerzo(s) marcado(s) como superado(s).",
         }
 
+    # -------------------------------------------------------------------------
+    # C. DIRECTORIO DE INSTRUCTORES (ACTIVOS / RETIRADOS / NUEVOS)
+    # -------------------------------------------------------------------------
+    def _cargar_estados_instructores(self, forzar: bool = False) -> Dict[str, Dict[str, str]]:
+        """Lee overrides de estado (ACTIVO/RETIRADO) y nuevos instructores desde Sheets + respaldo JSON."""
+        ahora = time.time()
+        with self._lock:
+            cache_est = getattr(self, "_est_inst_cache", None)
+            if not forzar and cache_est and (ahora - cache_est[0] < 90.0):
+                return {k: dict(v) for k, v in cache_est[1].items()}
+
+        mapa: Dict[str, Dict[str, str]] = {}
+        if INST_ESTADO_LOCAL_FILE.exists():
+            try:
+                raw_loc = json.loads(INST_ESTADO_LOCAL_FILE.read_text(encoding="utf-8"))
+                if isinstance(raw_loc, dict):
+                    for k, v in raw_loc.items():
+                        if isinstance(v, dict) and v.get("instructor"):
+                            canon = _normalizar_nombre_profesor(v["instructor"])
+                            mapa[canon] = {
+                                "instructor": canon,
+                                "estado": str(v.get("estado", "ACTIVO")).strip().upper(),
+                                "tipo": str(v.get("tipo", "PRÁCTICO / TEÓRICO")).strip().upper(),
+                                "fecha_cambio": str(v.get("fecha_cambio", "")).strip(),
+                            }
+            except Exception:
+                pass
+
+        try:
+            ws = clases_core.sheets_service.obtener_o_crear_hoja(SHEET_ESTADO_INSTRUCTORES, HEADERS_ESTADO_INSTRUCTORES)
+            if forzar and hasattr(ws, "_invalidate"):
+                ws._invalidate()
+            rows = ws.get_all_values()
+            if rows and len(rows) >= 2:
+                for r in rows[1:]:
+                    nom_r = str(r[0]).strip() if len(r) > 0 else ""
+                    if not nom_r:
+                        continue
+                    canon = _normalizar_nombre_profesor(nom_r)
+                    est = str(r[1]).strip().upper() if len(r) > 1 and str(r[1]).strip() else "ACTIVO"
+                    tipo = str(r[2]).strip().upper() if len(r) > 2 and str(r[2]).strip() else "PRÁCTICO / TEÓRICO"
+                    f_chg = str(r[3]).strip() if len(r) > 3 else ""
+                    mapa[canon] = {
+                        "instructor": canon,
+                        "estado": "RETIRADO" if "RETIR" in est else "ACTIVO",
+                        "tipo": tipo,
+                        "fecha_cambio": f_chg,
+                    }
+                try:
+                    INST_ESTADO_LOCAL_FILE.write_text(json.dumps(mapa, ensure_ascii=False, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
+        except Exception as exc:
+            logger.debug("Aviso leyendo Estado_Instructores_CEA: %s", exc)
+
+        with self._lock:
+            self._est_inst_cache = (time.time(), mapa)
+        return {k: dict(v) for k, v in mapa.items()}
+
+    def guardar_o_cambiar_estado_instructor(
+        self,
+        nombre: str,
+        estado: str = "ACTIVO",
+        tipo: str = "PRÁCTICO / TEÓRICO",
+    ) -> Dict[str, Any]:
+        """Agrega un instructor nuevo o cambia su estado entre ACTIVO y RETIRADO (sin borrar su histórico)."""
+        nom_in = str(nombre or "").strip()
+        if not nom_in:
+            return {"ok": False, "message": "Ingresa el nombre del instructor."}
+
+        canon = _normalizar_nombre_profesor(nom_in)
+        if canon == "SIN ESPECIFICAR":
+            canon = nom_in.upper()
+        est_norm = "RETIRADO" if "RETIR" in str(estado or "").upper() else "ACTIVO"
+        tipo_norm = str(tipo or "PRÁCTICO / TEÓRICO").strip().upper() or "PRÁCTICO / TEÓRICO"
+        fecha_hoy = datetime.datetime.now(clases_core.TZ_COLOMBIA).strftime("%Y-%m-%d")
+
+        guardado_sheets = False
+        try:
+            ws = clases_core.sheets_service.obtener_o_crear_hoja(SHEET_ESTADO_INSTRUCTORES, HEADERS_ESTADO_INSTRUCTORES)
+            rows = ws.get_all_values()
+            fila_encontrada = 0
+            for idx_f in range(2, len(rows) + 1):
+                r = rows[idx_f - 1]
+                r_nom = _normalizar_nombre_profesor(r[0] if len(r) > 0 else "")
+                if r_nom == canon:
+                    fila_encontrada = idx_f
+                    break
+            nueva_fila = [canon, est_norm, tipo_norm, fecha_hoy]
+            if fila_encontrada >= 2:
+                ws.update(values=[nueva_fila], range_name=f"A{fila_encontrada}:D{fila_encontrada}", value_input_option="USER_ENTERED")
+            else:
+                ws.append_row(nueva_fila, value_input_option="USER_ENTERED")
+            guardado_sheets = True
+        except Exception as exc:
+            logger.warning("Aviso guardando Estado_Instructores_CEA en Sheets: %s", exc)
+
+        mapa = self._cargar_estados_instructores(forzar=False)
+        mapa[canon] = {
+            "instructor": canon,
+            "estado": est_norm,
+            "tipo": tipo_norm,
+            "fecha_cambio": fecha_hoy,
+        }
+        try:
+            INST_ESTADO_LOCAL_FILE.write_text(json.dumps(mapa, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        with self._lock:
+            self._est_inst_cache = (time.time(), mapa)
+
+        ico = "🟢 ACTIVO" if est_norm == "ACTIVO" else "🚫 RETIRADO"
+        return {
+            "ok": True,
+            "instructor": canon,
+            "estado": est_norm,
+            "guardado_google_sheets": guardado_sheets,
+            "message": f"✅ Instructor {canon} actualizado a {ico}" + (" en Google Sheets." if guardado_sheets else " en respaldo local."),
+        }
+
+    def _construir_directorio_instructores(self, eval_data: Dict[str, Any], forzar: bool = False) -> Tuple[List[Dict[str, Any]], List[str]]:
+        """
+        Consolida instructores del Bot + Google Form + nuevos agregados manualmente,
+        marcando estado ACTIVO / RETIRADO (por defecto activos los del Bot y evaluados en 2026+,
+        retirados los históricos anteriores a 2026 que no están en el Bot, siempre editables en 1 clic).
+        """
+        overrides = self._cargar_estados_instructores(forzar=forzar)
+        en_bot_set: set = set()
+        try:
+            for inst_b in clases_core.sheets_service.listar_instructores_registrados():
+                nom_b = _normalizar_nombre_profesor(inst_b.get("nombre", ""))
+                if nom_b and nom_b != "SIN ESPECIFICAR":
+                    en_bot_set.add(nom_b)
+        except Exception:
+            pass
+
+        eval_map: Dict[str, Dict[str, Any]] = {}
+        for r in (eval_data.get("ranking_instructores") or []):
+            eval_map[r["instructor"]] = r
+
+        todos_noms = set(en_bot_set) | set(eval_map.keys()) | set(overrides.keys())
+        directorio: List[Dict[str, Any]] = []
+        for nom in sorted(todos_noms):
+            if not nom or nom == "SIN ESPECIFICAR":
+                continue
+            ev_r = eval_map.get(nom)
+            ov = overrides.get(nom)
+            en_bot = nom in en_bot_set
+            ult_fecha = (ev_r or {}).get("ultima_fecha", "")
+            anio_ult = int(ult_fecha[:4]) if len(ult_fecha) >= 4 and ult_fecha[:4].isdigit() else 0
+
+            if ov:
+                estado = ov["estado"]
+                tipo = ov.get("tipo") or "PRÁCTICO / TEÓRICO"
+            else:
+                estado = "ACTIVO" if (en_bot or anio_ult >= 2026) else "RETIRADO"
+                tipo = "PRÁCTICO / BOT" if en_bot else "TEÓRICO / FORM"
+
+            if ev_r is not None:
+                ev_r["estado"] = estado
+                ev_r["tipo"] = tipo
+
+            directorio.append({
+                "instructor": nom,
+                "estado": estado,
+                "tipo": tipo,
+                "en_bot": en_bot,
+                "total_evaluaciones": int((ev_r or {}).get("total_evaluaciones") or 0),
+                "promedio": float((ev_r or {}).get("promedio") or 0.0),
+                "alertas": int((ev_r or {}).get("alertas") or 0),
+                "ultima_fecha": ult_fecha,
+            })
+
+        directorio.sort(key=lambda x: (0 if x["estado"] == "ACTIVO" else 1, -x["total_evaluaciones"], x["instructor"]))
+        activos = sorted([d["instructor"] for d in directorio if d["estado"] == "ACTIVO"])
+        return directorio, activos
+
     def obtener_panorama_pedagogico(self, forzar: bool = False) -> Dict[str, Any]:
         """
         Consolida para el Dashboard Web:
@@ -773,6 +958,7 @@ class EvaluacionPedagogicaService:
         3. Progreso pedagógico de alumnos activos + tema oficial de su próxima clase + refuerzos pendientes.
         """
         eval_data = self.obtener_evaluaciones_docentes(forzar=forzar)
+        directorio_inst, instructores_activos = self._construir_directorio_instructores(eval_data, forzar=forzar)
         observaciones = self.listar_observaciones(forzar=forzar)
 
         # Agrupar observaciones por (documento, categoria) y (nombre, categoria)
@@ -899,6 +1085,8 @@ class EvaluacionPedagogicaService:
         return {
             "ok": True,
             "evaluacion_docente": eval_data,
+            "directorio_instructores": directorio_inst,
+            "instructores_activos": instructores_activos,
             "catalogos": {
                 "niveles": CATALOGO_NIVELES,
                 "recomendaciones_carro": CATALOGO_RECOMENDACIONES_CARRO,

@@ -3701,12 +3701,59 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
             <span class="badge badge-info" id="evalStatusBadge">⏳ Sin sincronizar</span>
+            <button type="button" class="btn btn-outline" style="padding:6px 12px; font-size:12px; border-color:#a78bfa; color:#ddd6fe;" onclick="toggleDrawerInstructoresEval()">👨‍🏫 Instructores (Activos/Retirados)</button>
             <button type="button" class="btn btn-outline" style="padding:6px 12px; font-size:12px; border-color:#38bdf8; color:#bae6fd;" onclick="copiarLinkEvaluacionDocente()">📋 Copiar Link Calificación</button>
             <button type="button" class="btn btn-success" style="padding:6px 12px; font-size:12px;" onclick="compartirLinkEvaluacionWhatsApp()">📱 Enviar por WhatsApp</button>
             <button type="button" class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="cargarEvaluacionPedagogica(true)">🔄 Sincronizar</button>
           </div>
         </div>
         <div id="evalGlobalToast" class="status-toast" style="margin-top:8px;"></div>
+      </div>
+
+      <!-- DRAWER: GESTIÓN DE INSTRUCTORES (ACTIVOS / RETIRADOS / NUEVOS) -->
+      <div id="evalInstructoresDrawer" class="tarifas-drawer" style="margin-bottom:14px; background:#0f172a; border-color:#8b5cf6;">
+        <div class="panel-title">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span>👨‍🏫 Gestión de Instructores — Activos, Retirados y Nuevos</span>
+            <span class="badge badge-success" id="evalInstActivosBadge">0 Activos</span>
+            <span class="badge badge-danger" id="evalInstRetiradosBadge">0 Retirados</span>
+          </div>
+          <button type="button" class="btn btn-outline" style="padding:3px 9px; font-size:11.5px;" onclick="toggleDrawerInstructoresEval(false)">✖ Cerrar</button>
+        </div>
+        <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; margin-bottom:12px; padding:10px 12px; border-radius:9px; background:#09101d; border:1px solid #283a5e;">
+          <div style="flex:2; min-width:220px;">
+            <label class="field-label">➕ Agregar Instructor Nuevo (Nombre Completo)</label>
+            <input type="text" id="evalNuevoInstNombre" autocomplete="off" placeholder="Ej: PEDRO ANTONIO PEREZ LOPEZ" />
+          </div>
+          <div style="flex:1; min-width:160px;">
+            <label class="field-label">Especialidad / Tipo</label>
+            <select id="evalNuevoInstTipo">
+              <option value="PRÁCTICO / TEÓRICO">🚗📘 Práctico y Teórico</option>
+              <option value="PRÁCTICO">🚗 Solo Práctico</option>
+              <option value="TEÓRICO">📘 Solo Teórico</option>
+            </select>
+          </div>
+          <button type="button" class="btn btn-success" style="padding:8px 14px; font-weight:700;" onclick="agregarInstructorNuevoEval()">➕ Agregar Activo</button>
+        </div>
+        <div style="font-size:11.5px; color:#94a3b8; margin-bottom:8px;">
+          💡 Los instructores marcados como <b>🚫 Retirado</b> se ocultan automáticamente del selector de observaciones y del ranking activo, pero <b>conservan intacto su histórico de evaluaciones</b>.
+        </div>
+        <div class="table-wrap" style="max-height:280px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Instructor</th>
+                <th>Tipo</th>
+                <th>Estado Actual</th>
+                <th>Evaluaciones</th>
+                <th>Promedio ⭐</th>
+                <th>Última Eval.</th>
+                <th>Cambiar Estado (1 Clic)</th>
+              </tr>
+            </thead>
+            <tbody id="evalDirectorioInstTbody"></tbody>
+          </table>
+        </div>
       </div>
 
       <!-- SUB-PESTAÑA 1: PROGRESO ALUMNOS Y OBSERVACIONES DEL INSTRUCTOR (100% BOTONES) -->
@@ -3836,16 +3883,25 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
         <!-- Ranking de Instructores -->
         <div class="panel" style="margin-bottom:14px;">
-          <div class="panel-title">
+          <div class="panel-title" style="flex-wrap:wrap; gap:8px;">
             <span>🏆 Ranking y Desempeño por Instructor (Clic en un profesor para filtrar sus respuestas)</span>
-            <span class="badge badge-info" id="evRankingBadge">0 instructores</span>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+              <select id="evFiltroEstadoInst" onchange="renderizarRankingEvaluacionDocente()" style="width:auto; padding:5px 9px; font-size:12px;">
+                <option value="ACTIVO" selected>🟢 Solo Instructores Activos</option>
+                <option value="TODOS">📚 Todos (Activos + Retirados)</option>
+                <option value="RETIRADO">🚫 Solo Retirados (Histórico)</option>
+              </select>
+              <button type="button" class="btn btn-outline" style="padding:5px 10px; font-size:11.5px; border-color:#a78bfa; color:#ddd6fe;" onclick="toggleDrawerInstructoresEval(true)">⚙️ Activar / Retirar / Nuevo</button>
+              <span class="badge badge-info" id="evRankingBadge">0 instructores</span>
+            </div>
           </div>
-          <div class="table-wrap" style="max-height:340px;">
+          <div class="table-wrap" style="max-height:360px;">
             <table>
               <thead>
                 <tr>
                   <th>#</th>
                   <th>Instructor (Normalizado)</th>
+                  <th>Estado</th>
                   <th>Evaluaciones</th>
                   <th>Promedio ⭐</th>
                   <th>% Excelencia</th>
@@ -3856,6 +3912,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
                   <th>Claridad</th>
                   <th>🚨 Alertas</th>
                   <th>Última Eval.</th>
+                  <th>Gestión</th>
                 </tr>
               </thead>
               <tbody id="evRankingTbody"></tbody>
@@ -9601,6 +9658,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
           renderizarListaAlumnosPedagogia();
           renderizarObsRecientesPedagogia();
+          renderizarDirectorioInstructoresEval();
           renderizarRankingEvaluacionDocente();
           poblarFiltroInstructoresEvaluacion();
           renderizarRespuestasEvaluacion();
@@ -9716,15 +9774,11 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const listaNiveles = catg.niveles || [];
       const sig = alumno.siguiente_clase || {};
 
-      // Opciones de instructores (del bot + ranking)
-      const instSet = new Set();
-      if (BOT_DATA && BOT_DATA.nomina && Array.isArray(BOT_DATA.nomina.instructores_disponibles)) {
-        BOT_DATA.nomina.instructores_disponibles.forEach(i => { if (i) instSet.add(String(i).trim().toUpperCase()); });
-      }
-      if (EVAL_PED_DATA.evaluacion_docente && Array.isArray(EVAL_PED_DATA.evaluacion_docente.ranking_instructores)) {
-        EVAL_PED_DATA.evaluacion_docente.ranking_instructores.forEach(r => { if (r.instructor) instSet.add(r.instructor); });
-      }
-      const instOpts = Array.from(instSet).sort().map(i => `<option value="${_escHtmlEval(i)}">${_escHtmlEval(i)}</option>`).join('');
+      // Opciones de instructores: SOLO los instructores ACTIVOS del directorio (incluye nuevos y excluye retirados)
+      const instActivos = Array.isArray(EVAL_PED_DATA.instructores_activos) && EVAL_PED_DATA.instructores_activos.length
+        ? EVAL_PED_DATA.instructores_activos
+        : ((BOT_DATA && BOT_DATA.nomina && Array.isArray(BOT_DATA.nomina.instructores_disponibles)) ? BOT_DATA.nomina.instructores_disponibles : []);
+      const instOpts = instActivos.map(i => `<option value="${_escHtmlEval(i)}">${_escHtmlEval(i)}</option>`).join('');
 
       const pendientesHtml = (alumno.recomendaciones_pendientes || []).length
         ? `<div style="background:rgba(245,158,11,0.12); border:1px solid #f59e0b; border-radius:10px; padding:11px 13px; margin-bottom:14px;">
@@ -10000,32 +10054,169 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       </tr>`).join('') || '<tr><td colspan="7" style="text-align:center; padding:16px; color:var(--muted);">Aún no hay observaciones pedagógicas registradas. Selecciona un alumno arriba para registrar la primera en 2 clics.</td></tr>';
     }
 
+    function toggleDrawerInstructoresEval(forzarAbrir = null) {
+      const dr = document.getElementById('evalInstructoresDrawer');
+      if (!dr) return;
+      if (forzarAbrir === true) dr.classList.add('open');
+      else if (forzarAbrir === false) dr.classList.remove('open');
+      else dr.classList.toggle('open');
+      if (dr.classList.contains('open')) {
+        if (!EVAL_PED_DATA) cargarEvaluacionPedagogica(false);
+        else renderizarDirectorioInstructoresEval();
+      }
+    }
+
+    function renderizarDirectorioInstructoresEval() {
+      const tbody = document.getElementById('evalDirectorioInstTbody');
+      if (!tbody || !EVAL_PED_DATA) return;
+      const dir = EVAL_PED_DATA.directorio_instructores || [];
+      const activosCnt = dir.filter(d => d.estado === 'ACTIVO').length;
+      const retiradosCnt = dir.filter(d => d.estado !== 'ACTIVO').length;
+      const bAct = document.getElementById('evalInstActivosBadge');
+      const bRet = document.getElementById('evalInstRetiradosBadge');
+      if (bAct) bAct.textContent = `${activosCnt} Activos`;
+      if (bRet) bRet.textContent = `${retiradosCnt} Retirados`;
+
+      tbody.innerHTML = dir.map(d => {
+        const esAct = d.estado === 'ACTIVO';
+        const safeNom = _escHtmlEval(d.instructor).replace(/'/g, "\\'");
+        const safeTipo = _escHtmlEval(d.tipo || 'PRÁCTICO / TEÓRICO').replace(/'/g, "\\'");
+        return `<tr style="${esAct ? '' : 'opacity:0.72;'}">
+          <td><b>${_escHtmlEval(d.instructor)}</b></td>
+          <td><span class="badge badge-info" style="font-size:10.5px;">${_escHtmlEval(d.tipo || 'PRÁCTICO / TEÓRICO')}</span></td>
+          <td>${esAct ? '<span class="badge badge-success">🟢 ACTIVO</span>' : '<span class="badge badge-danger">🚫 RETIRADO</span>'}</td>
+          <td><b>${d.total_evaluaciones || 0}</b></td>
+          <td>${d.total_evaluaciones > 0 ? `<span class="badge badge-warning">⭐ ${Number(d.promedio || 0).toFixed(2)}</span>` : '<span style="color:var(--muted); font-size:11px;">Nuevo / Sin eval.</span>'}</td>
+          <td style="white-space:nowrap;">${_escHtmlEval(d.ultima_fecha || '—')}</td>
+          <td>
+            ${esAct
+              ? `<button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11px; border-color:#ef4444; color:#fca5a5;" onclick="cambiarEstadoInstructorEval('${safeNom}', 'RETIRADO', '${safeTipo}')">🚫 Marcar Retirado</button>`
+              : `<button type="button" class="btn btn-success" style="padding:4px 9px; font-size:11px;" onclick="cambiarEstadoInstructorEval('${safeNom}', 'ACTIVO', '${safeTipo}')">✅ Reactivar</button>`}
+          </td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="7" style="text-align:center; padding:14px; color:var(--muted);">Sin instructores registrados.</td></tr>';
+    }
+
+    async function agregarInstructorNuevoEval() {
+      const nomEl = document.getElementById('evalNuevoInstNombre');
+      const tipoEl = document.getElementById('evalNuevoInstTipo');
+      const nombre = ((nomEl || {}).value || '').trim();
+      const tipo = ((tipoEl || {}).value || 'PRÁCTICO / TEÓRICO').trim();
+      if (!nombre) {
+        alert('⚠️ Ingresa el nombre del nuevo instructor.');
+        return;
+      }
+      await cambiarEstadoInstructorEval(nombre, 'ACTIVO', tipo);
+      if (nomEl) nomEl.value = '';
+    }
+
+    async function cambiarEstadoInstructorEval(nombre, nuevoEstado, tipo = 'PRÁCTICO / TEÓRICO') {
+      const toast = document.getElementById('evalGlobalToast');
+      if (toast) {
+        toast.className = 'status-toast ok';
+        toast.textContent = `⏳ Actualizando instructor ${nombre} a ${nuevoEstado}...`;
+      }
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'gestionar_instructor_evaluacion',
+            nombre,
+            estado: nuevoEstado,
+            tipo
+          })
+        });
+        const data = await res.json();
+        if (toast) {
+          toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+          toast.textContent = data.message || '';
+        }
+        await cargarEvaluacionPedagogica(false);
+      } catch (err) {
+        if (toast) {
+          toast.className = 'status-toast err';
+          toast.textContent = '❌ Error actualizando instructor: ' + err;
+        }
+      }
+    }
+
     function renderizarRankingEvaluacionDocente() {
       const tbody = document.getElementById('evRankingTbody');
       const badge = document.getElementById('evRankingBadge');
       if (!tbody || !EVAL_PED_DATA || !EVAL_PED_DATA.evaluacion_docente) return;
-      const rank = EVAL_PED_DATA.evaluacion_docente.ranking_instructores || [];
-      if (badge) badge.textContent = `${rank.length} instructores`;
+      const fEst = ((document.getElementById('evFiltroEstadoInst') || {}).value || 'ACTIVO').toUpperCase();
+      const rankAll = EVAL_PED_DATA.evaluacion_docente.ranking_instructores || [];
+      const dir = EVAL_PED_DATA.directorio_instructores || [];
+
+      // Construir lista combinada: incluir también instructores ACTIVOS nuevos que aún tienen 0 evaluaciones
+      const mapRank = new Map();
+      rankAll.forEach(r => mapRank.set(r.instructor, r));
+      const filasMostrar = [];
+      dir.forEach(d => {
+        if (fEst === 'ACTIVO' && d.estado !== 'ACTIVO') return;
+        if (fEst === 'RETIRADO' && d.estado !== 'RETIRADO') return;
+        const r = mapRank.get(d.instructor);
+        if (r) {
+          filasMostrar.push({ ...r, estado: d.estado, tipo: d.tipo });
+        } else if (fEst !== 'RETIRADO') {
+          filasMostrar.push({
+            instructor: d.instructor,
+            estado: d.estado,
+            tipo: d.tipo,
+            total_evaluaciones: 0,
+            promedio: 0,
+            pct_excelencia: 0,
+            alertas: 0,
+            ultima_fecha: '',
+            criterios: {}
+          });
+        }
+      });
+
+      filasMostrar.sort((a, b) => {
+        const aHas = a.total_evaluaciones > 0 ? 0 : 1;
+        const bHas = b.total_evaluaciones > 0 ? 0 : 1;
+        if (aHas !== bHas) return aHas - bHas;
+        const aTop = a.total_evaluaciones >= 5 ? 0 : 1;
+        const bTop = b.total_evaluaciones >= 5 ? 0 : 1;
+        if (aTop !== bTop) return aTop - bTop;
+        if (b.promedio !== a.promedio) return b.promedio - a.promedio;
+        return b.total_evaluaciones - a.total_evaluaciones;
+      });
+
+      if (badge) badge.textContent = `${filasMostrar.length} instructores`;
       const fmtC = (val) => val ? `<span style="color:${val >= 4.5 ? '#34d399' : (val >= 3.8 ? '#fde047' : '#f87171')}; font-weight:700;">${Number(val).toFixed(1)}</span>` : '<span style="color:var(--muted);">—</span>';
-      tbody.innerHTML = rank.map((r, idx) => {
+      tbody.innerHTML = filasMostrar.map((r, idx) => {
         const c = r.criterios || {};
         const atenCel = (c.atencion && c.celular) ? ((c.atencion + c.celular) / 2) : (c.atencion || c.celular || 0);
         const safeInst = _escHtmlEval(r.instructor).replace(/'/g, "\\'");
-        return `<tr style="cursor:pointer;" onclick="filtrarRespuestasPorInstructor('${safeInst}')">
+        const safeTipo = _escHtmlEval(r.tipo || 'PRÁCTICO / TEÓRICO').replace(/'/g, "\\'");
+        const esAct = r.estado !== 'RETIRADO';
+        const promHtml = r.total_evaluaciones > 0
+          ? `<span class="badge ${r.promedio >= 4.5 ? 'badge-success' : (r.promedio >= 3.8 ? 'badge-warning' : 'badge-danger')}" style="font-size:12px;">⭐ ${Number(r.promedio).toFixed(2)}</span>`
+          : `<span class="badge badge-info" style="font-size:11px;">🆕 Nuevo (0 eval.)</span>`;
+        return `<tr style="cursor:pointer; ${esAct ? '' : 'opacity:0.72;'}" onclick="filtrarRespuestasPorInstructor('${safeInst}')">
           <td><b>#${idx + 1}</b></td>
           <td><b>${_escHtmlEval(r.instructor)}</b></td>
+          <td>${esAct ? '<span class="badge badge-success" style="font-size:10.5px;">🟢 Activo</span>' : '<span class="badge badge-danger" style="font-size:10.5px;">🚫 Retirado</span>'}</td>
           <td><b>${r.total_evaluaciones}</b></td>
-          <td><span class="badge ${r.promedio >= 4.5 ? 'badge-success' : (r.promedio >= 3.8 ? 'badge-warning' : 'badge-danger')}" style="font-size:12px;">⭐ ${Number(r.promedio).toFixed(2)}</span></td>
-          <td><b>${r.pct_excelencia}%</b></td>
+          <td>${promHtml}</td>
+          <td><b>${r.total_evaluaciones > 0 ? r.pct_excelencia + '%' : '—'}</b></td>
           <td>${fmtC(c.trato)}</td>
           <td>${fmtC(c.tiempo)}</td>
           <td>${fmtC(c.objetivos)}</td>
           <td>${fmtC(atenCel)}</td>
           <td>${fmtC(c.claridad)}</td>
           <td>${r.alertas > 0 ? `<span class="badge badge-danger">🚨 ${r.alertas}</span>` : '<span class="badge badge-success">0</span>'}</td>
-          <td style="white-space:nowrap;">${_escHtmlEval(r.ultima_fecha || '-')}</td>
+          <td style="white-space:nowrap;">${_escHtmlEval(r.ultima_fecha || '—')}</td>
+          <td onclick="event.stopPropagation()">
+            ${esAct
+              ? `<button type="button" class="btn btn-outline" style="padding:3px 7px; font-size:10.5px; border-color:#ef4444; color:#fca5a5;" title="Marcar como instructor retirado" onclick="cambiarEstadoInstructorEval('${safeInst}', 'RETIRADO', '${safeTipo}')">🚫 Retirar</button>`
+              : `<button type="button" class="btn btn-success" style="padding:3px 7px; font-size:10.5px;" title="Reactivar instructor" onclick="cambiarEstadoInstructorEval('${safeInst}', 'ACTIVO', '${safeTipo}')">✅ Activar</button>`}
+          </td>
         </tr>`;
-      }).join('') || '<tr><td colspan="12" style="text-align:center; padding:16px; color:var(--muted);">Sin evaluaciones cargadas aún.</td></tr>';
+      }).join('') || '<tr><td colspan="14" style="text-align:center; padding:16px; color:var(--muted);">No hay instructores en este filtro.</td></tr>';
     }
 
     function poblarFiltroInstructoresEvaluacion() {
@@ -11382,6 +11573,20 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                     res_sup.get("message", "Marcó refuerzo pedagógico como superado")
                 )
                 self._send_json(res_sup)
+                return
+
+            if action == "gestionar_instructor_evaluacion":
+                res_gi = evaluacion_pedagogica_cea.evaluacion_service.guardar_o_cambiar_estado_instructor(
+                    nombre=str(payload.get("nombre", "")),
+                    estado=str(payload.get("estado", "ACTIVO")),
+                    tipo=str(payload.get("tipo", "PRÁCTICO / TEÓRICO")),
+                )
+                _registrar_bitacora_empleado(
+                    u_sesion["username"], u_sesion["nombre"], u_sesion["rol"],
+                    "GESTION_INSTRUCTOR_EVAL",
+                    res_gi.get("message", "Actualizó estado de instructor")
+                )
+                self._send_json(res_gi)
                 return
 
             self._send_json({"ok": False, "message": f"Acción desconocida: {action}"}, 400)
