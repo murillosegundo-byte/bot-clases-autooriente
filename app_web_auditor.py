@@ -38,6 +38,7 @@ import clases_core
 import bot_agenda_cea
 import crm_whatsapp_cea
 import runt_control_cea
+import evaluacion_pedagogica_cea
 import observatorio_vial_cea
 
 
@@ -114,14 +115,15 @@ MODULOS_CATALOGO = [
     {"id": "mod_agenda", "corto": "7. Agenda + Baúl", "icono": "📅"},
     {"id": "mod_whatsapp", "corto": "8. WhatsApp IA", "icono": "💬"},
     {"id": "mod_empleados", "corto": "9. Empleados y Permisos", "icono": "👥"},
+    {"id": "mod_evaluacion", "corto": "10. Evaluación y Progreso", "icono": "⭐"},
 ]
 
 
 def _usuarios_por_defecto() -> Dict[str, Dict[str, Any]]:
     todos_mods = [m["id"] for m in MODULOS_CATALOGO]
     # Por seguridad: Recepcionistas y Empleados NO ven mod_cartera (Finanzas privadas $1.334M) ni mod_robot/mod_agenda/mod_whatsapp
-    mods_recepcion = ["mod_clases", "mod_nomina", "mod_inasistencias", "mod_pesv"]
-    mods_profesores = ["mod_clases", "mod_nomina", "mod_inasistencias"]
+    mods_recepcion = ["mod_clases", "mod_nomina", "mod_inasistencias", "mod_pesv", "mod_evaluacion"]
+    mods_profesores = ["mod_clases", "mod_nomina", "mod_inasistencias", "mod_evaluacion"]
     mods_pesv = ["mod_pesv"]
     return {
         AUDITOR_USER.lower(): {
@@ -186,6 +188,9 @@ def _cargar_usuarios_empleados() -> Dict[str, Dict[str, Any]]:
         {"mod_pesv", "mod_inasistencias", "mod_clases"},
     ):
         base["pesv"]["modulos"] = ["mod_pesv"]
+    for uk in ("recepcion", "profesores"):
+        if uk in base and "mod_clases" in (base[uk].get("modulos") or []) and "mod_evaluacion" not in (base[uk].get("modulos") or []):
+            base[uk]["modulos"] = list(base[uk].get("modulos") or []) + ["mod_evaluacion"]
     return base
 
 
@@ -1439,6 +1444,76 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       height: 100%;
       background: linear-gradient(90deg, #3b82f6, #10b981);
     }
+    .obs-chip-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      margin-top: 6px;
+    }
+    .obs-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 11px;
+      border-radius: 999px;
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.14s ease;
+      user-select: none;
+    }
+    .obs-chip:hover { border-color: #60a5fa; color: #fff; background: #172554; }
+    .obs-chip.selected {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.28), rgba(234, 88, 12, 0.24));
+      border-color: #f59e0b;
+      color: #fef3c7;
+      box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.35);
+    }
+    .obs-chip.fort-selected {
+      background: rgba(16, 185, 129, 0.22);
+      border-color: #10b981;
+      color: #d1fae5;
+    }
+    .nivel-btn {
+      flex: 1;
+      min-width: 150px;
+      padding: 9px 11px;
+      border-radius: 9px;
+      border: 1px solid #334155;
+      background: #0f172a;
+      color: #cbd5e1;
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.14s ease;
+    }
+    .nivel-btn:hover { border-color: #60a5fa; color: #fff; }
+    .nivel-btn.selected-success { background: rgba(16,185,129,0.24); border-color: #10b981; color: #6ee7b7; }
+    .nivel-btn.selected-warning { background: rgba(245,158,11,0.24); border-color: #f59e0b; color: #fde68a; }
+    .nivel-btn.selected-danger { background: rgba(239,68,68,0.24); border-color: #ef4444; color: #fecaca; }
+    .progreso-al-item {
+      padding: 10px 12px;
+      border-radius: 9px;
+      border: 1px solid #1e2d4a;
+      background: #0b1324;
+      cursor: pointer;
+      transition: all 0.14s ease;
+    }
+    .progreso-al-item:hover { border-color: #3b82f6; background: #111f3b; }
+    .progreso-al-item.active { border-color: #38bdf8; background: rgba(37, 99, 235, 0.2); }
+    .eval-grid-split {
+      display: grid;
+      grid-template-columns: minmax(290px, 370px) 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    @media (max-width: 960px) {
+      .eval-grid-split { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -1599,6 +1674,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       <button type="button" class="mod-btn" data-mod="mod_empleados" id="btnNavEmpleados" onclick="cambiarModulo('mod_empleados', this)">
         <span>👥 9. Recepcionistas y Empleados</span>
         <span class="badge badge-info" id="nav_badge_emp" style="display:none;"></span>
+      </button>
+      <button type="button" class="mod-btn" data-mod="mod_evaluacion" onclick="cambiarModulo('mod_evaluacion', this)">
+        <span>⭐ 10. Evaluación Docente y Progreso</span>
+        <span class="badge badge-warning" id="nav_badge_eval" style="display:none;"></span>
       </button>
     </div>
 
@@ -3524,6 +3603,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               <label style="display:flex; align-items:center; gap:7px; cursor:pointer;"><input type="checkbox" class="emp-mod-chk" value="mod_agenda" style="width:auto;" /> 📅 7. Agenda Google Calendar + Baúl</label>
               <label style="display:flex; align-items:center; gap:7px; cursor:pointer;"><input type="checkbox" class="emp-mod-chk" value="mod_whatsapp" style="width:auto;" /> 💬 8. WhatsApp IA & Remarketing</label>
               <label style="display:flex; align-items:center; gap:7px; cursor:pointer;"><input type="checkbox" class="emp-mod-chk" value="mod_empleados" style="width:auto;" /> 👥 9. Gestión de Empleados</label>
+              <label style="display:flex; align-items:center; gap:7px; cursor:pointer;"><input type="checkbox" class="emp-mod-chk" value="mod_evaluacion" checked style="width:auto;" /> ⭐ 10. Evaluación Docente y Progreso Alumnos</label>
             </div>
           </div>
 
@@ -3600,6 +3680,220 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             </thead>
             <tbody id="bitacoraEmpleadosTbody"></tbody>
           </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======================================================================= -->
+    <!-- MÓDULO 10: EVALUACIÓN DOCENTE (GOOGLE FORM) Y PROGRESO DE ALUMNOS       -->
+    <!-- ======================================================================= -->
+    <div id="mod_evaluacion" class="mod-section">
+      <!-- Barra superior de sub-pestañas + sincronización -->
+      <div class="panel" style="margin-bottom:14px; padding:12px 16px;">
+        <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px;">
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" class="tab-btn active" id="btnSubTabPedProgreso" onclick="cambiarSubTabEvaluacion('progreso', this)">
+              🎯 Progreso Alumnos y Observaciones (Sin Escribir)
+            </button>
+            <button type="button" class="tab-btn" id="btnSubTabPedDocentes" onclick="cambiarSubTabEvaluacion('docentes', this)">
+              ⭐ Calificación a Instructores (Google Form en Vivo)
+            </button>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+            <span class="badge badge-info" id="evalStatusBadge">⏳ Sin sincronizar</span>
+            <button type="button" class="btn btn-outline" style="padding:6px 12px; font-size:12px; border-color:#38bdf8; color:#bae6fd;" onclick="copiarLinkEvaluacionDocente()">📋 Copiar Link Calificación</button>
+            <button type="button" class="btn btn-success" style="padding:6px 12px; font-size:12px;" onclick="compartirLinkEvaluacionWhatsApp()">📱 Enviar por WhatsApp</button>
+            <button type="button" class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="cargarEvaluacionPedagogica(true)">🔄 Sincronizar</button>
+          </div>
+        </div>
+        <div id="evalGlobalToast" class="status-toast" style="margin-top:8px;"></div>
+      </div>
+
+      <!-- SUB-PESTAÑA 1: PROGRESO ALUMNOS Y OBSERVACIONES DEL INSTRUCTOR (100% BOTONES) -->
+      <div id="subTabPedProgreso">
+        <div class="kpi-grid" style="margin-bottom:14px;">
+          <div class="kpi-card info">
+            <div class="kpi-label">🎓 Alumnos en Seguimiento</div>
+            <div class="kpi-value" id="ped_kpi_alumnos">0</div>
+            <div class="kpi-sub">Con avance y temario oficial</div>
+          </div>
+          <div class="kpi-card warning">
+            <div class="kpi-label">⚠️ Con Refuerzo Pendiente</div>
+            <div class="kpi-value" id="ped_kpi_refuerzos" style="color:#fde047;">0</div>
+            <div class="kpi-sub">Recomendaciones para próxima clase</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">📝 Observaciones Registradas</div>
+            <div class="kpi-value" id="ped_kpi_obs">0</div>
+            <div class="kpi-sub">Historial pedagógico en Google Sheets</div>
+          </div>
+          <div class="kpi-card success">
+            <div class="kpi-label">✅ Refuerzos Superados</div>
+            <div class="kpi-value" id="ped_kpi_superados" style="color:#34d399;">0</div>
+            <div class="kpi-sub">Temas dominados por los alumnos</div>
+          </div>
+        </div>
+
+        <div class="eval-grid-split">
+          <!-- Columna izquierda: Buscador + Lista de alumnos -->
+          <div class="panel" style="padding:14px;">
+            <div class="panel-title" style="margin-bottom:10px;">
+              <span>🔎 Consultar Progreso de Alumno</span>
+              <span class="badge badge-info" id="pedListaCountBadge">0</span>
+            </div>
+            <input type="search" id="pedSearchAlumno" autocomplete="off" placeholder="Buscar alumno por nombre, cédula o categoría..." oninput="renderizarListaAlumnosPedagogia()" style="margin-bottom:8px;" />
+            <div style="display:flex; gap:5px; flex-wrap:wrap; margin-bottom:10px;">
+              <button type="button" class="btn btn-outline ped-filtro-btn" data-f="TODOS" style="padding:4px 8px; font-size:11px; background:rgba(59,130,246,0.22); border-color:#3b82f6; color:#fff;" onclick="cambiarFiltroAlumnosPed('TODOS', this)">Todos</button>
+              <button type="button" class="btn btn-outline ped-filtro-btn" data-f="CON_REFUERZO" style="padding:4px 8px; font-size:11px; border-color:#f59e0b; color:#fde68a;" onclick="cambiarFiltroAlumnosPed('CON_REFUERZO', this)">⚠️ Con Refuerzo</button>
+              <button type="button" class="btn btn-outline ped-filtro-btn" data-f="EN_CURSO" style="padding:4px 8px; font-size:11px;" onclick="cambiarFiltroAlumnosPed('EN_CURSO', this)">🚗 En Curso</button>
+              <button type="button" class="btn btn-outline ped-filtro-btn" data-f="FINALIZADOS" style="padding:4px 8px; font-size:11px;" onclick="cambiarFiltroAlumnosPed('FINALIZADOS', this)">✅ Finalizados</button>
+            </div>
+            <div id="pedListaAlumnos" style="display:flex; flex-direction:column; gap:7px; max-height:680px; overflow-y:auto; padding-right:2px;">
+              <div style="text-align:center; padding:24px; color:var(--muted); font-size:12.5px;">Cargando alumnos...</div>
+            </div>
+          </div>
+
+          <!-- Columna derecha: Ficha Pedagógica + Registro sin escribir -->
+          <div style="display:flex; flex-direction:column; gap:14px;">
+            <div class="panel" id="pedFichaAlumnoPanel" style="padding:16px;">
+              <div style="text-align:center; padding:32px 16px; color:var(--muted);">
+                <div style="font-size:32px; margin-bottom:8px;">🎯</div>
+                <div style="font-size:14px; font-weight:700; color:#e2e8f0; margin-bottom:4px;">Selecciona un alumno a la izquierda</div>
+                <div style="font-size:12.5px;">Verás su progreso exacto, el <b>objetivo oficial de la próxima clase</b>, las recomendaciones dejadas por instructores anteriores y podrás registrar nuevas observaciones <b>solo con botones (sin escribir)</b>.</div>
+              </div>
+            </div>
+
+            <!-- Últimas observaciones registradas en todo el CEA -->
+            <div class="panel" style="padding:14px;">
+              <div class="panel-title">
+                <span>📋 Últimas Observaciones Pedagógicas del CEA</span>
+                <span class="badge badge-purple" id="pedObsRecientesBadge">0</span>
+              </div>
+              <div class="table-wrap" style="max-height:290px;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Alumno</th>
+                      <th>Cat. / Clase</th>
+                      <th>Instructor</th>
+                      <th>Nivel</th>
+                      <th>Recomendaciones Próxima Clase</th>
+                      <th>Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody id="pedObsRecientesTbody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SUB-PESTAÑA 2: EVALUACIÓN A INSTRUCTORES (GOOGLE FORM EN VIVO) -->
+      <div id="subTabPedDocentes" style="display:none;">
+        <!-- Banner del Link de Calificación para Alumnos -->
+        <div class="panel" style="margin-bottom:14px; padding:13px 16px; background:linear-gradient(135deg, rgba(37,99,235,0.14), rgba(16,185,129,0.12)); border-color:#3b82f6;">
+          <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px;">
+            <div>
+              <div style="font-size:13.5px; font-weight:800; color:#fff;">🔗 Link Oficial de Calificación de Clases para Alumnos (Google Forms Conectado en Vivo)</div>
+              <div style="font-size:12px; color:#cbd5e1; margin-top:3px;">
+                Los alumnos califican a su profesor desde este enlace y las respuestas se analizan aquí automáticamente con ranking y alertas de calidad:
+                <code id="evalFormUrlText" style="color:#7dd3fc;">https://docs.google.com/forms/d/1z_pYRCxH0GYgJbUjHmz8CaJ6b3T9g2l-HeXD9QKMhNI/viewform</code>
+              </div>
+            </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button type="button" class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="copiarLinkEvaluacionDocente()">📋 Copiar Link</button>
+              <a id="evalFormOpenLink" href="https://docs.google.com/forms/d/1z_pYRCxH0GYgJbUjHmz8CaJ6b3T9g2l-HeXD9QKMhNI/viewform" target="_blank" class="btn btn-outline" style="padding:6px 12px; font-size:12px; text-decoration:none;">📝 Abrir Formulario</a>
+              <a id="evalSheetOpenLink" href="https://docs.google.com/spreadsheets/d/1F6Sxe_csVal4EIOOBGXZlryxSPXutbRDJpcIJczPdtU/edit" target="_blank" class="btn btn-outline" style="padding:6px 12px; font-size:12px; text-decoration:none;">📊 Hoja Respuestas</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- KPIs de Evaluación Docente -->
+        <div class="kpi-grid" style="margin-bottom:14px;">
+          <div class="kpi-card info">
+            <div class="kpi-label">🗳️ Total Evaluaciones</div>
+            <div class="kpi-value" id="ev_kpi_total">0</div>
+            <div class="kpi-sub">Respuestas registradas en Google Form</div>
+          </div>
+          <div class="kpi-card success">
+            <div class="kpi-label">⭐ Promedio General</div>
+            <div class="kpi-value" id="ev_kpi_promedio" style="color:#fde047;">0.0 / 5</div>
+            <div class="kpi-sub">Escala 1.0 a 5.0 (10 criterios)</div>
+          </div>
+          <div class="kpi-card success">
+            <div class="kpi-label">🏆 Nivel de Excelencia</div>
+            <div class="kpi-value" id="ev_kpi_excelencia" style="color:#34d399;">0%</div>
+            <div class="kpi-sub">Clases calificadas ≥ 4.5 / 5.0</div>
+          </div>
+          <div class="kpi-card danger">
+            <div class="kpi-label">🚨 Alertas / Oportunidades Mejora</div>
+            <div class="kpi-value" id="ev_kpi_alertas" style="color:#fca5a5;">0</div>
+            <div class="kpi-sub">Celular, trato, tiempo o comentario</div>
+          </div>
+        </div>
+
+        <!-- Ranking de Instructores -->
+        <div class="panel" style="margin-bottom:14px;">
+          <div class="panel-title">
+            <span>🏆 Ranking y Desempeño por Instructor (Clic en un profesor para filtrar sus respuestas)</span>
+            <span class="badge badge-info" id="evRankingBadge">0 instructores</span>
+          </div>
+          <div class="table-wrap" style="max-height:340px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Instructor (Normalizado)</th>
+                  <th>Evaluaciones</th>
+                  <th>Promedio ⭐</th>
+                  <th>% Excelencia</th>
+                  <th>Trato</th>
+                  <th>Tiempo</th>
+                  <th>Objetivos</th>
+                  <th>Atención / Celular</th>
+                  <th>Claridad</th>
+                  <th>🚨 Alertas</th>
+                  <th>Última Eval.</th>
+                </tr>
+              </thead>
+              <tbody id="evRankingTbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Detalle de Respuestas y Alertas -->
+        <div class="panel">
+          <div class="panel-title" style="flex-wrap:wrap; gap:8px;">
+            <span>📋 Respuestas de Alumnos y Alertas de Calidad Docente</span>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+              <select id="evFiltroInstructor" onchange="renderizarRespuestasEvaluacion()" style="width:auto; min-width:210px;">
+                <option value="">Todos los instructores</option>
+              </select>
+              <select id="evFiltroTipo" onchange="renderizarRespuestasEvaluacion()" style="width:auto;">
+                <option value="TODAS">Todas las respuestas</option>
+                <option value="ALERTAS">🚨 Solo con Alerta / Mejora</option>
+                <option value="EXCELENTES">⭐ Solo Excelentes (≥4.5)</option>
+              </select>
+              <input type="search" id="evSearchInput" placeholder="🔎 Buscar alumno o comentario..." oninput="renderizarRespuestasEvaluacion()" style="width:210px;" />
+            </div>
+          </div>
+          <div class="table-wrap" style="max-height:420px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Fecha</th>
+                  <th>Alumno</th>
+                  <th>Instructor</th>
+                  <th>Calificación ⭐</th>
+                  <th>Estado / Alertas Detectadas</th>
+                  <th>Comentario de Mejora del Alumno</th>
+                </tr>
+              </thead>
+              <tbody id="evRespuestasTbody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
     </div>
@@ -5447,6 +5741,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
       if (modId === 'mod_empleados') {
         cargarEmpleadosWeb();
+      } else if (modId === 'mod_evaluacion') {
+        cargarEvaluacionPedagogica(false);
       } else if (modId === 'mod_agenda') {
         cargarAgendaWeb();
       } else if (modId === 'mod_whatsapp') {
@@ -9002,7 +9298,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       mod_robot: '🤖 6. Robot',
       mod_agenda: '📅 7. Agenda + Baúl',
       mod_whatsapp: '💬 8. WhatsApp IA',
-      mod_empleados: '👥 9. Empleados'
+      mod_empleados: '👥 9. Empleados',
+      mod_evaluacion: '⭐ 10. Evaluación y Progreso'
     };
 
     async function cargarSesionUsuario() {
@@ -9062,15 +9359,15 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
     function aplicarPlantillaRolEmpleado(rol) {
       if (rol === 'RECEPCIONISTA') {
-        marcarModulosEmpleado(['mod_clases','mod_nomina','mod_inasistencias','mod_pesv']);
+        marcarModulosEmpleado(['mod_clases','mod_nomina','mod_inasistencias','mod_pesv','mod_evaluacion']);
       } else if (rol === 'COORDINACION') {
-        marcarModulosEmpleado(['mod_clases','mod_nomina','mod_inasistencias']);
+        marcarModulosEmpleado(['mod_clases','mod_nomina','mod_inasistencias','mod_evaluacion']);
       } else if (rol === 'PESV') {
         marcarModulosEmpleado(['mod_pesv']);
       } else if (rol === 'SOLO_CLASES') {
-        marcarModulosEmpleado(['mod_clases','mod_nomina']);
+        marcarModulosEmpleado(['mod_clases','mod_nomina','mod_evaluacion']);
       } else if (rol === 'ADMIN_TOTAL') {
-        marcarModulosEmpleado(['mod_cartera','mod_clases','mod_nomina','mod_inasistencias','mod_pesv','mod_robot','mod_agenda','mod_whatsapp','mod_empleados']);
+        marcarModulosEmpleado(['mod_cartera','mod_clases','mod_nomina','mod_inasistencias','mod_pesv','mod_robot','mod_agenda','mod_whatsapp','mod_empleados','mod_evaluacion']);
       }
     }
 
@@ -9198,6 +9495,584 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const data = await res.json();
       if (data.ok) cargarEmpleadosWeb();
       else alert(data.message || 'No se pudo eliminar');
+    }
+
+    // =========================================================================
+    // MÓDULO 10: EVALUACIÓN DOCENTE (GOOGLE FORM) Y PROGRESO PEDAGÓGICO ALUMNOS
+    // =========================================================================
+    let EVAL_PED_DATA = null;
+    let PED_FILTRO_ALUMNOS = 'TODOS';
+    let PED_ALUMNO_SELECCIONADO = null; // { documento, nombre, categoria }
+    let PED_NIVEL_SEL = 'AVANZA_BIEN';
+    let PED_RECS_SEL = new Set();
+    let PED_FORTS_SEL = new Set();
+    let _EVAL_FETCH_INFLIGHT = null;
+
+    function _escHtmlEval(txt) {
+      return String(txt || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function cambiarSubTabEvaluacion(subTab, btnEl) {
+      const pProg = document.getElementById('subTabPedProgreso');
+      const pDoc = document.getElementById('subTabPedDocentes');
+      const bProg = document.getElementById('btnSubTabPedProgreso');
+      const bDoc = document.getElementById('btnSubTabPedDocentes');
+      if (pProg) pProg.style.display = subTab === 'progreso' ? 'block' : 'none';
+      if (pDoc) pDoc.style.display = subTab === 'docentes' ? 'block' : 'none';
+      if (bProg) bProg.classList.toggle('active', subTab === 'progreso');
+      if (bDoc) bDoc.classList.toggle('active', subTab === 'docentes');
+      if (!EVAL_PED_DATA) cargarEvaluacionPedagogica(false);
+    }
+
+    function obtenerUrlFormularioEvaluacion() {
+      return (EVAL_PED_DATA && EVAL_PED_DATA.evaluacion_docente && EVAL_PED_DATA.evaluacion_docente.form_url)
+        || 'https://docs.google.com/forms/d/1z_pYRCxH0GYgJbUjHmz8CaJ6b3T9g2l-HeXD9QKMhNI/viewform';
+    }
+
+    async function copiarLinkEvaluacionDocente() {
+      const url = obtenerUrlFormularioEvaluacion();
+      const toast = document.getElementById('evalGlobalToast');
+      try {
+        await navigator.clipboard.writeText(url);
+        if (toast) {
+          toast.className = 'status-toast ok';
+          toast.textContent = '📋 Link oficial de calificación de instructores copiado al portapapeles. ¡Listo para enviar al alumno!';
+        }
+      } catch (_) {
+        prompt('Copia este link de calificación para el alumno:', url);
+      }
+    }
+
+    function compartirLinkEvaluacionWhatsApp(nombreAlumno = '') {
+      const url = obtenerUrlFormularioEvaluacion();
+      const saludo = nombreAlumno ? `Hola ${nombreAlumno}` : 'Hola';
+      const msg = `${saludo}, gracias por tu clase en CEA Auto Oriente. Por favor califica a tu instructor en 30 segundos en este enlace oficial: ${url}`;
+      window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
+    }
+
+    async function cargarEvaluacionPedagogica(forzar = false) {
+      if (!forzar && _EVAL_FETCH_INFLIGHT) return _EVAL_FETCH_INFLIGHT;
+      const badge = document.getElementById('evalStatusBadge');
+      if (badge) badge.textContent = '⏳ Sincronizando...';
+
+      const tarea = (async () => {
+        try {
+          const res = await fetch('/api/bot/evaluacion_pedagogica?forzar=' + (forzar ? '1' : '0'));
+          const data = await res.json();
+          if (!data || !data.ok) return;
+          EVAL_PED_DATA = data;
+
+          const ev = data.evaluacion_docente || {};
+          const kp = data.kpis_pedagogicos || {};
+          const kev = ev.kpis || {};
+
+          if (badge) {
+            if (ev.conectado_en_vivo) {
+              badge.className = 'badge badge-success';
+              badge.textContent = `🟢 En vivo (${kev.total_respuestas || 0} eval.)`;
+            } else {
+              badge.className = 'badge badge-warning';
+              badge.textContent = `🟡 Respaldo (${kev.total_respuestas || 0} eval.)`;
+            }
+          }
+          const navEv = document.getElementById('nav_badge_eval');
+          if (navEv) navEv.textContent = `⭐ ${kev.promedio_global || 0}`;
+
+          // Actualizar enlaces del formulario y hoja
+          const urlTxt = document.getElementById('evalFormUrlText');
+          const urlOpen = document.getElementById('evalFormOpenLink');
+          const shOpen = document.getElementById('evalSheetOpenLink');
+          if (urlTxt && ev.form_url) urlTxt.textContent = ev.form_url;
+          if (urlOpen && ev.form_url) urlOpen.href = ev.form_url;
+          if (shOpen && ev.sheet_url) shOpen.href = ev.sheet_url;
+
+          // KPIs Pedagógicos
+          const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+          setTxt('ped_kpi_alumnos', kp.total_alumnos_seguimiento || 0);
+          setTxt('ped_kpi_refuerzos', kp.alumnos_con_refuerzo || 0);
+          setTxt('ped_kpi_obs', kp.total_observaciones || 0);
+          setTxt('ped_kpi_superados', kp.refuerzos_superados || 0);
+
+          // KPIs Evaluación Docente
+          setTxt('ev_kpi_total', kev.total_respuestas || 0);
+          setTxt('ev_kpi_promedio', `${Number(kev.promedio_global || 0).toFixed(2)} / 5`);
+          setTxt('ev_kpi_excelencia', `${kev.pct_excelencia || 0}%`);
+          setTxt('ev_kpi_alertas', kev.total_alertas || 0);
+
+          renderizarListaAlumnosPedagogia();
+          renderizarObsRecientesPedagogia();
+          renderizarRankingEvaluacionDocente();
+          poblarFiltroInstructoresEvaluacion();
+          renderizarRespuestasEvaluacion();
+
+          // Re-seleccionar alumno activo si existía para refrescar su ficha
+          if (PED_ALUMNO_SELECCIONADO) {
+            const match = (data.alumnos_progreso || []).find(a =>
+              (PED_ALUMNO_SELECCIONADO.documento && a.documento === PED_ALUMNO_SELECCIONADO.documento && a.categoria === PED_ALUMNO_SELECCIONADO.categoria)
+              || (a.nombre === PED_ALUMNO_SELECCIONADO.nombre && a.categoria === PED_ALUMNO_SELECCIONADO.categoria)
+            );
+            if (match) renderizarFichaAlumnoPedagogia(match, false);
+          } else if ((data.alumnos_progreso || []).length > 0) {
+            renderizarFichaAlumnoPedagogia(data.alumnos_progreso[0], true);
+          }
+        } catch (err) {
+          console.error('Error cargando Evaluación y Progreso:', err);
+          if (badge) {
+            badge.className = 'badge badge-danger';
+            badge.textContent = '❌ Error cargando';
+          }
+        } finally {
+          _EVAL_FETCH_INFLIGHT = null;
+        }
+      })();
+      if (!forzar) _EVAL_FETCH_INFLIGHT = tarea;
+      return tarea;
+    }
+
+    function cambiarFiltroAlumnosPed(filtro, btnEl) {
+      PED_FILTRO_ALUMNOS = filtro;
+      document.querySelectorAll('.ped-filtro-btn').forEach(b => {
+        b.style.background = '';
+        b.style.color = b.getAttribute('data-f') === 'CON_REFUERZO' ? '#fde68a' : '';
+      });
+      if (btnEl) {
+        btnEl.style.background = 'rgba(59,130,246,0.25)';
+        btnEl.style.color = '#fff';
+      }
+      renderizarListaAlumnosPedagogia();
+    }
+
+    function renderizarListaAlumnosPedagogia() {
+      const cont = document.getElementById('pedListaAlumnos');
+      const cntEl = document.getElementById('pedListaCountBadge');
+      if (!cont || !EVAL_PED_DATA) return;
+      const q = ((document.getElementById('pedSearchAlumno') || {}).value || '').trim().toLowerCase();
+      const todos = EVAL_PED_DATA.alumnos_progreso || [];
+      const filtrados = todos.filter(a => {
+        if (PED_FILTRO_ALUMNOS === 'CON_REFUERZO' && !a.tiene_refuerzo_pendiente) return false;
+        if (PED_FILTRO_ALUMNOS === 'EN_CURSO' && a.estado_curso === 'FINALIZADO') return false;
+        if (PED_FILTRO_ALUMNOS === 'FINALIZADOS' && a.estado_curso !== 'FINALIZADO') return false;
+        if (!q) return true;
+        return `${a.nombre} ${a.documento} ${a.categoria} ${(a.recomendaciones_pendientes || []).map(x => x.tema).join(' ')}`.toLowerCase().includes(q);
+      });
+      if (cntEl) cntEl.textContent = filtrados.length;
+
+      cont.innerHTML = filtrados.slice(0, 160).map((a, i) => {
+        const isSel = PED_ALUMNO_SELECCIONADO
+          && PED_ALUMNO_SELECCIONADO.nombre === a.nombre
+          && PED_ALUMNO_SELECCIONADO.categoria === a.categoria;
+        const recsHtml = (a.recomendaciones_pendientes || []).slice(0, 2).map(rc =>
+          `<span class="badge badge-warning" style="font-size:10px; padding:2px 6px;">${_escHtmlEval(rc.tema)}${rc.veces > 1 ? ' ×' + rc.veces : ''}</span>`
+        ).join(' ');
+        const extraRec = (a.recomendaciones_pendientes || []).length > 2
+          ? `<span style="font-size:10px; color:#fde68a;">+${a.recomendaciones_pendientes.length - 2} más</span>` : '';
+        const safeKey = encodeURIComponent(JSON.stringify({ documento: a.documento, nombre: a.nombre, categoria: a.categoria }));
+        return `<div class="progreso-al-item ${isSel ? 'active' : ''}" onclick="seleccionarAlumnoPedagogia('${safeKey}')">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+            <b style="font-size:12.5px; color:#f8fafc;">${_escHtmlEval(a.nombre || a.documento)}</b>
+            <span class="badge badge-info" style="font-size:10.5px;">${_escHtmlEval(a.categoria)}</span>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px; font-size:11px; color:#94a3b8;">
+            <span>CC ${_escHtmlEval(a.documento || 'S/D')}</span>
+            <span style="color:${a.porcentaje >= 100 ? '#34d399' : '#7dd3fc'}; font-weight:700;">${a.clases_completadas}/${a.total_requerido} cl. (${a.porcentaje}%)</span>
+          </div>
+          <div class="progress-bar-wrap" style="width:100%; height:6px; margin:5px 0 0 0;">
+            <div class="progress-bar-fill" style="width:${a.porcentaje}%;"></div>
+          </div>
+          ${recsHtml ? `<div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:6px;">${recsHtml} ${extraRec}</div>` : ''}
+        </div>`;
+      }).join('') || '<div style="text-align:center; padding:20px; color:var(--muted); font-size:12px;">No hay alumnos que coincidan con este filtro.</div>';
+    }
+
+    function seleccionarAlumnoPedagogia(encodedKey) {
+      if (!EVAL_PED_DATA) return;
+      try {
+        const key = JSON.parse(decodeURIComponent(encodedKey));
+        const match = (EVAL_PED_DATA.alumnos_progreso || []).find(a =>
+          (key.documento && a.documento === key.documento && a.categoria === key.categoria)
+          || (a.nombre === key.nombre && a.categoria === key.categoria)
+        );
+        if (match) {
+          renderizarFichaAlumnoPedagogia(match, true);
+          renderizarListaAlumnosPedagogia();
+        }
+      } catch (e) { console.error(e); }
+    }
+
+    function renderizarFichaAlumnoPedagogia(alumno, resetSeleccion = true) {
+      const panel = document.getElementById('pedFichaAlumnoPanel');
+      if (!panel || !alumno || !EVAL_PED_DATA) return;
+      PED_ALUMNO_SELECCIONADO = { documento: alumno.documento, nombre: alumno.nombre, categoria: alumno.categoria };
+
+      if (resetSeleccion) {
+        PED_NIVEL_SEL = 'AVANZA_BIEN';
+        PED_RECS_SEL = new Set();
+        PED_FORTS_SEL = new Set();
+      }
+
+      const catg = EVAL_PED_DATA.catalogos || {};
+      const listaRecs = alumno.es_moto ? (catg.recomendaciones_moto || []) : (catg.recomendaciones_carro || []);
+      const listaForts = catg.fortalezas || [];
+      const listaNiveles = catg.niveles || [];
+      const sig = alumno.siguiente_clase || {};
+
+      // Opciones de instructores (del bot + ranking)
+      const instSet = new Set();
+      if (BOT_DATA && BOT_DATA.nomina && Array.isArray(BOT_DATA.nomina.instructores_disponibles)) {
+        BOT_DATA.nomina.instructores_disponibles.forEach(i => { if (i) instSet.add(String(i).trim().toUpperCase()); });
+      }
+      if (EVAL_PED_DATA.evaluacion_docente && Array.isArray(EVAL_PED_DATA.evaluacion_docente.ranking_instructores)) {
+        EVAL_PED_DATA.evaluacion_docente.ranking_instructores.forEach(r => { if (r.instructor) instSet.add(r.instructor); });
+      }
+      const instOpts = Array.from(instSet).sort().map(i => `<option value="${_escHtmlEval(i)}">${_escHtmlEval(i)}</option>`).join('');
+
+      const pendientesHtml = (alumno.recomendaciones_pendientes || []).length
+        ? `<div style="background:rgba(245,158,11,0.12); border:1px solid #f59e0b; border-radius:10px; padding:11px 13px; margin-bottom:14px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:7px;">
+              <b style="color:#fde68a; font-size:12.5px;">⚠️ Enfoque / Repasos Pendientes de Clases Anteriores (Integrar sin descuidar el objetivo del día)</b>
+              <button type="button" class="btn btn-success" style="padding:4px 9px; font-size:11px;" onclick="marcarRefuerzoSuperadoWeb('', '${_escHtmlEval(alumno.documento)}', '${_escHtmlEval(alumno.nombre).replace(/'/g, "\\'")}', '${_escHtmlEval(alumno.categoria)}')">✅ Marcar Todo Superado</button>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px;">
+              ${alumno.recomendaciones_pendientes.map(r => `<span class="badge badge-warning" style="font-size:12px; padding:5px 10px;">${_escHtmlEval(r.tema)}${r.veces > 1 ? ' (repetido ' + r.veces + ' veces)' : ''}</span>`).join('')}
+            </div>
+          </div>`
+        : `<div style="background:rgba(16,185,129,0.10); border:1px solid rgba(16,185,129,0.4); border-radius:10px; padding:9px 13px; margin-bottom:14px; font-size:12px; color:#6ee7b7;">
+            ✅ Este alumno no tiene repasos pendientes de clases anteriores. Puede avanzar con el tema oficial programado.
+          </div>`;
+
+      const histHtml = (alumno.historial_observaciones || []).length
+        ? alumno.historial_observaciones.map(h => {
+            const lvlMap = {
+              AVANZA_BIEN: '<span class="badge badge-success">🟢 Avanza bien</span>',
+              REFORZAR: '<span class="badge badge-warning">🟡 Reforzar</span>',
+              PRIORITARIO: '<span class="badge badge-danger">🔴 Repaso prioritario</span>',
+            };
+            const isPend = h.estado_refuerzo === 'PENDIENTE';
+            return `<div style="padding:9px 11px; border-radius:8px; background:#09101d; border:1px solid #1e2d4a; display:flex; justify-content:space-between; align-items:flex-start; gap:8px; flex-wrap:wrap;">
+              <div style="flex:1; min-width:220px;">
+                <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
+                  <span style="font-size:11.5px; color:#93c5fd; font-weight:700;">📅 ${_escHtmlEval(h.fecha || h.timestamp)}</span>
+                  ${h.clase_num ? `<span class="badge badge-info">Clase #${_escHtmlEval(h.clase_num)}</span>` : ''}
+                  ${lvlMap[h.nivel_avance] || ''}
+                  <span style="font-size:11px; color:#94a3b8;">👨‍🏫 ${_escHtmlEval(h.instructor)}</span>
+                </div>
+                <div style="font-size:12px; color:#e2e8f0;">
+                  <b>Recomendaciones:</b> ${(h.recomendaciones || []).map(x => _escHtmlEval(x)).join(' • ') || '—'}
+                </div>
+                ${(h.fortalezas || []).length ? `<div style="font-size:11px; color:#6ee7b7; margin-top:2px;"><b>Fortalezas:</b> ${h.fortalezas.map(x => _escHtmlEval(x)).join(' • ')}</div>` : ''}
+              </div>
+              <div>
+                ${isPend
+                  ? `<button type="button" class="btn btn-outline" style="padding:4px 8px; font-size:11px; border-color:#10b981; color:#6ee7b7;" onclick="marcarRefuerzoSuperadoWeb('${_escHtmlEval(h.id_obs)}', '', '', '')">✅ Ya superado</button>`
+                  : `<span class="badge badge-success">✅ Superado</span>`}
+              </div>
+            </div>`;
+          }).join('')
+        : '<div style="font-size:12px; color:var(--muted); text-align:center; padding:12px;">Aún no hay observaciones registradas para este alumno.</div>';
+
+      panel.innerHTML = `
+        <!-- Encabezado Progreso del Alumno -->
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap; border-bottom:1px solid #1e2d4a; padding-bottom:12px; margin-bottom:12px;">
+          <div>
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <h3 style="margin:0; font-size:16px; color:#fff;">${_escHtmlEval(alumno.nombre)}</h3>
+              <span class="badge badge-info">${_escHtmlEval(alumno.categoria)} ${alumno.es_moto ? '🏍️ Moto' : '🚗 Carro'}</span>
+              <span class="badge ${alumno.estado_curso === 'FINALIZADO' ? 'badge-success' : 'badge-purple'}">${_escHtmlEval(alumno.estado_curso)}</span>
+            </div>
+            <div style="font-size:12px; color:#94a3b8; margin-top:4px;">
+              Cédula: <code>${_escHtmlEval(alumno.documento || 'S/D')}</code> &nbsp;•&nbsp;
+              Progreso Práctico: <b style="color:#7dd3fc;">${alumno.clases_completadas} / ${alumno.total_requerido} clases (${alumno.porcentaje}%)</b>
+            </div>
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button type="button" class="btn btn-outline" style="padding:5px 10px; font-size:11.5px; border-color:#38bdf8; color:#bae6fd;" onclick="compartirLinkEvaluacionWhatsApp('${_escHtmlEval(alumno.nombre).replace(/'/g, "\\'")}')">📱 Enviar Link Calificación al Alumno</button>
+          </div>
+        </div>
+
+        <!-- Objetivo Oficial de la Próxima Clase -->
+        <div style="background:linear-gradient(135deg, rgba(37,99,235,0.18), rgba(14,165,233,0.12)); border:1px solid #38bdf8; border-radius:10px; padding:11px 14px; margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+            <b style="color:#bae6fd; font-size:12.5px;">🎯 Objetivo Oficial Próxima Clase (Clase #${sig.siguiente_num || 1} • ${(sig.etapa || 'vía').toUpperCase()})</b>
+            ${sig.codigo_formato ? `<span class="badge badge-info" style="font-size:10.5px;">${_escHtmlEval(sig.codigo_formato)}</span>` : ''}
+          </div>
+          <div style="font-size:12.5px; color:#f1f5f9; margin-top:5px; line-height:1.45;">
+            ${_escHtmlEval(sig.tema || 'Tema oficial del programa')}
+          </div>
+        </div>
+
+        <!-- Alertas de Refuerzos Pendientes -->
+        ${pendientesHtml}
+
+        <!-- Registro Rápido de Observación SIN ESCRIBIR (100% Botones) -->
+        <div style="background:#09101d; border:1px solid #283a5e; border-radius:10px; padding:14px; margin-bottom:14px;">
+          <div style="font-size:13px; font-weight:800; color:#fff; margin-bottom:10px;">
+            ⚡ Registrar Observación y Recomendaciones para la Siguiente Clase (Solo Seleccionar — Sin Escribir)
+          </div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:10px; margin-bottom:12px;">
+            <div>
+              <label class="field-label">👨‍🏫 Instructor que dicta la clase</label>
+              <select id="pedObsInstructor">
+                <option value="">— Seleccionar instructor —</option>
+                ${instOpts}
+              </select>
+            </div>
+            <div>
+              <label class="field-label">🔢 Número de Clase</label>
+              <input type="number" id="pedObsClaseNum" min="1" max="40" value="${Math.max(1, Number(sig.siguiente_num || 1))}" />
+            </div>
+          </div>
+
+          <div style="margin-bottom:12px;">
+            <label class="field-label">1. ¿Cómo avanzó el alumno en esta clase?</label>
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:5px;">
+              ${listaNiveles.map(n => `
+                <button type="button" class="nivel-btn ${PED_NIVEL_SEL === n.id ? 'selected-' + n.color : ''}" onclick="seleccionarNivelPed('${n.id}', '${n.color}', this)">
+                  ${_escHtmlEval(n.label)}
+                </button>
+              `).join('')}
+            </div>
+          </div>
+
+          <div style="margin-bottom:12px;">
+            <label class="field-label">2. Recomendaciones / Temas a repasar en la próxima clase (toca uno o varios):</label>
+            <div class="obs-chip-grid" id="pedRecsChipGrid">
+              ${listaRecs.map(rc => `
+                <button type="button" class="obs-chip ${PED_RECS_SEL.has(rc) ? 'selected' : ''}" data-val="${_escHtmlEval(rc)}" onclick="toggleChipRecPed(this)">
+                  ${PED_RECS_SEL.has(rc) ? '☑️ ' : ''}${_escHtmlEval(rc)}
+                </button>
+              `).join('')}
+            </div>
+          </div>
+
+          <div style="margin-bottom:14px;">
+            <label class="field-label">3. Fortalezas observadas (opcional — 1 toque):</label>
+            <div class="obs-chip-grid" id="pedFortsChipGrid">
+              ${listaForts.map(ft => `
+                <button type="button" class="obs-chip ${PED_FORTS_SEL.has(ft) ? 'fort-selected' : ''}" data-val="${_escHtmlEval(ft)}" onclick="toggleChipFortPed(this)">
+                  ${_escHtmlEval(ft)}
+                </button>
+              `).join('')}
+            </div>
+          </div>
+
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <button type="button" class="btn btn-primary" id="btnGuardarObsPed" style="padding:9px 18px; font-weight:700;" onclick="guardarObservacionPedagogicaWeb()">💾 Guardar Observación (Sin Escribir)</button>
+            <span id="pedObsSaveToast" style="font-size:12px; color:#93c5fd;"></span>
+          </div>
+        </div>
+
+        <!-- Historial Pedagógico del Alumno -->
+        <div>
+          <div style="font-size:12.5px; font-weight:700; color:#cbd5e1; margin-bottom:8px;">📜 Historial de Observaciones de ${_escHtmlEval(alumno.nombre)}</div>
+          <div style="display:flex; flex-direction:column; gap:7px; max-height:240px; overflow-y:auto;">
+            ${histHtml}
+          </div>
+        </div>
+      `;
+    }
+
+    function seleccionarNivelPed(nivelId, color, btnEl) {
+      PED_NIVEL_SEL = nivelId;
+      document.querySelectorAll('#pedFichaAlumnoPanel .nivel-btn').forEach(b => {
+        b.classList.remove('selected-success', 'selected-warning', 'selected-danger');
+      });
+      if (btnEl) btnEl.classList.add('selected-' + color);
+    }
+
+    function toggleChipRecPed(btnEl) {
+      const val = btnEl.getAttribute('data-val') || '';
+      if (!val) return;
+      const esSinPend = val.includes('Sin pendientes');
+      if (esSinPend) {
+        PED_RECS_SEL.clear();
+        PED_RECS_SEL.add(val);
+        document.querySelectorAll('#pedRecsChipGrid .obs-chip').forEach(b => {
+          const v = b.getAttribute('data-val') || '';
+          const act = v === val;
+          b.classList.toggle('selected', act);
+          b.textContent = (act ? '☑️ ' : '') + v;
+        });
+        return;
+      }
+      // Si selecciona un tema a repasar, desmarcar "Sin pendientes"
+      Array.from(PED_RECS_SEL).forEach(x => { if (x.includes('Sin pendientes')) PED_RECS_SEL.delete(x); });
+      if (PED_RECS_SEL.has(val)) PED_RECS_SEL.delete(val);
+      else PED_RECS_SEL.add(val);
+      document.querySelectorAll('#pedRecsChipGrid .obs-chip').forEach(b => {
+        const v = b.getAttribute('data-val') || '';
+        const act = PED_RECS_SEL.has(v);
+        b.classList.toggle('selected', act);
+        b.textContent = (act ? '☑️ ' : '') + v;
+      });
+    }
+
+    function toggleChipFortPed(btnEl) {
+      const val = btnEl.getAttribute('data-val') || '';
+      if (!val) return;
+      if (PED_FORTS_SEL.has(val)) PED_FORTS_SEL.delete(val);
+      else PED_FORTS_SEL.add(val);
+      btnEl.classList.toggle('fort-selected', PED_FORTS_SEL.has(val));
+    }
+
+    async function guardarObservacionPedagogicaWeb() {
+      if (!PED_ALUMNO_SELECCIONADO) return;
+      const inst = ((document.getElementById('pedObsInstructor') || {}).value || '').trim()
+        || (CURRENT_USER && CURRENT_USER.nombre ? CURRENT_USER.nombre : 'INSTRUCTOR CEA');
+      const claseNum = ((document.getElementById('pedObsClaseNum') || {}).value || '').trim();
+      const btn = document.getElementById('btnGuardarObsPed');
+      const toast = document.getElementById('pedObsSaveToast');
+      if (btn) btn.disabled = true;
+      if (toast) toast.textContent = '⏳ Guardando observación en Google Sheets...';
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'guardar_observacion_pedagogica',
+            documento: PED_ALUMNO_SELECCIONADO.documento,
+            nombre_alumno: PED_ALUMNO_SELECCIONADO.nombre,
+            categoria: PED_ALUMNO_SELECCIONADO.categoria,
+            clase_num: claseNum,
+            instructor: inst,
+            nivel_avance: PED_NIVEL_SEL,
+            recomendaciones: Array.from(PED_RECS_SEL),
+            fortalezas: Array.from(PED_FORTS_SEL),
+          })
+        });
+        const data = await res.json();
+        if (toast) toast.textContent = data.message || (data.ok ? '✅ Guardado.' : '❌ Error');
+        if (data.ok) {
+          PED_RECS_SEL.clear();
+          PED_FORTS_SEL.clear();
+          await cargarEvaluacionPedagogica(false);
+        }
+      } catch (err) {
+        if (toast) toast.textContent = '❌ Error guardando observación: ' + err;
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    async function marcarRefuerzoSuperadoWeb(idObs, doc, nom, cat) {
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'marcar_refuerzo_superado',
+            id_obs: idObs || '',
+            documento: doc || '',
+            nombre_alumno: nom || '',
+            categoria: cat || ''
+          })
+        });
+        const data = await res.json();
+        const toast = document.getElementById('evalGlobalToast');
+        if (toast) {
+          toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+          toast.textContent = data.message || '';
+        }
+        await cargarEvaluacionPedagogica(false);
+      } catch (err) {
+        alert('Error actualizando estado del refuerzo: ' + err);
+      }
+    }
+
+    function renderizarObsRecientesPedagogia() {
+      const tbody = document.getElementById('pedObsRecientesTbody');
+      const badge = document.getElementById('pedObsRecientesBadge');
+      if (!tbody || !EVAL_PED_DATA) return;
+      const lista = EVAL_PED_DATA.observaciones_recientes || [];
+      if (badge) badge.textContent = `${lista.length} registros`;
+      const lvlBadge = {
+        AVANZA_BIEN: '<span class="badge badge-success">🟢 Bien</span>',
+        REFORZAR: '<span class="badge badge-warning">🟡 Reforzar</span>',
+        PRIORITARIO: '<span class="badge badge-danger">🔴 Prioritario</span>',
+      };
+      tbody.innerHTML = lista.slice(0, 60).map(o => `<tr>
+        <td style="white-space:nowrap;">${_escHtmlEval(o.fecha || o.timestamp)}</td>
+        <td><b>${_escHtmlEval(o.nombre_alumno)}</b><div style="font-size:10.5px; color:#94a3b8;">${_escHtmlEval(o.documento)}</div></td>
+        <td><span class="badge badge-info">${_escHtmlEval(o.categoria)}</span> ${o.clase_num ? 'Cl.#' + _escHtmlEval(o.clase_num) : ''}</td>
+        <td>${_escHtmlEval(o.instructor)}</td>
+        <td>${lvlBadge[o.nivel_avance] || _escHtmlEval(o.nivel_avance)}</td>
+        <td style="white-space:normal; max-width:300px; font-size:11.5px;">${(o.recomendaciones || []).map(x => _escHtmlEval(x)).join(' • ')}</td>
+        <td>${o.estado_refuerzo === 'PENDIENTE' ? '<span class="badge badge-warning">⚠️ Pendiente</span>' : '<span class="badge badge-success">✅ Superado</span>'}</td>
+      </tr>`).join('') || '<tr><td colspan="7" style="text-align:center; padding:16px; color:var(--muted);">Aún no hay observaciones pedagógicas registradas. Selecciona un alumno arriba para registrar la primera en 2 clics.</td></tr>';
+    }
+
+    function renderizarRankingEvaluacionDocente() {
+      const tbody = document.getElementById('evRankingTbody');
+      const badge = document.getElementById('evRankingBadge');
+      if (!tbody || !EVAL_PED_DATA || !EVAL_PED_DATA.evaluacion_docente) return;
+      const rank = EVAL_PED_DATA.evaluacion_docente.ranking_instructores || [];
+      if (badge) badge.textContent = `${rank.length} instructores`;
+      const fmtC = (val) => val ? `<span style="color:${val >= 4.5 ? '#34d399' : (val >= 3.8 ? '#fde047' : '#f87171')}; font-weight:700;">${Number(val).toFixed(1)}</span>` : '<span style="color:var(--muted);">—</span>';
+      tbody.innerHTML = rank.map((r, idx) => {
+        const c = r.criterios || {};
+        const atenCel = (c.atencion && c.celular) ? ((c.atencion + c.celular) / 2) : (c.atencion || c.celular || 0);
+        const safeInst = _escHtmlEval(r.instructor).replace(/'/g, "\\'");
+        return `<tr style="cursor:pointer;" onclick="filtrarRespuestasPorInstructor('${safeInst}')">
+          <td><b>#${idx + 1}</b></td>
+          <td><b>${_escHtmlEval(r.instructor)}</b></td>
+          <td><b>${r.total_evaluaciones}</b></td>
+          <td><span class="badge ${r.promedio >= 4.5 ? 'badge-success' : (r.promedio >= 3.8 ? 'badge-warning' : 'badge-danger')}" style="font-size:12px;">⭐ ${Number(r.promedio).toFixed(2)}</span></td>
+          <td><b>${r.pct_excelencia}%</b></td>
+          <td>${fmtC(c.trato)}</td>
+          <td>${fmtC(c.tiempo)}</td>
+          <td>${fmtC(c.objetivos)}</td>
+          <td>${fmtC(atenCel)}</td>
+          <td>${fmtC(c.claridad)}</td>
+          <td>${r.alertas > 0 ? `<span class="badge badge-danger">🚨 ${r.alertas}</span>` : '<span class="badge badge-success">0</span>'}</td>
+          <td style="white-space:nowrap;">${_escHtmlEval(r.ultima_fecha || '-')}</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="12" style="text-align:center; padding:16px; color:var(--muted);">Sin evaluaciones cargadas aún.</td></tr>';
+    }
+
+    function poblarFiltroInstructoresEvaluacion() {
+      const sel = document.getElementById('evFiltroInstructor');
+      if (!sel || !EVAL_PED_DATA || !EVAL_PED_DATA.evaluacion_docente) return;
+      const prev = sel.value;
+      const rank = EVAL_PED_DATA.evaluacion_docente.ranking_instructores || [];
+      sel.innerHTML = '<option value="">Todos los instructores</option>' + rank.map(r =>
+        `<option value="${_escHtmlEval(r.instructor)}">${_escHtmlEval(r.instructor)} (${r.total_evaluaciones} eval. • ⭐${Number(r.promedio).toFixed(2)})</option>`
+      ).join('');
+      if (prev && Array.from(sel.options).some(o => o.value === prev)) sel.value = prev;
+    }
+
+    function filtrarRespuestasPorInstructor(instName) {
+      const sel = document.getElementById('evFiltroInstructor');
+      if (sel) {
+        sel.value = instName;
+        renderizarRespuestasEvaluacion();
+        sel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
+    function renderizarRespuestasEvaluacion() {
+      const tbody = document.getElementById('evRespuestasTbody');
+      if (!tbody || !EVAL_PED_DATA || !EVAL_PED_DATA.evaluacion_docente) return;
+      const fInst = ((document.getElementById('evFiltroInstructor') || {}).value || '').trim();
+      const fTipo = ((document.getElementById('evFiltroTipo') || {}).value || 'TODAS').trim();
+      const q = ((document.getElementById('evSearchInput') || {}).value || '').trim().toLowerCase();
+      const lista = (EVAL_PED_DATA.evaluacion_docente.respuestas || []).filter(r => {
+        if (fInst && r.instructor !== fInst) return false;
+        if (fTipo === 'ALERTAS' && !r.tiene_alerta) return false;
+        if (fTipo === 'EXCELENTES' && Number(r.promedio || 0) < 4.5) return false;
+        if (!q) return true;
+        return `${r.alumno} ${r.instructor} ${r.comentario || ''} ${(r.alertas_detalle || []).join(' ')}`.toLowerCase().includes(q);
+      });
+      tbody.innerHTML = lista.slice(0, 150).map(r => `<tr class="${r.tiene_alerta ? 'row-sem-amarillo' : ''}">
+        <td style="white-space:nowrap;">${_escHtmlEval(r.fecha || r.timestamp)}</td>
+        <td><b>${_escHtmlEval(r.alumno)}</b></td>
+        <td>${_escHtmlEval(r.instructor)}</td>
+        <td><span class="badge ${r.promedio >= 4.5 ? 'badge-success' : (r.promedio >= 3.8 ? 'badge-warning' : 'badge-danger')}">⭐ ${Number(r.promedio).toFixed(2)}</span></td>
+        <td style="white-space:normal; max-width:320px; font-size:11.5px;">
+          ${(r.alertas_detalle || []).length
+            ? r.alertas_detalle.map(d => `<div style="color:#fca5a5;">🚨 ${_escHtmlEval(d)}</div>`).join('')
+            : (r.tiene_alerta ? '<span class="badge badge-warning">📝 Revisar comentario</span>' : '<span class="badge badge-success">✅ Excelente desempeño</span>')}
+        </td>
+        <td style="white-space:normal; max-width:300px; font-size:11.5px; color:#e2e8f0;">${_escHtmlEval(r.comentario || '—')}</td>
+      </tr>`).join('') || '<tr><td colspan="6" style="text-align:center; padding:16px; color:var(--muted);">No hay respuestas que coincidan con este filtro.</td></tr>';
     }
 
     cargarSesionUsuario();
@@ -9660,6 +10535,17 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
             try:
                 res_wa = crm_whatsapp_cea.obtener_panorama_whatsapp_crm(STATE.get("hallazgos"))
                 self._send_json(res_wa)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 500)
+            return
+
+        if self.path.startswith("/api/bot/evaluacion_pedagogica"):
+            try:
+                parsed = urllib.parse.urlparse(self.path)
+                qs = urllib.parse.parse_qs(parsed.query)
+                forzar = (qs.get("forzar", ["0"])[0] == "1")
+                res_ev = evaluacion_pedagogica_cea.evaluacion_service.obtener_panorama_pedagogico(forzar=forzar)
+                self._send_json(res_ev)
             except Exception as exc:
                 self._send_json({"ok": False, "error": str(exc)}, 500)
             return
@@ -10471,6 +11357,31 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                     res_fr.get("message", "Actualizó Fecha Registro RUNT (Columna G)")
                 )
                 self._send_json(res_fr)
+                return
+
+            if action == "guardar_observacion_pedagogica":
+                res_obs = evaluacion_pedagogica_cea.evaluacion_service.guardar_observacion(payload)
+                _registrar_bitacora_empleado(
+                    u_sesion["username"], u_sesion["nombre"], u_sesion["rol"],
+                    "OBSERVACION_PEDAGOGICA",
+                    res_obs.get("message", "Registró observación pedagógica de alumno")
+                )
+                self._send_json(res_obs)
+                return
+
+            if action == "marcar_refuerzo_superado":
+                res_sup = evaluacion_pedagogica_cea.evaluacion_service.marcar_refuerzo_superado(
+                    id_obs=str(payload.get("id_obs", "")),
+                    documento=str(payload.get("documento", "")),
+                    nombre_alumno=str(payload.get("nombre_alumno", "")),
+                    categoria=str(payload.get("categoria", "")),
+                )
+                _registrar_bitacora_empleado(
+                    u_sesion["username"], u_sesion["nombre"], u_sesion["rol"],
+                    "REFUERZO_SUPERADO",
+                    res_sup.get("message", "Marcó refuerzo pedagógico como superado")
+                )
+                self._send_json(res_sup)
                 return
 
             self._send_json({"ok": False, "message": f"Acción desconocida: {action}"}, 400)
