@@ -100,10 +100,12 @@ def _excel_serial_a_iso(val: Any) -> str:
         if y < 1900 and y > 200:
             y = 2026
         return f"{y:04d}-{m:02d}-{d:02d}"
-    # Check DD/MM/YYYY
+    # Check DD/MM/YYYY (con soporte defensivo si viene MM/DD/YYYY con mes > 12)
     m_dmy = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{2,4})", s)
     if m_dmy:
         d, m, y = int(m_dmy.group(1)), int(m_dmy.group(2)), int(m_dmy.group(3))
+        if m > 12 and d <= 12:
+            d, m = m, d
         if y < 100:
             y += 2000
         elif y < 1900:
@@ -371,7 +373,10 @@ class RuntControlService:
             f_mat = _excel_serial_a_iso(r[3] if len(r) > 3 else "")
             prioridad = str(r[4]).strip() if len(r) > 4 else ""
             f_vence = _excel_serial_a_iso(r[5] if len(r) > 5 else "")
-            f_reg_runt = _excel_serial_a_iso(r[6] if len(r) > 6 else "")
+            f_reg_runt_raw = str(r[6]).strip() if len(r) > 6 else ""
+            f_reg_runt = _excel_serial_a_iso(f_reg_runt_raw)
+            if re.match(r"^\d{5}(\.\d+)?$", f_reg_runt_raw):
+                f_reg_runt_raw = f_reg_runt
             vigente_txt = str(r[7]).strip() if len(r) > 7 else ""
 
             teoria = _limpiar_entero(r[8] if len(r) > 8 else 0, 0)
@@ -547,6 +552,7 @@ class RuntControlService:
                 "vence_90_dias": f_vence,
                 "dias_restantes_90": dias_restantes_90,
                 "fecha_registro_runt": f_reg_runt,
+                "fecha_registro_runt_raw": f_reg_runt_raw,
                 "vigente_texto": vigente_txt or "✅ VIGENTE",
                 "semaforo_90": semaforo_90,
                 "teoria": teoria,
@@ -667,7 +673,12 @@ class RuntControlService:
         categoria = _normalizar_cat_runt(payload.get("categoria", "A2"))
         fecha_mat = _excel_serial_a_iso(payload.get("fecha_matricula", ""))
         prioridad = str(payload.get("prioridad", "")).strip()
-        fecha_reg_runt = _excel_serial_a_iso(payload.get("fecha_registro_runt", "")) or datetime.datetime.now(clases_core.TZ_COLOMBIA).strftime("%Y-%m-%d")
+        tiene_param_fecha_reg = "fecha_registro_runt" in payload
+        fecha_reg_runt = (
+            _excel_serial_a_iso(payload.get("fecha_registro_runt", ""))
+            if tiene_param_fecha_reg
+            else (datetime.datetime.now(clases_core.TZ_COLOMBIA).strftime("%Y-%m-%d") if fila_idx < 2 else "")
+        )
         teoria = _limpiar_entero(payload.get("teoria", 0), 0)
         taller = _limpiar_entero(payload.get("taller", 0), 0)
         practica = _limpiar_entero(payload.get("practica", 0), 0)
@@ -755,9 +766,16 @@ class RuntControlService:
                     # Conservar fecha_matricula o fecha_registro_runt previas si no se enviaron
                     if not fecha_mat and len(fc) > 3 and fc[3]:
                         nueva_fila[3] = _excel_serial_a_iso(fc[3])
-                    if len(fc) > 6 and fc[6] and not payload.get("fecha_registro_runt"):
-                        nueva_fila[6] = _excel_serial_a_iso(fc[6])
+                    if not tiene_param_fecha_reg or not payload.get("fecha_registro_runt"):
+                        if len(fc) > 6 and fc[6]:
+                            nueva_fila[6] = _excel_serial_a_iso(fc[6])
+                        elif not tiene_param_fecha_reg:
+                            nueva_fila[6] = ""
                     break
+        elif fila_idx <= len(filas) and not tiene_param_fecha_reg:
+            fc_act = filas[fila_idx - 1]
+            if len(fc_act) > 6 and fc_act[6]:
+                nueva_fila[6] = _excel_serial_a_iso(fc_act[6])
 
         guardado_sheets = False
         ws = self._obtener_ws_en_vivo(TAB_PRACTICA)
@@ -1249,6 +1267,63 @@ class RuntControlService:
                 + (f" (Recibo/Multa #{consec_sancion})." if consec_sancion else ".")
             ),
             "detalle": res_runt,
+        }
+
+    def actualizar_fecha_registro_runt_masivo(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Registra o actualiza únicamente la Columna G ('Fecha registro Runt') en la pestaña 'Practica'
+        para las filas seleccionadas, sin alterar horas ni otras columnas.
+        """
+        filas_obj = payload.get("filas") or []
+        filas_ids = sorted({int(x) for x in filas_obj if str(x).isdigit() and int(x) >= 2})
+        if not filas_ids:
+            return {"ok": False, "message": "Selecciona al menos un alumno para registrar Fecha Registro RUNT."}
+
+        fecha_reg = _excel_serial_a_iso(payload.get("fecha_registro_runt", "")) or datetime.datetime.now(clases_core.TZ_COLOMBIA).strftime("%Y-%m-%d")
+        filas = self._obtener_filas_pestana(TAB_PRACTICA, forzar=False)
+        if not filas or len(filas) < 2:
+            return {"ok": False, "message": "No hay registros disponibles en la pestaña Practica."}
+
+        ws = self._obtener_ws_en_vivo(TAB_PRACTICA)
+        actualizados = 0
+        guardados_sheets = 0
+        batch_updates = []
+        for f_idx in filas_ids:
+            if f_idx < 2 or f_idx > len(filas):
+                continue
+            fila = list(filas[f_idx - 1])
+            while len(fila) < 18:
+                fila.append("")
+            fila[6] = fecha_reg
+            filas[f_idx - 1] = fila
+            actualizados += 1
+            batch_updates.append({"range": f"G{f_idx}", "values": [[fecha_reg]]})
+
+        if ws is not None and batch_updates:
+            try:
+                ws.batch_update(batch_updates, value_input_option="USER_ENTERED")
+                guardados_sheets = len(batch_updates)
+            except Exception as exc:
+                logger.warning("Aviso batch_update Columna G Fecha registro Runt: %s", exc)
+                for upd in batch_updates:
+                    try:
+                        ws.update(values=upd["values"], range_name=upd["range"], value_input_option="USER_ENTERED")
+                        guardados_sheets += 1
+                    except Exception:
+                        pass
+
+        self._memoria_hojas[TAB_PRACTICA] = filas
+        self._cache_lecturas[TAB_PRACTICA] = (time.time(), filas)
+
+        return {
+            "ok": True,
+            "actualizados": actualizados,
+            "guardado_google_sheets": guardados_sheets > 0,
+            "fecha_registro_runt": fecha_reg,
+            "message": (
+                f"🏛️ Fecha Registro RUNT ({fecha_reg}) registrada en Columna G para {actualizados} alumno(s)"
+                + (" y guardada en Google Sheets." if guardados_sheets > 0 else " en memoria.")
+            ),
         }
 
     def _dividir_categorias_no_runt(self, cat_raw: str) -> List[str]:

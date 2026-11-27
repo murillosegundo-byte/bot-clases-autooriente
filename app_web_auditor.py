@@ -2259,8 +2259,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               <input type="date" id="rn_vence_90" />
             </div>
             <div>
-              <label class="field-label">🏛️ Fecha Registro RUNT</label>
-              <input type="date" id="rn_fecha_reg_runt" />
+              <label class="field-label">🏛️ Fecha Registro RUNT (Col. G)</label>
+              <div style="display:flex; gap:4px; align-items:center;">
+                <input type="date" id="rn_fecha_reg_runt" style="flex:1;" />
+                <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px;" title="Ayer" onclick="document.getElementById('rn_fecha_reg_runt').value = obtenerIsoFechaOffsetRunt(-1)">Ayer</button>
+                <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px;" title="Hoy" onclick="document.getElementById('rn_fecha_reg_runt').value = obtenerIsoFechaOffsetRunt(0)">Hoy</button>
+              </div>
             </div>
             <div>
               <label class="field-label">📘 Teoría</label>
@@ -2423,6 +2427,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
                   <button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11px; border-color:#38bdf8; color:#bae6fd;" onclick="aplicarFiltroRapidoRunt('DIARIO_PRACTICA')">🚗 Práctica</button>
                   <button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11px; border-color:#8b5cf6; color:#ddd6fe;" onclick="aplicarFiltroRapidoRunt('DIARIO_TEORIA')">📘 Teoría</button>
                   <button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11px; border-color:#22d3ee; color:#a5f3fc;" onclick="aplicarFiltroRapidoRunt('DIARIO_TALLER')">🔧 Taller</button>
+                  <button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11px; border-color:#60a5fa; color:#bfdbfe;" title="Filtrar por Fecha Registro RUNT (Columna G) = Hoy" onclick="aplicarFiltroRapidoRunt('REG_RUNT_HOY')">🏛️ Reg. RUNT Hoy</button>
+                  <button type="button" class="btn btn-outline" style="padding:4px 9px; font-size:11px; border-color:#fbbf24; color:#fde68a;" title="Filtrar alumnos sin Fecha Registro RUNT (Columna G vacía)" onclick="aplicarFiltroRapidoRunt('SIN_REG_RUNT')">🏛️ Sin Reg. RUNT</button>
                 </div>
 
                 <!-- Grid Compacto de Filtros (Combinables + Actividad RUNT + Casillas estilo Sheets) -->
@@ -2490,8 +2496,13 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
                     <input type="text" id="rf_fecha_mat" placeholder="Ej: 2026-11 o 2026-11-24" oninput="aplicarFiltrosColumnasRunt()" />
                   </div>
                   <div>
-                    <label class="field-label">🏛️ Fecha Registro RUNT <a href="#" onclick="event.preventDefault(); abrirPopoverColumnaRunt('fecha_registro_runt', this)" style="color:#60a5fa; font-size:10.5px; margin-left:4px;">(☑️ Valores)</a></label>
-                    <input type="text" id="rf_fecha_reg" placeholder="Ej: 2026-11 o 2026-11-24" oninput="aplicarFiltrosColumnasRunt()" />
+                    <label class="field-label">🏛️ Fecha Registro RUNT (Col. G) <a href="#" onclick="event.preventDefault(); abrirPopoverColumnaRunt('fecha_registro_runt', this)" style="color:#60a5fa; font-size:10.5px; margin-left:4px;">(☑️ Valores / Vacío)</a></label>
+                    <div style="display:flex; gap:4px; align-items:center;">
+                      <input type="text" id="rf_fecha_reg" placeholder="Ej: 2026-11 o 2026-11-26" oninput="aplicarFiltrosColumnasRunt()" style="flex:1;" />
+                      <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px;" title="Ayer" onclick="setFechaRegRuntFiltro(-1)">Ayer</button>
+                      <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px;" title="Hoy" onclick="setFechaRegRuntFiltro(0)">Hoy</button>
+                      <button type="button" class="btn btn-outline" style="padding:4px 6px; font-size:10.5px;" title="Solo Vacío (sin Fecha Registro RUNT)" onclick="setFechaRegRuntFiltro('SIN')">Vacío</button>
+                    </div>
                   </div>
                   <div>
                     <label class="field-label">📘 Teoría <a href="#" onclick="event.preventDefault(); abrirPopoverColumnaRunt('teoria', this)" style="color:#60a5fa; font-size:10.5px; margin-left:4px;">(☑️ Horas)</a></label>
@@ -2592,6 +2603,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           </div>
           <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
             <button type="button" class="btn btn-success" id="btnSumarSeleccionRunt" style="padding:7px 14px; font-size:12.5px; font-weight:700;" onclick="ejecutarSumaSeleccionadosRunt()">➕ Sumar +8h Teoría</button>
+            <button type="button" class="btn btn-outline" id="btnFijarRegRuntSeleccion" style="padding:6px 10px; font-size:12px; border-color:#38bdf8; color:#bae6fd;" title="Registrar o actualizar la Fecha Registro RUNT (Columna G) con la fecha seleccionada para los alumnos marcados" onclick="ejecutarFijarFechaRegRuntSeleccionados()">🏛️ Fijar Reg. RUNT</button>
             <button type="button" class="btn btn-outline" style="padding:6px 10px; font-size:12px; border-color:#fde047; color:#fde047;" onclick="copiarCedulasFiltroActualRunt()">📋 Copiar Cédulas</button>
             <button type="button" class="btn btn-outline" style="padding:6px 9px; font-size:11.5px;" onclick="limpiarSeleccionRunt()" title="Desmarcar alumnos">✖</button>
           </div>
@@ -3818,6 +3830,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     });
 
     let RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+    let RUNT_FILTRO_SIN_FECHA_REG = false;
     let RUNT_COL_FILTERS = {}; // { colKey: Set(['A2', '__VACIO__', ...]) }
     let RUNT_COL_SORT = { col: null, dir: null }; // { col: 'categoria', dir: 'asc'|'desc' }
     let RUNT_POPOVER_COL_ACTUAL = null;
@@ -3827,9 +3840,9 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       cedula: { label: 'Cédula', numeric: false, get: r => String(r.cedula || '').trim() },
       categoria: { label: 'Categoría', numeric: false, get: r => String(r.categoria || '').trim() },
       prioridad: { label: 'Prioridad', numeric: false, get: r => String(r.prioridad || '').trim() },
-      fecha_matricula: { label: 'Fecha Matrícula', numeric: false, get: r => String(r.fecha_matricula || '').trim() },
-      fecha_registro_runt: { label: 'Fecha Registro RUNT', numeric: false, get: r => String(r.fecha_registro_runt || '').trim() },
-      vence_90_dias: { label: 'Vence 90 Días', numeric: false, get: r => String(r.vence_90_dias || '').trim() },
+      fecha_matricula: { label: 'Fecha Matrícula', numeric: false, isDate: true, get: r => String(r.fecha_matricula || '').trim() },
+      fecha_registro_runt: { label: 'Fecha Registro RUNT', numeric: false, isDate: true, get: r => String(r.fecha_registro_runt || '').trim() },
+      vence_90_dias: { label: 'Vence 90 Días', numeric: false, isDate: true, get: r => String(r.vence_90_dias || '').trim() },
       vigencia: {
         label: 'Vigencia', numeric: false,
         get: r => r.semaforo_90 === 'VENCIDO' ? '❌ VENCIDO' : (r.semaforo_90 === 'POR_VENCER' ? '⚠️ POR VENCER' : '✅ VIGENTE')
@@ -3842,7 +3855,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         label: 'Actividad RUNT', numeric: false,
         get: r => r.estado_runt === 'CARGADO RUNT' ? '✅ CARGADO RUNT' : '⚠️ PENDIENTE RUNT'
       },
-      fecha_cargue: { label: 'Fecha Cargue', numeric: false, get: r => String(r.fecha_cargue || '').trim() },
+      fecha_cargue: { label: 'Fecha Cargue', numeric: false, isDate: true, get: r => String(r.fecha_cargue || '').trim() },
       cargue_diario: { label: 'Cargue Diario', numeric: false, get: r => String(r.cargue_diario || '').trim() },
       instructor: { label: 'Instructor', numeric: false, get: r => String(r.instructor || '').trim() },
       hora_registro: { label: 'Hora Registro', numeric: false, get: r => String(r.hora_registro || '').trim() },
@@ -3886,6 +3899,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         if (a === '__VACIO__') return -1;
         if (b === '__VACIO__') return 1;
         if (meta.numeric) return Number(a) - Number(b);
+        if (meta.isDate) return b.localeCompare(a, 'es');
         return a.localeCompare(b, 'es');
       });
 
@@ -4008,8 +4022,22 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       aplicarFiltrosColumnasRunt();
     }
 
+    function setFechaRegRuntFiltro(modo) {
+      const el = document.getElementById('rf_fecha_reg');
+      delete RUNT_COL_FILTERS['fecha_registro_runt'];
+      if (modo === 'SIN') {
+        RUNT_FILTRO_SIN_FECHA_REG = true;
+        if (el) el.value = '';
+      } else {
+        RUNT_FILTRO_SIN_FECHA_REG = false;
+        if (el) el.value = obtenerIsoFechaOffsetRunt(modo);
+      }
+      aplicarFiltrosColumnasRunt();
+    }
+
     function aplicarFiltroRapidoRunt(modo) {
       const elFecha = document.getElementById('rf_fecha_cargue');
+      const elFechaReg = document.getElementById('rf_fecha_reg');
       const elDiario = document.getElementById('rf_cargue_diario');
       const elAct = document.getElementById('rf_actividad');
       if (modo === 'PENDIENTES_SIN_CARGUE') {
@@ -4030,6 +4058,18 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         delete RUNT_COL_FILTERS['fecha_cargue'];
         RUNT_FILTRO_SIN_FECHA_CARGUE = false;
         if (elFecha) elFecha.value = obtenerIsoFechaOffsetRunt(0);
+        ACTIVE_RUNT_TAB = 'TODOS_PRACTICA';
+        actualizarBotonVistaRunt();
+      } else if (modo === 'REG_RUNT_HOY') {
+        delete RUNT_COL_FILTERS['fecha_registro_runt'];
+        RUNT_FILTRO_SIN_FECHA_REG = false;
+        if (elFechaReg) elFechaReg.value = obtenerIsoFechaOffsetRunt(0);
+        ACTIVE_RUNT_TAB = 'TODOS_PRACTICA';
+        actualizarBotonVistaRunt();
+      } else if (modo === 'SIN_REG_RUNT') {
+        delete RUNT_COL_FILTERS['fecha_registro_runt'];
+        RUNT_FILTRO_SIN_FECHA_REG = true;
+        if (elFechaReg) elFechaReg.value = '';
         ACTIVE_RUNT_TAB = 'TODOS_PRACTICA';
         actualizarBotonVistaRunt();
       } else if (modo === 'DIARIO_PRACTICA') {
@@ -4090,13 +4130,15 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const val = (id) => ((document.getElementById(id) || {}).value || '').trim();
       const fc = val('rf_fecha_cargue');
       if (fc) RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+      const fr = val('rf_fecha_reg');
+      if (fr) RUNT_FILTRO_SIN_FECHA_REG = false;
       return {
         actividad: val('rf_actividad'),
         categoria: val('rf_categoria'),
         prioridad: val('rf_prioridad'),
         fecha_mat: val('rf_fecha_mat'),
         vence_90: val('rf_vence_90'),
-        fecha_reg: val('rf_fecha_reg'),
+        fecha_reg: RUNT_FILTRO_SIN_FECHA_REG ? '__SIN__' : fr,
         vigencia: val('rf_vigencia'),
         teoria: val('rf_teoria'),
         taller: val('rf_taller'),
@@ -4135,12 +4177,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         const el = document.getElementById(mapIds[soloCampo]);
         if (el) el.value = '';
         if (soloCampo === 'fecha_cargue') RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+        if (soloCampo === 'fecha_reg') RUNT_FILTRO_SIN_FECHA_REG = false;
       } else {
         Object.values(mapIds).forEach(id => {
           const el = document.getElementById(id);
           if (el) el.value = '';
         });
         RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+        RUNT_FILTRO_SIN_FECHA_REG = false;
         RUNT_COL_FILTERS = {};
         RUNT_COL_SORT = { col: null, dir: null };
       }
@@ -4150,6 +4194,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     function aplicarFiltrosColumnasRunt() {
       const fcEl = document.getElementById('rf_fecha_cargue');
       if (fcEl && fcEl.value) RUNT_FILTRO_SIN_FECHA_CARGUE = false;
+      const frEl = document.getElementById('rf_fecha_reg');
+      if (frEl && frEl.value) RUNT_FILTRO_SIN_FECHA_REG = false;
       const actVal = ((document.getElementById('rf_actividad') || {}).value || '').trim();
       if (actVal === 'CARGADO RUNT' && ACTIVE_RUNT_TAB !== 'TODOS_PRACTICA' && ACTIVE_RUNT_TAB !== 'CARGADOS_PRACTICA') {
         ACTIVE_RUNT_TAB = 'TODOS_PRACTICA';
@@ -5734,6 +5780,59 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       }
     }
 
+    async function ejecutarFijarFechaRegRuntSeleccionados() {
+      const visibles = obtenerFilasFiltradasPracticaRunt();
+      const seleccionados = visibles.filter(r => RUNT_SELECTED_FILAS.has(Number(r.fila)));
+      if (!seleccionados.length) {
+        alert('⚠️ Marca al menos un alumno con ☑️ para registrar la Fecha Registro RUNT (Columna G).');
+        return;
+      }
+      const fecha_registro_runt = (document.getElementById('rn_sel_fecha') || {}).value || obtenerIsoFechaOffsetRunt(0);
+      const preview = seleccionados.slice(0, 10).map(r => `• ${r.nombre} (${r.categoria}): ${r.fecha_registro_runt || '(Vacío)'} → ${fecha_registro_runt}`).join('\n')
+        + (seleccionados.length > 10 ? `\n... y ${seleccionados.length - 10} alumno(s) más.` : '');
+      const ok = confirm(
+        `🏛️ REGISTRAR FECHA REGISTRO RUNT (COLUMNA G)\n\n` +
+        `• Fecha a registrar: ${fecha_registro_runt}\n` +
+        `• Total alumnos seleccionados: ${seleccionados.length}\n\n` +
+        `${preview}\n\n` +
+        `¿Confirmas guardar esta Fecha Registro RUNT en Google Sheets?`
+      );
+      if (!ok) return;
+
+      const toast = document.getElementById('runtSheetToast');
+      const btn = document.getElementById('btnFijarRegRuntSeleccion');
+      if (btn) btn.disabled = true;
+      if (toast) {
+        toast.className = 'status-toast ok';
+        toast.textContent = `⏳ Guardando Fecha Registro RUNT (${fecha_registro_runt}) para ${seleccionados.length} alumno(s)...`;
+      }
+      try {
+        const res = await fetch('/api/bot/action', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'runt_fijar_fecha_registro_masivo',
+            fecha_registro_runt,
+            filas: seleccionados.map(r => Number(r.fila))
+          })
+        });
+        const data = await res.json();
+        if (toast) {
+          toast.className = data.ok ? 'status-toast ok' : 'status-toast err';
+          toast.textContent = data.message || 'Actualizado.';
+        }
+        RUNT_SELECTED_FILAS.clear();
+        await cargarPanoramaRuntDigital(false);
+      } catch (err) {
+        if (toast) {
+          toast.className = 'status-toast err';
+          toast.textContent = '❌ Error guardando Fecha Registro RUNT: ' + err;
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
     function ajustarFechaBatchRunt(offsetDias = 0) {
       const d = new Date();
       d.setDate(d.getDate() + Number(offsetDias || 0));
@@ -6380,7 +6479,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         }
         if (f.fecha_mat && ignorarColKey !== 'fecha_matricula' && !String(r.fecha_matricula || '').toLowerCase().includes(f.fecha_mat.toLowerCase())) return false;
         if (f.vence_90 && ignorarColKey !== 'vence_90_dias' && !String(r.vence_90_dias || '').toLowerCase().includes(f.vence_90.toLowerCase())) return false;
-        if (f.fecha_reg && ignorarColKey !== 'fecha_registro_runt' && !String(r.fecha_registro_runt || '').toLowerCase().includes(f.fecha_reg.toLowerCase())) return false;
+        if (f.fecha_reg && ignorarColKey !== 'fecha_registro_runt') {
+          const frVal = String(r.fecha_registro_runt || '').trim();
+          if (f.fecha_reg === '__SIN__' ? frVal !== '' : !frVal.toLowerCase().includes(f.fecha_reg.toLowerCase())) return false;
+        }
         if (f.vigencia && ignorarColKey !== 'vigencia') {
           const sem = String(r.semaforo_90 || 'VIGENTE').toUpperCase();
           if (f.vigencia === 'VIGENTE' && (sem === 'VENCIDO' || sem === 'POR_VENCER')) return false;
@@ -6518,10 +6620,13 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         nombre: item.nombre,
         categoria: item.categoria,
         prioridad: marcarCargado ? 'Termino' : (item.prioridad || ''),
-        fecha_matricula: item.fecha_matricula,
+        fecha_matricula: item.fecha_matricula || '',
+        vence_90_dias: item.vence_90_dias || '',
+        fecha_registro_runt: item.fecha_registro_runt || '',
         teoria: marcarCargado ? item.meta_teoria : item.teoria,
         taller: marcarCargado ? item.meta_taller : item.taller,
         practica: marcarCargado ? item.meta_practica : (item.practica || 0),
+        instructor: item.instructor || '',
         cargue_diario: marcarCargado ? 'PRACTICA' : item.cargue_diario,
         estado_runt: marcarCargado ? 'CARGADO RUNT' : 'PENDIENTE RUNT',
         forzar_pendiente: !marcarCargado
@@ -6740,8 +6845,9 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         const menuMap = {
           categoria: fAct.categoria,
           prioridad: fAct.prioridad,
-          fecha_matricula: fAct.fecha_mat || fAct.fecha_reg,
+          fecha_matricula: fAct.fecha_mat,
           vence_90_dias: fAct.vence_90,
+          fecha_registro_runt: fAct.fecha_reg,
           vigencia: fAct.vigencia,
           teoria: fAct.teoria,
           taller: fAct.taller,
@@ -6764,6 +6870,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         ${thBtn('prioridad', 'Prioridad')}
         ${thBtn('fecha_matricula', 'Fecha Mat.')}
         ${thBtn('vence_90_dias', 'Vence 90 Días')}
+        ${thBtn('fecha_registro_runt', 'Fecha Reg. RUNT')}
         ${thBtn('vigencia', 'Vigencia')}
         ${thBtn('teoria', '📘 Teoría')}
         ${thBtn('taller', '🔧 Taller')}
@@ -6831,11 +6938,9 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <td><code>${r.cedula}</code></td>
           <td><span class="badge badge-info">${r.categoria_raw || r.categoria}</span></td>
           <td>${badgePrioridad}</td>
-          <td>
-            ${r.fecha_matricula || '-'}
-            ${r.fecha_registro_runt ? `<div style="font-size:10px; color:#94a3b8;" title="Fecha registro RUNT">RUNT: ${r.fecha_registro_runt}</div>` : ''}
-          </td>
-          <td style="color:#fde047; font-weight:600;">${r.vence_90_dias || '-'}</td>
+          <td style="white-space:nowrap;">${r.fecha_matricula || '-'}</td>
+          <td style="color:#fde047; font-weight:600; white-space:nowrap;">${r.vence_90_dias || '-'}</td>
+          <td style="color:#7dd3fc; font-weight:600; white-space:nowrap;" title="${(r.fecha_registro_runt_raw || r.fecha_registro_runt || 'Sin Fecha Registro RUNT (Columna G)').replace(/"/g, '&quot;')}">${r.fecha_registro_runt || '<span style="color:var(--muted); font-weight:400;">-</span>'}</td>
           <td>${badgeVig}</td>
           <td style="text-align:center;">
             <b style="color:${!teoFalta ? '#34d399' : '#f87171'};">${r.teoria}/${r.meta_teoria}</b>
@@ -6869,7 +6974,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             </div>
           </td>
         </tr>`;
-      }).join('') || '<tr><td colspan="14" style="text-align:center; padding:18px; color:var(--muted);">No hay alumnos que coincidan con este filtro en la hoja RUNT.</td></tr>';
+      }).join('') || '<tr><td colspan="16" style="text-align:center; padding:18px; color:var(--muted);">No hay alumnos que coincidan con este filtro en la hoja RUNT.</td></tr>';
     }
 
     function cambiarSubTabClases(filtroVal, btnEl) {
@@ -10313,6 +10418,16 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
                     res_rv.get("message", "Reinició curso vencido con sanción económica")
                 )
                 self._send_json(res_rv)
+                return
+
+            if action == "runt_fijar_fecha_registro_masivo":
+                res_fr = runt_control_cea.runt_service.actualizar_fecha_registro_runt_masivo(payload)
+                _registrar_bitacora_empleado(
+                    u_sesion["username"], u_sesion["nombre"], u_sesion["rol"],
+                    "FECHA_REGISTRO_RUNT_MASIVO",
+                    res_fr.get("message", "Actualizó Fecha Registro RUNT (Columna G)")
+                )
+                self._send_json(res_fr)
                 return
 
             self._send_json({"ok": False, "message": f"Acción desconocida: {action}"}, 400)
