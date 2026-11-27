@@ -431,6 +431,360 @@ HTML_LOGIN = r"""<!DOCTYPE html>
 </html>
 """
 
+HTML_EVALUACION_PUBLICA = r"""<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Evaluación de Clase — CEA Auto Oriente</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: linear-gradient(160deg, #0b1324 0%, #101d35 60%, #0d1b2a 100%);
+      color: #f1f5f9;
+      min-height: 100vh;
+      padding: 18px 12px 48px;
+    }
+    .wrap { max-width: 680px; margin: 0 auto; }
+    .hero {
+      background: linear-gradient(135deg, #1d4ed8, #0f766e);
+      border-radius: 16px;
+      padding: 20px 20px 18px;
+      margin-bottom: 14px;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+      border: 1px solid rgba(255,255,255,0.16);
+    }
+    .hero h1 { font-size: 20px; font-weight: 800; color: #fff; margin-bottom: 4px; }
+    .hero p { font-size: 13px; color: #e2e8f0; line-height: 1.45; }
+    .card {
+      background: #111c33;
+      border: 1px solid #243658;
+      border-radius: 14px;
+      padding: 16px 18px;
+      margin-bottom: 12px;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.22);
+    }
+    .q-title { font-size: 14px; font-weight: 700; color: #f8fafc; margin-bottom: 10px; line-height: 1.4; }
+    .req { color: #f87171; }
+    input[type="text"], select, textarea {
+      width: 100%;
+      padding: 11px 13px;
+      border-radius: 10px;
+      border: 1px solid #334a73;
+      background: #0b1324;
+      color: #f8fafc;
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+    }
+    input[type="text"]:focus, select:focus, textarea:focus { border-color: #38bdf8; box-shadow: 0 0 0 2px rgba(56,189,248,0.2); }
+    .opt-list { display: flex; flex-direction: column; gap: 8px; }
+    .opt-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 11px 13px;
+      border-radius: 10px;
+      border: 1px solid #273a5e;
+      background: #0b1324;
+      cursor: pointer;
+      transition: all 0.14s ease;
+      font-size: 13.5px;
+      line-height: 1.4;
+      color: #cbd5e1;
+      user-select: none;
+    }
+    .opt-card:hover { border-color: #60a5fa; background: #132240; color: #fff; }
+    .opt-card.selected {
+      border-color: #10b981;
+      background: rgba(16, 185, 129, 0.18);
+      color: #fff;
+      font-weight: 600;
+    }
+    .opt-card input[type="radio"] {
+      margin-top: 3px;
+      width: 17px;
+      height: 17px;
+      accent-color: #10b981;
+      flex-shrink: 0;
+      cursor: pointer;
+    }
+    .prof-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 8px;
+    }
+    .habeas-box {
+      font-size: 12px;
+      color: #cbd5e1;
+      line-height: 1.5;
+      background: #09101d;
+      border: 1px solid #243658;
+      border-radius: 10px;
+      padding: 11px 13px;
+      margin-bottom: 10px;
+    }
+    .btn-submit {
+      width: 100%;
+      padding: 14px 18px;
+      border: none;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 8px 22px rgba(16, 185, 129, 0.35);
+      transition: transform 0.1s ease, opacity 0.15s ease;
+    }
+    .btn-submit:hover { opacity: 0.96; transform: translateY(-1px); }
+    .btn-submit:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
+    .msg-err {
+      display: none;
+      padding: 11px 14px;
+      border-radius: 10px;
+      background: rgba(239, 68, 68, 0.18);
+      border: 1px solid #ef4444;
+      color: #fecaca;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .done-card {
+      display: none;
+      text-align: center;
+      padding: 36px 22px;
+    }
+    .progress-top {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: rgba(11, 19, 36, 0.92);
+      backdrop-filter: blur(8px);
+      padding: 8px 12px;
+      border-radius: 10px;
+      margin-bottom: 12px;
+      border: 1px solid #1e2d4a;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: #93c5fd;
+    }
+    .pbar { flex: 1; height: 7px; background: #1e293b; border-radius: 999px; overflow: hidden; }
+    .pbar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #38bdf8, #10b981); transition: width 0.2s ease; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="hero">
+      <h1>⭐ Evaluación de Clase — CEA Auto Oriente</h1>
+      <p>Tu opinión es confidencial y nos ayuda a mejorar la calidad de cada clase. Te tomará menos de 30 segundos.</p>
+    </div>
+
+    <div id="formContainer">
+      <div class="progress-top">
+        <span id="progLabel">Progreso: 0 / 10</span>
+        <div class="pbar"><div class="pbar-fill" id="progFill"></div></div>
+      </div>
+
+      <div id="errBox" class="msg-err"></div>
+
+      <div class="card">
+        <div class="q-title">👤 Nombre completo del alumno <span class="req">*</span></div>
+        <input type="text" id="ev_alumno" placeholder="Escribe tu nombre y apellido" autocomplete="name" />
+      </div>
+
+      <div class="card">
+        <div class="q-title">👨‍🏫 Selecciona al instructor que dictó tu clase <span class="req">*</span></div>
+        <div id="profListWrap" class="prof-grid">
+          <div style="color:#94a3b8; font-size:13px;">Cargando instructores activos...</div>
+        </div>
+      </div>
+
+      <div id="preguntasWrap"></div>
+
+      <div class="card" id="comentarioCard">
+        <div class="q-title">💬 Si calificaste algún punto para mejorar (o deseas dejar un comentario), cuéntanos brevemente (opcional):</div>
+        <textarea id="ev_comentario" rows="3" placeholder="Ej: Todo excelente / Sugerencia de mejora..."></textarea>
+      </div>
+
+      <div class="card">
+        <div class="q-title">🔒 Autorización de Tratamiento de Datos (Ley 1581 de 2012) <span class="req">*</span></div>
+        <div class="habeas-box" id="habeasText"></div>
+        <label class="opt-card" id="habeasLabel">
+          <input type="checkbox" id="ev_habeas" style="width:18px; height:18px; accent-color:#10b981; margin-top:2px;" onchange="document.getElementById('habeasLabel').classList.toggle('selected', this.checked)" />
+          <span><b>Sí, autorizo</b> a CEA AUTO ORIENTE S.A.S el tratamiento de mis datos personales para fines de seguimiento de calidad docente.</span>
+        </label>
+      </div>
+
+      <button type="button" class="btn-submit" id="btnEnviarEval" onclick="enviarEvaluacionPublica()">✅ Enviar mi Calificación</button>
+    </div>
+
+    <div class="card done-card" id="doneCard">
+      <div style="font-size:48px; margin-bottom:10px;">🎉</div>
+      <h2 style="font-size:21px; color:#34d399; margin-bottom:8px;">¡Evaluación Registrada con Éxito!</h2>
+      <p id="doneMsg" style="font-size:14px; color:#e2e8f0; line-height:1.5; margin-bottom:18px;"></p>
+      <button type="button" class="btn-submit" style="max-width:280px; background:#2563eb;" onclick="location.reload()">📝 Calificar otra clase</button>
+    </div>
+  </div>
+
+  <script>
+    let CONFIG_EVAL = null;
+    let PROFESOR_SEL = '';
+    const RESPUESTAS_SEL = {};
+
+    function escH(s) {
+      return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function actualizarProgreso() {
+      const tot = (CONFIG_EVAL && CONFIG_EVAL.preguntas) ? CONFIG_EVAL.preguntas.length : 10;
+      const done = Object.keys(RESPUESTAS_SEL).length;
+      const lbl = document.getElementById('progLabel');
+      const fill = document.getElementById('progFill');
+      if (lbl) lbl.textContent = `Progreso: ${done} / ${tot} preguntas`;
+      if (fill) fill.style.width = Math.round((done / Math.max(1, tot)) * 100) + '%';
+    }
+
+    function seleccionarProfesor(nom, cardEl) {
+      PROFESOR_SEL = nom;
+      document.querySelectorAll('#profListWrap .opt-card').forEach(c => {
+        const isMe = c === cardEl;
+        c.classList.toggle('selected', isMe);
+        const r = c.querySelector('input[type="radio"]');
+        if (r) r.checked = isMe;
+      });
+    }
+
+    function seleccionarOpcionPregunta(key, val, cardEl) {
+      RESPUESTAS_SEL[key] = val;
+      const group = cardEl.closest('.opt-list');
+      if (group) {
+        group.querySelectorAll('.opt-card').forEach(c => {
+          const isMe = c === cardEl;
+          c.classList.toggle('selected', isMe);
+          const r = c.querySelector('input[type="radio"]');
+          if (r) r.checked = isMe;
+        });
+      }
+      actualizarProgreso();
+    }
+
+    async function cargarConfigEvaluacion() {
+      const qs = new URLSearchParams(window.location.search);
+      const paramAlumno = (qs.get('a') || qs.get('alumno') || '').trim();
+      const paramInst = (qs.get('i') || qs.get('instructor') || qs.get('p') || '').trim().toUpperCase();
+      if (paramAlumno) {
+        const aEl = document.getElementById('ev_alumno');
+        if (aEl) aEl.value = paramAlumno;
+      }
+
+      try {
+        const res = await fetch('/api/public/evaluacion_config');
+        const data = await res.json();
+        if (!data || !data.ok) throw new Error('No se pudo cargar la configuración.');
+        CONFIG_EVAL = data;
+
+        const habEl = document.getElementById('habeasText');
+        if (habEl) habEl.textContent = data.texto_habeas_data || '';
+
+        const profWrap = document.getElementById('profListWrap');
+        const listaInst = data.instructores_activos || [];
+        if (profWrap) {
+          profWrap.innerHTML = listaInst.map((inst, idx) => {
+            const safe = escH(inst);
+            const preSel = paramInst && inst.toUpperCase().includes(paramInst);
+            if (preSel && !PROFESOR_SEL) PROFESOR_SEL = inst;
+            return `<label class="opt-card ${preSel ? 'selected' : ''}" onclick="seleccionarProfesor(this.getAttribute('data-prof'), this)" data-prof="${safe}">
+              <input type="radio" name="profesor" value="${safe}" ${preSel ? 'checked' : ''} />
+              <span>${safe}</span>
+            </label>`;
+          }).join('') || '<div style="color:#fca5a5;">No hay instructores activos configurados.</div>';
+        }
+
+        const pWrap = document.getElementById('preguntasWrap');
+        if (pWrap) {
+          pWrap.innerHTML = (data.preguntas || []).map(p => {
+            const optsHtml = (p.opciones || []).map(o => {
+              const safeVal = escH(o.texto);
+              const badge = o.nivel >= 5 ? '🟢' : (o.nivel >= 4 ? '🔵' : (o.nivel >= 3 ? '🟡' : '🔴'));
+              return `<label class="opt-card" data-key="${escH(p.key)}" data-val="${safeVal}" onclick="seleccionarOpcionPregunta(this.getAttribute('data-key'), this.getAttribute('data-val'), this)">
+                <input type="radio" name="q_${escH(p.key)}" value="${safeVal}" />
+                <span>${badge} ${safeVal}</span>
+              </label>`;
+            }).join('');
+            return `<div class="card">
+              <div class="q-title">${escH(p.titulo)} <span class="req">*</span></div>
+              <div class="opt-list">${optsHtml}</div>
+            </div>`;
+          }).join('');
+        }
+        actualizarProgreso();
+      } catch (err) {
+        const errBox = document.getElementById('errBox');
+        if (errBox) { errBox.textContent = '⚠️ Error cargando el formulario: ' + err; errBox.style.display = 'block'; }
+      }
+    }
+
+    async function enviarEvaluacionPublica() {
+      const errBox = document.getElementById('errBox');
+      if (errBox) errBox.style.display = 'none';
+      const showErr = (msg) => {
+        if (errBox) { errBox.textContent = '⚠️ ' + msg; errBox.style.display = 'block'; errBox.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+      };
+
+      const nombre_alumno = ((document.getElementById('ev_alumno') || {}).value || '').trim();
+      const comentario = ((document.getElementById('ev_comentario') || {}).value || '').trim();
+      const acepta_habeas_data = Boolean((document.getElementById('ev_habeas') || {}).checked);
+      const totalPreg = (CONFIG_EVAL && CONFIG_EVAL.preguntas) ? CONFIG_EVAL.preguntas.length : 10;
+
+      if (!nombre_alumno || nombre_alumno.length < 3) return showErr('Por favor escribe tu nombre y apellido.');
+      if (!PROFESOR_SEL) return showErr('Por favor selecciona el instructor que dictó tu clase.');
+      if (Object.keys(RESPUESTAS_SEL).length < totalPreg) return showErr(`Por favor responde todas las preguntas (${Object.keys(RESPUESTAS_SEL).length}/${totalPreg} respondidas).`);
+      if (!acepta_habeas_data) return showErr('Debes marcar la casilla de autorización de tratamiento de datos (Ley 1581).');
+
+      const btn = document.getElementById('btnEnviarEval');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Enviando evaluación...'; }
+
+      try {
+        const res = await fetch('/api/public/evaluacion_submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nombre_alumno,
+            nombre_profesor: PROFESOR_SEL,
+            respuestas: RESPUESTAS_SEL,
+            comentario,
+            acepta_habeas_data
+          })
+        });
+        const data = await res.json();
+        if (!data || !data.ok) {
+          showErr((data && data.message) || 'No se pudo guardar la evaluación.');
+          if (btn) { btn.disabled = false; btn.textContent = '✅ Enviar mi Calificación'; }
+          return;
+        }
+        document.getElementById('formContainer').style.display = 'none';
+        const doneCard = document.getElementById('doneCard');
+        const doneMsg = document.getElementById('doneMsg');
+        if (doneMsg) doneMsg.textContent = data.message || '¡Gracias por tu calificación!';
+        if (doneCard) doneCard.style.display = 'block';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      } catch (err) {
+        showErr('Error de conexión al enviar. Intenta nuevamente.');
+        if (btn) { btn.disabled = false; btn.textContent = '✅ Enviar mi Calificación'; }
+      }
+    }
+
+    cargarConfigEvaluacion();
+  </script>
+</body>
+</html>
+"""
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -3839,19 +4193,19 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
       <!-- SUB-PESTAÑA 2: EVALUACIÓN A INSTRUCTORES (GOOGLE FORM EN VIVO) -->
       <div id="subTabPedDocentes" style="display:none;">
-        <!-- Banner del Link de Calificación para Alumnos -->
-        <div class="panel" style="margin-bottom:14px; padding:13px 16px; background:linear-gradient(135deg, rgba(37,99,235,0.14), rgba(16,185,129,0.12)); border-color:#3b82f6;">
+        <!-- Banner del Link Automático de Calificación para Alumnos -->
+        <div class="panel" style="margin-bottom:14px; padding:13px 16px; background:linear-gradient(135deg, rgba(16,185,129,0.16), rgba(37,99,235,0.16)); border-color:#10b981;">
           <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:10px;">
             <div>
-              <div style="font-size:13.5px; font-weight:800; color:#fff;">🔗 Link Oficial de Calificación de Clases para Alumnos (Google Forms Conectado en Vivo)</div>
+              <div style="font-size:13.5px; font-weight:800; color:#fff;">🔗 Link Automático de Calificación para Alumnos (Sincronizado en Vivo con Instructores Activos)</div>
               <div style="font-size:12px; color:#cbd5e1; margin-top:3px;">
-                Los alumnos califican a su profesor desde este enlace y las respuestas se analizan aquí automáticamente con ranking y alertas de calidad:
-                <code id="evalFormUrlText" style="color:#7dd3fc;">https://docs.google.com/forms/d/1z_pYRCxH0GYgJbUjHmz8CaJ6b3T9g2l-HeXD9QKMhNI/viewform</code>
+                Cada vez que <b>agregues, actives o retires</b> un instructor en tu panel, este link se actualiza al instante y guarda en tu misma hoja de Google Sheets:
+                <code id="evalFormUrlText" style="color:#6ee7b7;">/evaluar</code>
               </div>
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap;">
-              <button type="button" class="btn btn-primary" style="padding:6px 12px; font-size:12px;" onclick="copiarLinkEvaluacionDocente()">📋 Copiar Link</button>
-              <a id="evalFormOpenLink" href="https://docs.google.com/forms/d/1z_pYRCxH0GYgJbUjHmz8CaJ6b3T9g2l-HeXD9QKMhNI/viewform" target="_blank" class="btn btn-outline" style="padding:6px 12px; font-size:12px; text-decoration:none;">📝 Abrir Formulario</a>
+              <button type="button" class="btn btn-success" style="padding:6px 12px; font-size:12px; font-weight:700;" onclick="copiarLinkEvaluacionDocente()">📋 Copiar Link Automático</button>
+              <a id="evalFormOpenLink" href="/evaluar" target="_blank" class="btn btn-primary" style="padding:6px 12px; font-size:12px; text-decoration:none;">📝 Abrir / Probar Formulario</a>
               <a id="evalSheetOpenLink" href="https://docs.google.com/spreadsheets/d/1F6Sxe_csVal4EIOOBGXZlryxSPXutbRDJpcIJczPdtU/edit" target="_blank" class="btn btn-outline" style="padding:6px 12px; font-size:12px; text-decoration:none;">📊 Hoja Respuestas</a>
             </div>
           </div>
@@ -9581,9 +9935,13 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       if (!EVAL_PED_DATA) cargarEvaluacionPedagogica(false);
     }
 
-    function obtenerUrlFormularioEvaluacion() {
-      return (EVAL_PED_DATA && EVAL_PED_DATA.evaluacion_docente && EVAL_PED_DATA.evaluacion_docente.form_url)
-        || 'https://docs.google.com/forms/d/1z_pYRCxH0GYgJbUjHmz8CaJ6b3T9g2l-HeXD9QKMhNI/viewform';
+    function obtenerUrlFormularioEvaluacion(nombreAlumno = '', instructor = '') {
+      const base = `${window.location.origin}/evaluar`;
+      const qs = new URLSearchParams();
+      if (nombreAlumno) qs.set('a', nombreAlumno);
+      if (instructor) qs.set('i', instructor);
+      const qStr = qs.toString();
+      return qStr ? `${base}?${qStr}` : base;
     }
 
     async function copiarLinkEvaluacionDocente() {
@@ -9593,15 +9951,16 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         await navigator.clipboard.writeText(url);
         if (toast) {
           toast.className = 'status-toast ok';
-          toast.textContent = '📋 Link oficial de calificación de instructores copiado al portapapeles. ¡Listo para enviar al alumno!';
+          toast.textContent = `📋 Link automático copiado (${url}). ¡Se actualiza al instante con tus instructores activos!`;
         }
       } catch (_) {
-        prompt('Copia este link de calificación para el alumno:', url);
+        prompt('Copia este link automático de calificación para el alumno:', url);
       }
     }
 
     function compartirLinkEvaluacionWhatsApp(nombreAlumno = '') {
-      const url = obtenerUrlFormularioEvaluacion();
+      const instSel = ((document.getElementById('pedObsInstructor') || {}).value || '').trim();
+      const url = obtenerUrlFormularioEvaluacion(nombreAlumno, instSel);
       const saludo = nombreAlumno ? `Hola ${nombreAlumno}` : 'Hola';
       const msg = `${saludo}, gracias por tu clase en CEA Auto Oriente. Por favor califica a tu instructor en 30 segundos en este enlace oficial: ${url}`;
       window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
@@ -9635,12 +9994,13 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           const navEv = document.getElementById('nav_badge_eval');
           if (navEv) navEv.textContent = `⭐ ${kev.promedio_global || 0}`;
 
-          // Actualizar enlaces del formulario y hoja
+          // Actualizar enlaces del formulario automático (/evaluar) y hoja
           const urlTxt = document.getElementById('evalFormUrlText');
           const urlOpen = document.getElementById('evalFormOpenLink');
           const shOpen = document.getElementById('evalSheetOpenLink');
-          if (urlTxt && ev.form_url) urlTxt.textContent = ev.form_url;
-          if (urlOpen && ev.form_url) urlOpen.href = ev.form_url;
+          const autoUrl = obtenerUrlFormularioEvaluacion();
+          if (urlTxt) urlTxt.textContent = autoUrl;
+          if (urlOpen) urlOpen.href = autoUrl;
           if (shOpen && ev.sheet_url) shOpen.href = ev.sheet_url;
 
           // KPIs Pedagógicos
@@ -10411,6 +10771,23 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
             self._send_json(res_obs)
             return
 
+        if self.path == "/evaluar" or self.path.startswith("/evaluar?"):
+            raw_ev = HTML_EVALUACION_PUBLICA.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(raw_ev)))
+            self.end_headers()
+            self.wfile.write(raw_ev)
+            return
+
+        if self.path.startswith("/api/public/evaluacion_config"):
+            try:
+                cfg_pub = evaluacion_pedagogica_cea.evaluacion_service.obtener_config_formulario_publico()
+                self._send_json(cfg_pub)
+            except Exception as exc:
+                self._send_json({"ok": False, "error": str(exc)}, 500)
+            return
+
         if not self._is_authenticated():
             if self.path.startswith("/api/"):
                 self._send_json({"ok": False, "error": "Sesión expirada o no autorizada."}, 401)
@@ -10790,6 +11167,17 @@ class AuditorWebHandler(BaseHTTPRequestHandler):
             else:
                 time.sleep(0.6)
                 self._send_json({"ok": False, "error": "Usuario o contraseña incorrectos."}, 401)
+            return
+
+        if self.path == "/api/public/evaluacion_submit":
+            length = int(self.headers.get("Content-Length", "0"))
+            body_raw = self.rfile.read(length) if length > 0 else b"{}"
+            try:
+                payload = json.loads(body_raw.decode("utf-8"))
+            except Exception:
+                payload = {}
+            res_sub = evaluacion_pedagogica_cea.evaluacion_service.registrar_evaluacion_web(payload)
+            self._send_json(res_sub, 200 if res_sub.get("ok") else 400)
             return
 
         if not self._is_authenticated():

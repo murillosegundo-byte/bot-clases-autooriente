@@ -44,12 +44,128 @@ EVAL_FORM_URL_DEFAULT = os.getenv(
 ).strip()
 
 EVAL_CACHE_LOCAL_FILE = BASE_DIR / "cache_evaluacion_docente_cea.json"
+EVAL_WEB_BACKUP_FILE = BASE_DIR / "evaluaciones_web_backup_cea.json"
 OBS_LOCAL_FILE = BASE_DIR / "observaciones_pedagogicas_cea.json"
 INST_ESTADO_LOCAL_FILE = BASE_DIR / "instructores_estado_cea.json"
 
 SHEET_OBSERVACIONES = "Observaciones_Alumnos"
+SHEET_EVAL_WEB_FALLBACK = "Evaluacion_Docente_Web"
 SHEET_ESTADO_INSTRUCTORES = "Estado_Instructores_CEA"
 HEADERS_ESTADO_INSTRUCTORES = ["Instructor", "Estado", "Tipo", "Fecha_Cambio"]
+
+TEXTO_HABEAS_DATA = (
+    "En cumplimiento de la Ley 1581 de 2012 y el Decreto 1377 de 2013, informamos que los datos "
+    "personales recolectados en este formulario serán tratados de forma segura y confidencial. "
+    "Al diligenciar esta evaluación, autorizo de manera previa, libre y expresa a CEA AUTO ORIENTE S.A.S "
+    "para que realice el tratamiento de mis datos personales con la finalidad de: (1) Realizar el seguimiento "
+    "a la calidad del servicio docente, (2) Elaborar indicadores estadísticos de formación y (3) Adelantar "
+    "planes de mejora en el servicio. Como titular de los datos, tengo derecho a conocer, actualizar, "
+    "rectificar o solicitar la supresión de mi información escribiendo a autorientecea@gmail.com."
+)
+
+# Las 10 preguntas oficiales del formulario (exactas y compatibles con las columnas de Google Sheets)
+PREGUNTAS_EVALUACION_FORM: List[Dict[str, Any]] = [
+    {
+        "key": "trato",
+        "col": 16,
+        "titulo": "1. ¿Cómo calificaría el trato y la actitud del instructor durante la sesión?",
+        "opciones": [
+            {"texto": "Excelente: Fue respetuoso, paciente y mantuvo un lenguaje profesional en todo momento.", "nivel": 5},
+            {"texto": "Bueno: Fue respetuoso, aunque en algunos momentos mostró algo de impaciencia.", "nivel": 4},
+            {"texto": "Regular: Su trato fue frío o cortante, lo que me hizo sentir incómodo/a para preguntar.", "nivel": 3},
+        ],
+    },
+    {
+        "key": "tiempo",
+        "col": 17,
+        "titulo": "2. ¿Se cumplió con la totalidad del tiempo programado para la clase?",
+        "opciones": [
+            {"texto": "Sí, se aprovechó cada minuto de la sesión.", "nivel": 5},
+            {"texto": "Casi todo el tiempo, terminó unos pocos minutos antes.", "nivel": 4},
+            {"texto": "Se perdió una parte considerable de la clase por distracciones o demoras.", "nivel": 2},
+        ],
+    },
+    {
+        "key": "objetivos",
+        "col": 18,
+        "titulo": "3. ¿Siente que se cubrieron todos los objetivos de aprendizaje programados para hoy?",
+        "opciones": [
+            {"texto": "Totalmente, el contenido fue completo y claro.", "nivel": 5},
+            {"texto": "En su mayoría, aunque algún punto quedó superficial.", "nivel": 4},
+            {"texto": "Solo se cubrió la mitad de lo previsto.", "nivel": 3},
+        ],
+    },
+    {
+        "key": "atencion",
+        "col": 19,
+        "titulo": "4. ¿Cuál fue el nivel de atención del instructor durante la sesión?",
+        "opciones": [
+            {"texto": "100% enfocado en mi aprendizaje y en la vía.", "nivel": 5},
+            {"texto": "Enfocado, con distracciones mínimas que no afectaron la clase.", "nivel": 4},
+            {"texto": "Distraído ocasionalmente (miraba el paisaje, hablaba de otros temas).", "nivel": 2},
+        ],
+    },
+    {
+        "key": "celular",
+        "col": 20,
+        "titulo": "5. Sobre el uso del teléfono celular por parte del instructor:",
+        "opciones": [
+            {"texto": "No utilizó el celular en absoluto.", "nivel": 5},
+            {"texto": "Lo usó brevemente para algo estrictamente necesario (mapas o reporte rápido).", "nivel": 4},
+            {"texto": "Lo usó varias veces para asuntos ajenos a la clase (chats, redes sociales, llamadas).", "nivel": 1},
+        ],
+    },
+    {
+        "key": "ensenanza",
+        "col": 5,
+        "titulo": "6. ¿El profesor mantuvo una actitud de enseñanza constante?",
+        "opciones": [
+            {"texto": "Sí, me dio instrucciones, consejos y correcciones durante toda la clase.", "nivel": 5},
+            {"texto": "Me enseñó lo básico, pero hubo momentos de silencio prolongado.", "nivel": 3},
+            {"texto": "Se limitó a acompañarme sin dar ninguna instrucción o retroalimentación.", "nivel": 1},
+        ],
+    },
+    {
+        "key": "claridad",
+        "col": 7,
+        "titulo": "7. ¿El instructor explicó los temas complejos de forma sencilla y clara para usted?",
+        "opciones": [
+            {"texto": "Excelente; usó ejemplos de la vida real que facilitaron mucho mi comprensión.", "nivel": 5},
+            {"texto": "Bueno; el lenguaje fue claro, aunque en algunos momentos fue demasiado técnico.", "nivel": 4},
+            {"texto": "Regular; sentí que el nivel de la clase era muy avanzado o confuso para mis conocimientos previos.", "nivel": 3},
+        ],
+    },
+    {
+        "key": "metodologia",
+        "col": 22,
+        "titulo": "8. ¿El instructor siguió un orden lógico y claro para enseñarle los temas de hoy?",
+        "opciones": [
+            {"texto": "Excelente; explicó la teoría, me hizo una demostración y luego me acompañó en la práctica.", "nivel": 5},
+            {"texto": "Bueno; el orden fue adecuado y entendí la mayor parte de las instrucciones.", "nivel": 4},
+            {"texto": "Confuso; no sentí que hubiera un método, solo improvisación durante la clase.", "nivel": 2},
+        ],
+    },
+    {
+        "key": "disposicion",
+        "col": 11,
+        "titulo": "9. Ante sus preguntas o sugerencias, ¿el instructor muestra disposición para asegurar que usted haya comprendido el tema?",
+        "opciones": [
+            {"texto": "Siempre; se toma el tiempo necesario y se asegura de que no queden dudas.", "nivel": 5},
+            {"texto": "Casi siempre; responde con claridad la mayoría de las veces.", "nivel": 4},
+            {"texto": "A veces; responde, pero no siempre aclara la duda o parece querer terminar rápido.", "nivel": 3},
+        ],
+    },
+    {
+        "key": "apoyo",
+        "col": 9,
+        "titulo": "10. ¿Cómo califica la calidad y actualidad del material de apoyo / vehículo entregado por el instructor?",
+        "opciones": [
+            {"texto": "Muy alta calidad; información actualizada y herramientas modernas.", "nivel": 5},
+            {"texto": "Buena calidad; cumple con los temas, aunque podría mejorar visualmente.", "nivel": 4},
+            {"texto": "Regular; el material o apoyo necesita actualización o mejora.", "nivel": 3},
+        ],
+    },
+]
 HEADERS_OBSERVACIONES = [
     "ID_Obs",
     "Timestamp",
@@ -126,12 +242,24 @@ def _normalizar_nombre_profesor(raw: Any) -> str:
     if "dayron" in n and "carlos" in n:
         return "DAYRON ANDRES SERRANO LOAIZA"
 
+    # Casos especiales prioritarios antes de reglas genéricas por primer nombre
+    if "carlos" in n and ("murillo" in n or "alberto" in n):
+        return "CARLOS ALBERTO MURILLO"
+    if "yesica" in n or ("paola" in n and "murillo" in n):
+        return "YESICA PAOLA MURILLO"
+    if "medaglia" in n:
+        return "CESAR MAURICIO MEDAGLIA APARICIO"
+    if "mauricio" in n and "castro" not in n:
+        return "CESAR MAURICIO MEDAGLIA APARICIO"
+    if n == "juan":
+        return "JUAN DAVID MEJIA"
+
     reglas = [
         (["carreno", "jhoan sebastian", "jhon carreno"], "JHOAN SEBASTIAN CARREÑO SIERRA"),
-        (["oscar mantilla", "mantilla"], "OSCAR MANTILLA"),
+        (["oscar", "mantilla"], "OSCAR EDUARDO MANTILLA GARCIA"),
         (["yulian", "camacho"], "YULIAN CAMACHO"),
         (["carlos", "carlo", "caros", "gras", "grass"], "CARLOS ARTURO GOMEZ GRASS"),
-        (["medaglia", "cesar"], "CESAR MAURICIO MEDAGLIA APARICIO"),
+        (["cesar"], "CESAR MAURICIO MEDAGLIA APARICIO"),
         (["dayron", "dairon", "dairo", "dayro", "dario", "serrano", "cerrano", "laoiza", "loaiza"], "DAYRON ANDRES SERRANO LOAIZA"),
         (["marco", "marcos", "villamizar", "villamisar"], "MARCO ANTONIO VILLAMIZAR"),
         (["rolando", "robando", "ramirez", "ramires"], "ROLANDO ANTONIO RAMIREZ GIRALDO"),
@@ -141,18 +269,14 @@ def _normalizar_nombre_profesor(raw: Any) -> str:
         (["juan david", "mejia", "meca"], "JUAN DAVID MEJIA"),
         (["hermes", "becerra"], "HERMES GIOVANNY BECERRA MONTAÑEZ"),
         (["alcibiades"], "ALCIBIADES BUENO RIVERO"),
+        (["lenny", "maldonado"], "LENNY PAOLA MALDONADO CRISTANCHO"),
+        (["javier torres"], "JAVIER TORRES DURAN"),
+        (["maribel", "romero"], "MARIBEL ROMERO RODRIGUEZ"),
         (["leidy", "salamanca"], "LEIDY SALAMANCA"),
         (["segundo", "murillo"], "SEGUNDO MURILLO"),
-        (["victor", "anaya"], "VICTOR ANAYA"),
-        (["mauricio castro"], "MAURICIO CASTRO"),
+        (["victor", "anaya"], "VICTOR EDUARDO LEON ANAYA"),
+        (["mauricio castro", "castro jaimes"], "MAURICIO CASTRO JAIMES"),
     ]
-    # Caso especial: "carlos medaglia" -> Cesar Mauricio Medaglia
-    if "medaglia" in n:
-        return "CESAR MAURICIO MEDAGLIA APARICIO"
-    if "mauricio" in n and "castro" not in n:
-        return "CESAR MAURICIO MEDAGLIA APARICIO"
-    if n == "juan":
-        return "JUAN DAVID MEJIA"
 
     for claves, canonico in reglas:
         if any(cl in n for cl in claves):
@@ -401,8 +525,181 @@ class EvaluacionPedagogicaService:
                 pass
         return [], False
 
+    def _leer_filas_web_respaldo(self) -> List[List[str]]:
+        """Lee evaluaciones enviadas desde /evaluar que hayan quedado en hoja respaldo o JSON local."""
+        extra: List[List[str]] = []
+        vistos = set()
+        try:
+            ws_fb = clases_core.sheets_service.obtener_o_crear_hoja(
+                SHEET_EVAL_WEB_FALLBACK,
+                ["Marca temporal", "Puntuación", "Fecha", "Nombre del alumno", "Nombre del Profesor"],
+            )
+            rows_fb = ws_fb.get_all_values()
+            if rows_fb and len(rows_fb) >= 2:
+                for r in rows_fb[1:]:
+                    if not any(str(c).strip() for c in r):
+                        continue
+                    key = (str(r[0]).strip(), _norm(r[3] if len(r) > 3 else ""), _norm(r[4] if len(r) > 4 else ""))
+                    if key not in vistos:
+                        vistos.add(key)
+                        extra.append(list(r))
+        except Exception:
+            pass
+        if EVAL_WEB_BACKUP_FILE.exists():
+            try:
+                loc = json.loads(EVAL_WEB_BACKUP_FILE.read_text(encoding="utf-8"))
+                if isinstance(loc, list):
+                    for r in loc:
+                        if isinstance(r, list) and len(r) >= 5:
+                            key = (str(r[0]).strip(), _norm(r[3]), _norm(r[4]))
+                            if key not in vistos:
+                                vistos.add(key)
+                                extra.append([str(c) for c in r])
+            except Exception:
+                pass
+        return extra
+
+    def obtener_config_formulario_publico(self) -> Dict[str, Any]:
+        """Devuelve en tiempo real la lista de instructores ACTIVOS y las 10 preguntas oficiales para /evaluar."""
+        eval_data = self.obtener_evaluaciones_docentes(forzar=False)
+        _, instructores_activos = self._construir_directorio_instructores(eval_data, forzar=False)
+        return {
+            "ok": True,
+            "instructores_activos": instructores_activos,
+            "preguntas": PREGUNTAS_EVALUACION_FORM,
+            "texto_habeas_data": TEXTO_HABEAS_DATA,
+        }
+
+    def registrar_evaluacion_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Registra una evaluación enviada por un alumno desde el enlace público /evaluar.
+        Escribe exactamente con la estructura de columnas de 'Evaluación docente teórico (respuestas)'.
+        Si la hoja compartida solo tiene permisos de lectura, guarda automáticamente en 'Evaluacion_Docente_Web'
+        y respaldo local JSON para no perder ninguna evaluación.
+        """
+        alumno = str(payload.get("nombre_alumno", "")).strip()
+        prof_in = str(payload.get("nombre_profesor", "")).strip()
+        if not alumno or len(alumno) < 3:
+            return {"ok": False, "message": "Por favor escribe tu nombre completo."}
+        if not prof_in:
+            return {"ok": False, "message": "Por favor selecciona el instructor que dictó tu clase."}
+        if not payload.get("acepta_habeas_data"):
+            return {"ok": False, "message": "Debes aceptar la autorización de tratamiento de datos (Ley 1581 de 2012)."}
+
+        respuestas_in = payload.get("respuestas") or {}
+        if not isinstance(respuestas_in, dict):
+            return {"ok": False, "message": "Formato de respuestas inválido."}
+
+        prof_canon = _normalizar_nombre_profesor(prof_in)
+        if prof_canon == "SIN ESPECIFICAR":
+            prof_canon = prof_in.upper()
+
+        ahora = datetime.datetime.now(clases_core.TZ_COLOMBIA)
+        ts_str = ahora.strftime("%d/%m/%Y %H:%M:%S")
+        fecha_str = ahora.strftime("%d/%m/%Y")
+        comentario = str(payload.get("comentario", "")).strip()
+
+        fila = [""] * 23
+        fila[0] = ts_str
+        fila[2] = fecha_str
+        fila[3] = alumno
+        fila[4] = prof_canon
+        fila[14] = "Sí"
+        fila[15] = comentario
+
+        puntajes: List[float] = []
+        faltantes = 0
+        for preg in PREGUNTAS_EVALUACION_FORM:
+            val_txt = str(respuestas_in.get(preg["key"], "")).strip()
+            if not val_txt:
+                faltantes += 1
+                continue
+            col_idx = int(preg["col"])
+            fila[col_idx] = val_txt
+            if preg["key"] == "ensenanza":
+                fila[21] = val_txt  # Espejo en columna V para compatibilidad total con la hoja actual
+            sc, _ = _puntuar_respuesta_criterio(val_txt)
+            if sc is not None:
+                puntajes.append(sc)
+
+        if faltantes > 0:
+            return {"ok": False, "message": f"Por favor responde todas las preguntas ({faltantes} pendiente(s))."}
+
+        promedio = round(sum(puntajes) / max(1, len(puntajes)), 2)
+        fila[1] = f"{promedio:.2f} / 5"
+
+        destino = "local"
+        # 1. Intentar guardar directamente en la hoja compartida 'Evaluación docente teórico (respuestas)'
+        try:
+            with self._lock:
+                if self._spreadsheet is None:
+                    creds = clases_core.obtener_credenciales_google(clases_core.SCOPES)
+                    client = clases_core.gspread.authorize(creds)
+                    self._spreadsheet = client.open_by_key(self.sheet_id)
+                ws_main = self._spreadsheet.worksheets()[0]
+            ws_main.append_row(fila, value_input_option="USER_ENTERED")
+            destino = "sheet_evaluacion"
+            with self._lock:
+                if self._cache_eval:
+                    rows_c = [list(r) for r in self._cache_eval[1]]
+                    rows_c.append(list(fila))
+                    self._cache_eval = (time.time(), rows_c)
+                    try:
+                        EVAL_CACHE_LOCAL_FILE.write_text(
+                            json.dumps({"ts": time.time(), "rows": rows_c}, ensure_ascii=False),
+                            encoding="utf-8",
+                        )
+                    except Exception:
+                        pass
+        except Exception as exc_main:
+            logger.warning("Aviso escribiendo en hoja compartida de Evaluación (se usa respaldo Bot Sheets): %s", exc_main)
+            # 2. Respaldo automático en la hoja principal del Bot (siempre tenemos permiso Editor)
+            try:
+                ws_fb = clases_core.sheets_service.obtener_o_crear_hoja(
+                    SHEET_EVAL_WEB_FALLBACK,
+                    ["Marca temporal", "Puntuación", "Fecha", "Nombre del alumno", "Nombre del Profesor"],
+                )
+                ws_fb.append_row(fila, value_input_option="USER_ENTERED")
+                destino = "sheet_bot_respaldo"
+            except Exception as exc_fb:
+                logger.warning("Aviso guardando evaluación en respaldo Bot Sheets: %s", exc_fb)
+
+            # Guardar también en JSON local si no entró directo a la hoja principal
+            try:
+                prev_loc = []
+                if EVAL_WEB_BACKUP_FILE.exists():
+                    prev_loc = json.loads(EVAL_WEB_BACKUP_FILE.read_text(encoding="utf-8"))
+                    if not isinstance(prev_loc, list):
+                        prev_loc = []
+                prev_loc.append(fila)
+                EVAL_WEB_BACKUP_FILE.write_text(json.dumps(prev_loc, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
+        return {
+            "ok": True,
+            "promedio": promedio,
+            "instructor": prof_canon,
+            "alumno": alumno,
+            "destino": destino,
+            "message": f"¡Gracias {alumno}! Tu calificación (⭐ {promedio:.2f}/5) para {prof_canon} fue registrada correctamente.",
+        }
+
     def obtener_evaluaciones_docentes(self, forzar: bool = False) -> Dict[str, Any]:
         filas, en_vivo = self._leer_filas_evaluacion(forzar=forzar)
+        filas_extra = self._leer_filas_web_respaldo()
+        if filas_extra:
+            if not filas:
+                filas = [["Marca temporal", "Puntuación", "Fecha", "Nombre del alumno", "Nombre del Profesor"]]
+            exist_keys = {
+                (str(r[0]).strip(), _norm(r[3] if len(r) > 3 else ""), _norm(r[4] if len(r) > 4 else ""))
+                for r in filas[1:] if len(r) >= 5
+            }
+            for rx in filas_extra:
+                kx = (str(rx[0]).strip(), _norm(rx[3] if len(rx) > 3 else ""), _norm(rx[4] if len(rx) > 4 else ""))
+                if kx not in exist_keys:
+                    filas.append(rx)
+                    exist_keys.add(kx)
         if not filas or len(filas) < 2:
             return {
                 "ok": True,
