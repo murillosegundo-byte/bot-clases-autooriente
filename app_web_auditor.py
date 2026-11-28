@@ -594,7 +594,13 @@ HTML_EVALUACION_PUBLICA = r"""<!DOCTYPE html>
 
       <div class="card">
         <div class="q-title">👤 Nombre completo del alumno <span class="req">*</span></div>
-        <input type="text" id="ev_alumno" placeholder="Escribe tu nombre y apellido" autocomplete="name" />
+        <input type="text" id="ev_alumno" name="alumno_eval_nombre" placeholder="Escribe tu nombre y apellido" autocomplete="off" />
+      </div>
+
+      <div class="card">
+        <div class="q-title">📚 ¿Qué tipo de clase acabas de recibir? <span class="req">*</span></div>
+        <div id="modListWrap" class="prof-grid" style="grid-template-columns:repeat(auto-fit, minmax(185px, 1fr));"></div>
+        <div id="modHint" style="font-size:11.5px; color:#93c5fd; margin-top:8px;"></div>
       </div>
 
       <div class="card">
@@ -634,19 +640,67 @@ HTML_EVALUACION_PUBLICA = r"""<!DOCTYPE html>
   <script>
     let CONFIG_EVAL = null;
     let PROFESOR_SEL = '';
+    let MODALIDAD_SEL = '';
     const RESPUESTAS_SEL = {};
 
     function escH(s) {
       return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    function obtenerPreguntasModalidadActual() {
+      if (!CONFIG_EVAL) return [];
+      const mapa = CONFIG_EVAL.preguntas_por_modalidad || {};
+      return mapa[MODALIDAD_SEL] || CONFIG_EVAL.preguntas || [];
+    }
+
     function actualizarProgreso() {
-      const tot = (CONFIG_EVAL && CONFIG_EVAL.preguntas) ? CONFIG_EVAL.preguntas.length : 10;
+      const pregs = obtenerPreguntasModalidadActual();
+      const tot = pregs.length || 10;
       const done = Object.keys(RESPUESTAS_SEL).length;
       const lbl = document.getElementById('progLabel');
       const fill = document.getElementById('progFill');
       if (lbl) lbl.textContent = `Progreso: ${done} / ${tot} preguntas`;
       if (fill) fill.style.width = Math.round((done / Math.max(1, tot)) * 100) + '%';
+    }
+
+    function renderizarPreguntasModalidad() {
+      const pWrap = document.getElementById('preguntasWrap');
+      if (!pWrap || !CONFIG_EVAL) return;
+      const pregs = obtenerPreguntasModalidadActual();
+      // Si el usuario cambió de modalidad, reiniciar las respuestas que no coincidan exactamente
+      Object.keys(RESPUESTAS_SEL).forEach(k => delete RESPUESTAS_SEL[k]);
+      pWrap.innerHTML = pregs.map(p => {
+        const optsHtml = (p.opciones || []).map(o => {
+          const safeVal = escH(o.texto);
+          const badge = o.nivel >= 5 ? '🟢' : (o.nivel >= 4 ? '🔵' : (o.nivel >= 3 ? '🟡' : '🔴'));
+          return `<label class="opt-card" data-key="${escH(p.key)}" data-val="${safeVal}" onclick="seleccionarOpcionPregunta(this.getAttribute('data-key'), this.getAttribute('data-val'), this)">
+            <input type="radio" name="q_${escH(p.key)}" value="${safeVal}" />
+            <span>${badge} ${safeVal}</span>
+          </label>`;
+        }).join('');
+        return `<div class="card">
+          <div class="q-title">${escH(p.titulo)} <span class="req">*</span></div>
+          <div class="opt-list">${optsHtml}</div>
+        </div>`;
+      }).join('');
+      actualizarProgreso();
+    }
+
+    function seleccionarModalidad(modId, cardEl) {
+      MODALIDAD_SEL = modId;
+      document.querySelectorAll('#modListWrap .opt-card').forEach(c => {
+        const isMe = c.getAttribute('data-mod') === modId;
+        c.classList.toggle('selected', isMe);
+        const r = c.querySelector('input[type="radio"]');
+        if (r) r.checked = isMe;
+      });
+      const hint = document.getElementById('modHint');
+      if (hint) {
+        if (modId === 'PRACTICA') hint.textContent = '🚗 Preguntas adaptadas para clase práctica en pista/vía y vehículo.';
+        else if (modId === 'TEORIA') hint.textContent = '📘 Preguntas adaptadas para clase teórica en salón y material de apoyo.';
+        else if (modId === 'TALLER') hint.textContent = '🔧 Preguntas adaptadas para taller práctico y equipos.';
+      }
+      renderizarPreguntasModalidad();
     }
 
     function seleccionarProfesor(nom, cardEl) {
@@ -677,6 +731,7 @@ HTML_EVALUACION_PUBLICA = r"""<!DOCTYPE html>
       const qs = new URLSearchParams(window.location.search);
       const paramAlumno = (qs.get('a') || qs.get('alumno') || '').trim();
       const paramInst = (qs.get('i') || qs.get('instructor') || qs.get('p') || '').trim().toUpperCase();
+      const paramMod = (qs.get('m') || qs.get('modalidad') || '').trim().toUpperCase();
       if (paramAlumno) {
         const aEl = document.getElementById('ev_alumno');
         if (aEl) aEl.value = paramAlumno;
@@ -690,6 +745,24 @@ HTML_EVALUACION_PUBLICA = r"""<!DOCTYPE html>
 
         const habEl = document.getElementById('habeasText');
         if (habEl) habEl.textContent = data.texto_habeas_data || '';
+
+        // Renderizar selector de Modalidad (Práctica / Teoría / Taller)
+        const modWrap = document.getElementById('modListWrap');
+        const mods = data.modalidades || [
+          { id: 'PRACTICA', label: '🚗 Clase Práctica (Pista / Vía)' },
+          { id: 'TEORIA', label: '📘 Clase Teórica (Salón)' },
+          { id: 'TALLER', label: '🔧 Taller' },
+        ];
+        MODALIDAD_SEL = ['PRACTICA', 'TEORIA', 'TALLER'].includes(paramMod) ? paramMod : 'PRACTICA';
+        if (modWrap) {
+          modWrap.innerHTML = mods.map(m => {
+            const isSel = m.id === MODALIDAD_SEL;
+            return `<label class="opt-card ${isSel ? 'selected' : ''}" data-mod="${escH(m.id)}" onclick="seleccionarModalidad('${escH(m.id)}', this)">
+              <input type="radio" name="modalidad" value="${escH(m.id)}" ${isSel ? 'checked' : ''} />
+              <span><b>${escH(m.label)}</b></span>
+            </label>`;
+          }).join('');
+        }
 
         const profWrap = document.getElementById('profListWrap');
         const listaInst = data.instructores_activos || [];
@@ -705,24 +778,7 @@ HTML_EVALUACION_PUBLICA = r"""<!DOCTYPE html>
           }).join('') || '<div style="color:#fca5a5;">No hay instructores activos configurados.</div>';
         }
 
-        const pWrap = document.getElementById('preguntasWrap');
-        if (pWrap) {
-          pWrap.innerHTML = (data.preguntas || []).map(p => {
-            const optsHtml = (p.opciones || []).map(o => {
-              const safeVal = escH(o.texto);
-              const badge = o.nivel >= 5 ? '🟢' : (o.nivel >= 4 ? '🔵' : (o.nivel >= 3 ? '🟡' : '🔴'));
-              return `<label class="opt-card" data-key="${escH(p.key)}" data-val="${safeVal}" onclick="seleccionarOpcionPregunta(this.getAttribute('data-key'), this.getAttribute('data-val'), this)">
-                <input type="radio" name="q_${escH(p.key)}" value="${safeVal}" />
-                <span>${badge} ${safeVal}</span>
-              </label>`;
-            }).join('');
-            return `<div class="card">
-              <div class="q-title">${escH(p.titulo)} <span class="req">*</span></div>
-              <div class="opt-list">${optsHtml}</div>
-            </div>`;
-          }).join('');
-        }
-        actualizarProgreso();
+        seleccionarModalidad(MODALIDAD_SEL);
       } catch (err) {
         const errBox = document.getElementById('errBox');
         if (errBox) { errBox.textContent = '⚠️ Error cargando el formulario: ' + err; errBox.style.display = 'block'; }
@@ -739,9 +795,10 @@ HTML_EVALUACION_PUBLICA = r"""<!DOCTYPE html>
       const nombre_alumno = ((document.getElementById('ev_alumno') || {}).value || '').trim();
       const comentario = ((document.getElementById('ev_comentario') || {}).value || '').trim();
       const acepta_habeas_data = Boolean((document.getElementById('ev_habeas') || {}).checked);
-      const totalPreg = (CONFIG_EVAL && CONFIG_EVAL.preguntas) ? CONFIG_EVAL.preguntas.length : 10;
+      const totalPreg = obtenerPreguntasModalidadActual().length || 10;
 
       if (!nombre_alumno || nombre_alumno.length < 3) return showErr('Por favor escribe tu nombre y apellido.');
+      if (!MODALIDAD_SEL) return showErr('Por favor selecciona si tu clase fue Práctica, Teoría o Taller.');
       if (!PROFESOR_SEL) return showErr('Por favor selecciona el instructor que dictó tu clase.');
       if (Object.keys(RESPUESTAS_SEL).length < totalPreg) return showErr(`Por favor responde todas las preguntas (${Object.keys(RESPUESTAS_SEL).length}/${totalPreg} respondidas).`);
       if (!acepta_habeas_data) return showErr('Debes marcar la casilla de autorización de tratamiento de datos (Ley 1581).');
@@ -756,6 +813,7 @@ HTML_EVALUACION_PUBLICA = r"""<!DOCTYPE html>
           body: JSON.stringify({
             nombre_alumno,
             nombre_profesor: PROFESOR_SEL,
+            modalidad: MODALIDAD_SEL,
             respuestas: RESPUESTAS_SEL,
             comentario,
             acepta_habeas_data
@@ -4204,8 +4262,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               </div>
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap;">
-              <button type="button" class="btn btn-success" style="padding:6px 12px; font-size:12px; font-weight:700;" onclick="copiarLinkEvaluacionDocente()">📋 Copiar Link Automático</button>
-              <a id="evalFormOpenLink" href="/evaluar" target="_blank" class="btn btn-primary" style="padding:6px 12px; font-size:12px; text-decoration:none;">📝 Abrir / Probar Formulario</a>
+              <button type="button" class="btn btn-success" style="padding:6px 11px; font-size:12px; font-weight:700;" onclick="copiarLinkEvaluacionDocente('')">📋 Copiar Link</button>
+              <button type="button" class="btn btn-outline" style="padding:6px 10px; font-size:11.5px; border-color:#38bdf8; color:#bae6fd;" onclick="copiarLinkEvaluacionDocente('PRACTICA')">🚗 Link Práctica</button>
+              <button type="button" class="btn btn-outline" style="padding:6px 10px; font-size:11.5px; border-color:#a78bfa; color:#ddd6fe;" onclick="copiarLinkEvaluacionDocente('TEORIA')">📘 Link Teoría</button>
+              <a id="evalFormOpenLink" href="/evaluar" target="_blank" class="btn btn-primary" style="padding:6px 12px; font-size:12px; text-decoration:none;">📝 Probar Formulario</a>
               <a id="evalSheetOpenLink" href="https://docs.google.com/spreadsheets/d/1F6Sxe_csVal4EIOOBGXZlryxSPXutbRDJpcIJczPdtU/edit" target="_blank" class="btn btn-outline" style="padding:6px 12px; font-size:12px; text-decoration:none;">📊 Hoja Respuestas</a>
             </div>
           </div>
@@ -4238,8 +4298,14 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         <!-- Ranking de Instructores -->
         <div class="panel" style="margin-bottom:14px;">
           <div class="panel-title" style="flex-wrap:wrap; gap:8px;">
-            <span>🏆 Ranking y Desempeño por Instructor (Clic en un profesor para filtrar sus respuestas)</span>
+            <span>🏆 Ranking y Desempeño por Instructor — Diferenciado por Práctica vs Teoría</span>
             <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+              <select id="evFiltroModalidadRank" onchange="renderizarRankingEvaluacionDocente()" style="width:auto; padding:5px 9px; font-size:12px; border-color:#38bdf8;">
+                <option value="TODAS" selected>📚 Todas (Ver Práctica vs Teoría)</option>
+                <option value="PRACTICA">🚗 Solo Práctica</option>
+                <option value="TEORIA">📘 Solo Teoría</option>
+                <option value="TALLER">🔧 Solo Taller</option>
+              </select>
               <select id="evFiltroEstadoInst" onchange="renderizarRankingEvaluacionDocente()" style="width:auto; padding:5px 9px; font-size:12px;">
                 <option value="ACTIVO" selected>🟢 Solo Instructores Activos</option>
                 <option value="TODOS">📚 Todos (Activos + Retirados)</option>
@@ -4256,16 +4322,16 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
                   <th>#</th>
                   <th>Instructor (Normalizado)</th>
                   <th>Estado</th>
-                  <th>Evaluaciones</th>
+                  <th>Eval.</th>
                   <th>Promedio ⭐</th>
-                  <th>% Excelencia</th>
+                  <th>🚗 Práctica</th>
+                  <th>📘 Teoría</th>
                   <th>Trato</th>
                   <th>Tiempo</th>
                   <th>Objetivos</th>
-                  <th>Atención / Celular</th>
+                  <th>Atención / Cel.</th>
                   <th>Claridad</th>
                   <th>🚨 Alertas</th>
-                  <th>Última Eval.</th>
                   <th>Gestión</th>
                 </tr>
               </thead>
@@ -4279,6 +4345,12 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
           <div class="panel-title" style="flex-wrap:wrap; gap:8px;">
             <span>📋 Respuestas de Alumnos y Alertas de Calidad Docente</span>
             <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+              <select id="evFiltroModalidadResp" onchange="renderizarRespuestasEvaluacion()" style="width:auto;">
+                <option value="TODAS">📚 Todas las modalidades</option>
+                <option value="PRACTICA">🚗 Solo Práctica</option>
+                <option value="TEORIA">📘 Solo Teoría</option>
+                <option value="TALLER">🔧 Solo Taller</option>
+              </select>
               <select id="evFiltroInstructor" onchange="renderizarRespuestasEvaluacion()" style="width:auto; min-width:210px;">
                 <option value="">Todos los instructores</option>
               </select>
@@ -4295,6 +4367,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
               <thead>
                 <tr>
                   <th>Fecha</th>
+                  <th>Modalidad</th>
                   <th>Alumno</th>
                   <th>Instructor</th>
                   <th>Calificación ⭐</th>
@@ -9935,32 +10008,35 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       if (!EVAL_PED_DATA) cargarEvaluacionPedagogica(false);
     }
 
-    function obtenerUrlFormularioEvaluacion(nombreAlumno = '', instructor = '') {
+    function obtenerUrlFormularioEvaluacion(nombreAlumno = '', instructor = '', modalidad = '') {
       const base = `${window.location.origin}/evaluar`;
       const qs = new URLSearchParams();
+      if (modalidad) qs.set('m', modalidad);
       if (nombreAlumno) qs.set('a', nombreAlumno);
       if (instructor) qs.set('i', instructor);
       const qStr = qs.toString();
       return qStr ? `${base}?${qStr}` : base;
     }
 
-    async function copiarLinkEvaluacionDocente() {
-      const url = obtenerUrlFormularioEvaluacion();
+    async function copiarLinkEvaluacionDocente(modalidad = '') {
+      const url = obtenerUrlFormularioEvaluacion('', '', modalidad);
       const toast = document.getElementById('evalGlobalToast');
+      const etq = modalidad === 'PRACTICA' ? 'de Práctica ' : (modalidad === 'TEORIA' ? 'de Teoría ' : '');
       try {
         await navigator.clipboard.writeText(url);
         if (toast) {
           toast.className = 'status-toast ok';
-          toast.textContent = `📋 Link automático copiado (${url}). ¡Se actualiza al instante con tus instructores activos!`;
+          toast.textContent = `📋 Link automático ${etq}copiado (${url}). ¡Se actualiza al instante con tus instructores activos!`;
         }
       } catch (_) {
         prompt('Copia este link automático de calificación para el alumno:', url);
       }
     }
 
-    function compartirLinkEvaluacionWhatsApp(nombreAlumno = '') {
+    function compartirLinkEvaluacionWhatsApp(nombreAlumno = '', modalidad = '') {
       const instSel = ((document.getElementById('pedObsInstructor') || {}).value || '').trim();
-      const url = obtenerUrlFormularioEvaluacion(nombreAlumno, instSel);
+      const modDef = modalidad || (nombreAlumno ? 'PRACTICA' : '');
+      const url = obtenerUrlFormularioEvaluacion(nombreAlumno, instSel, modDef);
       const saludo = nombreAlumno ? `Hola ${nombreAlumno}` : 'Hola';
       const msg = `${saludo}, gracias por tu clase en CEA Auto Oriente. Por favor califica a tu instructor en 30 segundos en este enlace oficial: ${url}`;
       window.open('https://wa.me/?text=' + encodeURIComponent(msg), '_blank');
@@ -10506,10 +10582,10 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
       const badge = document.getElementById('evRankingBadge');
       if (!tbody || !EVAL_PED_DATA || !EVAL_PED_DATA.evaluacion_docente) return;
       const fEst = ((document.getElementById('evFiltroEstadoInst') || {}).value || 'ACTIVO').toUpperCase();
+      const fMod = ((document.getElementById('evFiltroModalidadRank') || {}).value || 'TODAS').toUpperCase();
       const rankAll = EVAL_PED_DATA.evaluacion_docente.ranking_instructores || [];
       const dir = EVAL_PED_DATA.directorio_instructores || [];
 
-      // Construir lista combinada: incluir también instructores ACTIVOS nuevos que aún tienen 0 evaluaciones
       const mapRank = new Map();
       rankAll.forEach(r => mapRank.set(r.instructor, r));
       const filasMostrar = [];
@@ -10517,8 +10593,40 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
         if (fEst === 'ACTIVO' && d.estado !== 'ACTIVO') return;
         if (fEst === 'RETIRADO' && d.estado !== 'RETIRADO') return;
         const r = mapRank.get(d.instructor);
+        const pm = (r && r.por_modalidad) ? r.por_modalidad : {};
+        if (fMod !== 'TODAS') {
+          const mDat = pm[fMod];
+          if (mDat) {
+            filasMostrar.push({
+              instructor: d.instructor,
+              estado: d.estado,
+              tipo: d.tipo,
+              total_evaluaciones: mDat.total_evaluaciones || 0,
+              promedio: mDat.promedio || 0,
+              pct_excelencia: mDat.pct_excelencia || 0,
+              alertas: mDat.alertas || 0,
+              ultima_fecha: mDat.ultima_fecha || '',
+              criterios: mDat.criterios || {},
+              por_modalidad: pm,
+            });
+          } else if (fEst === 'ACTIVO') {
+            filasMostrar.push({
+              instructor: d.instructor,
+              estado: d.estado,
+              tipo: d.tipo,
+              total_evaluaciones: 0,
+              promedio: 0,
+              pct_excelencia: 0,
+              alertas: 0,
+              ultima_fecha: '',
+              criterios: {},
+              por_modalidad: pm,
+            });
+          }
+          return;
+        }
         if (r) {
-          filasMostrar.push({ ...r, estado: d.estado, tipo: d.tipo });
+          filasMostrar.push({ ...r, estado: d.estado, tipo: d.tipo, por_modalidad: pm });
         } else if (fEst !== 'RETIRADO') {
           filasMostrar.push({
             instructor: d.instructor,
@@ -10529,7 +10637,8 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             pct_excelencia: 0,
             alertas: 0,
             ultima_fecha: '',
-            criterios: {}
+            criterios: {},
+            por_modalidad: {},
           });
         }
       });
@@ -10547,29 +10656,36 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
 
       if (badge) badge.textContent = `${filasMostrar.length} instructores`;
       const fmtC = (val) => val ? `<span style="color:${val >= 4.5 ? '#34d399' : (val >= 3.8 ? '#fde047' : '#f87171')}; font-weight:700;">${Number(val).toFixed(1)}</span>` : '<span style="color:var(--muted);">—</span>';
+      const fmtModPill = (mObj) => {
+        if (!mObj || !mObj.total_evaluaciones) return '<span style="color:var(--muted); font-size:11px;">—</span>';
+        const p = Number(mObj.promedio || 0);
+        const cls = p >= 4.5 ? 'badge-success' : (p >= 3.8 ? 'badge-warning' : 'badge-danger');
+        return `<span class="badge ${cls}" style="font-size:11px;">⭐ ${p.toFixed(2)} <span style="opacity:0.8;">(${mObj.total_evaluaciones})</span></span>`;
+      };
       tbody.innerHTML = filasMostrar.map((r, idx) => {
         const c = r.criterios || {};
+        const pm = r.por_modalidad || {};
         const atenCel = (c.atencion && c.celular) ? ((c.atencion + c.celular) / 2) : (c.atencion || c.celular || 0);
         const safeInst = _escHtmlEval(r.instructor).replace(/'/g, "\\'");
         const safeTipo = _escHtmlEval(r.tipo || 'PRÁCTICO / TEÓRICO').replace(/'/g, "\\'");
         const esAct = r.estado !== 'RETIRADO';
         const promHtml = r.total_evaluaciones > 0
           ? `<span class="badge ${r.promedio >= 4.5 ? 'badge-success' : (r.promedio >= 3.8 ? 'badge-warning' : 'badge-danger')}" style="font-size:12px;">⭐ ${Number(r.promedio).toFixed(2)}</span>`
-          : `<span class="badge badge-info" style="font-size:11px;">🆕 Nuevo (0 eval.)</span>`;
+          : `<span class="badge badge-info" style="font-size:11px;">🆕 0 eval.</span>`;
         return `<tr style="cursor:pointer; ${esAct ? '' : 'opacity:0.72;'}" onclick="filtrarRespuestasPorInstructor('${safeInst}')">
           <td><b>#${idx + 1}</b></td>
           <td><b>${_escHtmlEval(r.instructor)}</b></td>
           <td>${esAct ? '<span class="badge badge-success" style="font-size:10.5px;">🟢 Activo</span>' : '<span class="badge badge-danger" style="font-size:10.5px;">🚫 Retirado</span>'}</td>
           <td><b>${r.total_evaluaciones}</b></td>
           <td>${promHtml}</td>
-          <td><b>${r.total_evaluaciones > 0 ? r.pct_excelencia + '%' : '—'}</b></td>
+          <td>${fmtModPill(pm.PRACTICA)}</td>
+          <td>${fmtModPill(pm.TEORIA)}</td>
           <td>${fmtC(c.trato)}</td>
           <td>${fmtC(c.tiempo)}</td>
           <td>${fmtC(c.objetivos)}</td>
           <td>${fmtC(atenCel)}</td>
           <td>${fmtC(c.claridad)}</td>
           <td>${r.alertas > 0 ? `<span class="badge badge-danger">🚨 ${r.alertas}</span>` : '<span class="badge badge-success">0</span>'}</td>
-          <td style="white-space:nowrap;">${_escHtmlEval(r.ultima_fecha || '—')}</td>
           <td onclick="event.stopPropagation()">
             ${esAct
               ? `<button type="button" class="btn btn-outline" style="padding:3px 7px; font-size:10.5px; border-color:#ef4444; color:#fca5a5;" title="Marcar como instructor retirado" onclick="cambiarEstadoInstructorEval('${safeInst}', 'RETIRADO', '${safeTipo}')">🚫 Retirar</button>`
@@ -10602,18 +10718,28 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
     function renderizarRespuestasEvaluacion() {
       const tbody = document.getElementById('evRespuestasTbody');
       if (!tbody || !EVAL_PED_DATA || !EVAL_PED_DATA.evaluacion_docente) return;
+      const fMod = ((document.getElementById('evFiltroModalidadResp') || {}).value || 'TODAS').toUpperCase();
       const fInst = ((document.getElementById('evFiltroInstructor') || {}).value || '').trim();
       const fTipo = ((document.getElementById('evFiltroTipo') || {}).value || 'TODAS').trim();
       const q = ((document.getElementById('evSearchInput') || {}).value || '').trim().toLowerCase();
       const lista = (EVAL_PED_DATA.evaluacion_docente.respuestas || []).filter(r => {
+        const modR = String(r.modalidad || 'TEORIA').toUpperCase();
+        if (fMod !== 'TODAS' && modR !== fMod) return false;
         if (fInst && r.instructor !== fInst) return false;
         if (fTipo === 'ALERTAS' && !r.tiene_alerta) return false;
         if (fTipo === 'EXCELENTES' && Number(r.promedio || 0) < 4.5) return false;
         if (!q) return true;
-        return `${r.alumno} ${r.instructor} ${r.comentario || ''} ${(r.alertas_detalle || []).join(' ')}`.toLowerCase().includes(q);
+        return `${r.alumno} ${r.instructor} ${modR} ${r.comentario || ''} ${(r.alertas_detalle || []).join(' ')}`.toLowerCase().includes(q);
       });
+      const modBadge = (m) => {
+        const mu = String(m || 'TEORIA').toUpperCase();
+        if (mu === 'PRACTICA') return '<span class="badge badge-info">🚗 Práctica</span>';
+        if (mu === 'TALLER') return '<span class="badge badge-warning">🔧 Taller</span>';
+        return '<span class="badge badge-purple">📘 Teoría</span>';
+      };
       tbody.innerHTML = lista.slice(0, 150).map(r => `<tr class="${r.tiene_alerta ? 'row-sem-amarillo' : ''}">
         <td style="white-space:nowrap;">${_escHtmlEval(r.fecha || r.timestamp)}</td>
+        <td>${modBadge(r.modalidad)}</td>
         <td><b>${_escHtmlEval(r.alumno)}</b></td>
         <td>${_escHtmlEval(r.instructor)}</td>
         <td><span class="badge ${r.promedio >= 4.5 ? 'badge-success' : (r.promedio >= 3.8 ? 'badge-warning' : 'badge-danger')}">⭐ ${Number(r.promedio).toFixed(2)}</span></td>
@@ -10623,7 +10749,7 @@ HTML_DASHBOARD = r"""<!DOCTYPE html>
             : (r.tiene_alerta ? '<span class="badge badge-warning">📝 Revisar comentario</span>' : '<span class="badge badge-success">✅ Excelente desempeño</span>')}
         </td>
         <td style="white-space:normal; max-width:300px; font-size:11.5px; color:#e2e8f0;">${_escHtmlEval(r.comentario || '—')}</td>
-      </tr>`).join('') || '<tr><td colspan="6" style="text-align:center; padding:16px; color:var(--muted);">No hay respuestas que coincidan con este filtro.</td></tr>';
+      </tr>`).join('') || '<tr><td colspan="7" style="text-align:center; padding:16px; color:var(--muted);">No hay respuestas que coincidan con este filtro.</td></tr>';
     }
 
     cargarSesionUsuario();

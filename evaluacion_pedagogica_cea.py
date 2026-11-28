@@ -63,109 +63,226 @@ TEXTO_HABEAS_DATA = (
     "rectificar o solicitar la supresión de mi información escribiendo a autorientecea@gmail.com."
 )
 
-# Las 10 preguntas oficiales del formulario (exactas y compatibles con las columnas de Google Sheets)
-PREGUNTAS_EVALUACION_FORM: List[Dict[str, Any]] = [
-    {
-        "key": "trato",
-        "col": 16,
-        "titulo": "1. ¿Cómo calificaría el trato y la actitud del instructor durante la sesión?",
-        "opciones": [
-            {"texto": "Excelente: Fue respetuoso, paciente y mantuvo un lenguaje profesional en todo momento.", "nivel": 5},
-            {"texto": "Bueno: Fue respetuoso, aunque en algunos momentos mostró algo de impaciencia.", "nivel": 4},
-            {"texto": "Regular: Su trato fue frío o cortante, lo que me hizo sentir incómodo/a para preguntar.", "nivel": 3},
-        ],
-    },
-    {
-        "key": "tiempo",
-        "col": 17,
-        "titulo": "2. ¿Se cumplió con la totalidad del tiempo programado para la clase?",
-        "opciones": [
-            {"texto": "Sí, se aprovechó cada minuto de la sesión.", "nivel": 5},
-            {"texto": "Casi todo el tiempo, terminó unos pocos minutos antes.", "nivel": 4},
-            {"texto": "Se perdió una parte considerable de la clase por distracciones o demoras.", "nivel": 2},
-        ],
-    },
-    {
-        "key": "objetivos",
-        "col": 18,
-        "titulo": "3. ¿Siente que se cubrieron todos los objetivos de aprendizaje programados para hoy?",
-        "opciones": [
-            {"texto": "Totalmente, el contenido fue completo y claro.", "nivel": 5},
-            {"texto": "En su mayoría, aunque algún punto quedó superficial.", "nivel": 4},
-            {"texto": "Solo se cubrió la mitad de lo previsto.", "nivel": 3},
-        ],
-    },
-    {
-        "key": "atencion",
-        "col": 19,
-        "titulo": "4. ¿Cuál fue el nivel de atención del instructor durante la sesión?",
-        "opciones": [
-            {"texto": "100% enfocado en mi aprendizaje y en la vía.", "nivel": 5},
-            {"texto": "Enfocado, con distracciones mínimas que no afectaron la clase.", "nivel": 4},
-            {"texto": "Distraído ocasionalmente (miraba el paisaje, hablaba de otros temas).", "nivel": 2},
-        ],
-    },
-    {
-        "key": "celular",
-        "col": 20,
-        "titulo": "5. Sobre el uso del teléfono celular por parte del instructor:",
-        "opciones": [
-            {"texto": "No utilizó el celular en absoluto.", "nivel": 5},
-            {"texto": "Lo usó brevemente para algo estrictamente necesario (mapas o reporte rápido).", "nivel": 4},
-            {"texto": "Lo usó varias veces para asuntos ajenos a la clase (chats, redes sociales, llamadas).", "nivel": 1},
-        ],
-    },
-    {
-        "key": "ensenanza",
-        "col": 5,
-        "titulo": "6. ¿El profesor mantuvo una actitud de enseñanza constante?",
-        "opciones": [
-            {"texto": "Sí, me dio instrucciones, consejos y correcciones durante toda la clase.", "nivel": 5},
-            {"texto": "Me enseñó lo básico, pero hubo momentos de silencio prolongado.", "nivel": 3},
-            {"texto": "Se limitó a acompañarme sin dar ninguna instrucción o retroalimentación.", "nivel": 1},
-        ],
-    },
-    {
-        "key": "claridad",
-        "col": 7,
-        "titulo": "7. ¿El instructor explicó los temas complejos de forma sencilla y clara para usted?",
-        "opciones": [
-            {"texto": "Excelente; usó ejemplos de la vida real que facilitaron mucho mi comprensión.", "nivel": 5},
-            {"texto": "Bueno; el lenguaje fue claro, aunque en algunos momentos fue demasiado técnico.", "nivel": 4},
-            {"texto": "Regular; sentí que el nivel de la clase era muy avanzado o confuso para mis conocimientos previos.", "nivel": 3},
-        ],
-    },
-    {
-        "key": "metodologia",
-        "col": 22,
-        "titulo": "8. ¿El instructor siguió un orden lógico y claro para enseñarle los temas de hoy?",
-        "opciones": [
-            {"texto": "Excelente; explicó la teoría, me hizo una demostración y luego me acompañó en la práctica.", "nivel": 5},
-            {"texto": "Bueno; el orden fue adecuado y entendí la mayor parte de las instrucciones.", "nivel": 4},
-            {"texto": "Confuso; no sentí que hubiera un método, solo improvisación durante la clase.", "nivel": 2},
-        ],
-    },
-    {
-        "key": "disposicion",
-        "col": 11,
-        "titulo": "9. Ante sus preguntas o sugerencias, ¿el instructor muestra disposición para asegurar que usted haya comprendido el tema?",
-        "opciones": [
-            {"texto": "Siempre; se toma el tiempo necesario y se asegura de que no queden dudas.", "nivel": 5},
-            {"texto": "Casi siempre; responde con claridad la mayoría de las veces.", "nivel": 4},
-            {"texto": "A veces; responde, pero no siempre aclara la duda o parece querer terminar rápido.", "nivel": 3},
-        ],
-    },
-    {
-        "key": "apoyo",
-        "col": 9,
-        "titulo": "10. ¿Cómo califica la calidad y actualidad del material de apoyo / vehículo entregado por el instructor?",
-        "opciones": [
-            {"texto": "Muy alta calidad; información actualizada y herramientas modernas.", "nivel": 5},
-            {"texto": "Buena calidad; cumple con los temas, aunque podría mejorar visualmente.", "nivel": 4},
-            {"texto": "Regular; el material o apoyo necesita actualización o mejora.", "nivel": 3},
-        ],
-    },
+MODALIDADES_EVALUACION: List[Dict[str, str]] = [
+    {"id": "PRACTICA", "label": "🚗 Clase Práctica (Pista / Vía / Vehículo)", "corto": "🚗 Práctica"},
+    {"id": "TEORIA", "label": "📘 Clase Teórica (Salón / Normas)", "corto": "📘 Teoría"},
+    {"id": "TALLER", "label": "🔧 Taller (Mecánica / Práctico)", "corto": "🔧 Taller"},
 ]
+
+# Preguntas adaptadas según lo que dicta el profesor (PRÁCTICA vs TEORÍA / TALLER)
+PREGUNTAS_POR_MODALIDAD: Dict[str, List[Dict[str, Any]]] = {
+    "PRACTICA": [
+        {
+            "key": "trato",
+            "col": 16,
+            "titulo": "1. ¿Cómo calificaría el trato, la paciencia y actitud del instructor en el vehículo?",
+            "opciones": [
+                {"texto": "Excelente: Fue respetuoso, paciente y mantuvo un lenguaje profesional en todo momento.", "nivel": 5},
+                {"texto": "Bueno: Fue respetuoso, aunque en algunos momentos mostró algo de impaciencia.", "nivel": 4},
+                {"texto": "Regular: Su trato fue frío o cortante, lo que me hizo sentir incómodo/a para preguntar.", "nivel": 3},
+            ],
+        },
+        {
+            "key": "tiempo",
+            "col": 17,
+            "titulo": "2. ¿Se cumplió con la totalidad del tiempo programado para tu clase práctica?",
+            "opciones": [
+                {"texto": "Sí, se aprovechó cada minuto de la sesión.", "nivel": 5},
+                {"texto": "Casi todo el tiempo, terminó unos pocos minutos antes.", "nivel": 4},
+                {"texto": "Se perdió una parte considerable de la clase por distracciones o demoras.", "nivel": 2},
+            ],
+        },
+        {
+            "key": "objetivos",
+            "col": 18,
+            "titulo": "3. ¿Siente que se cubrieron las maniobras y objetivos prácticos programados para hoy?",
+            "opciones": [
+                {"texto": "Totalmente, el contenido fue completo y claro.", "nivel": 5},
+                {"texto": "En su mayoría, aunque algún punto quedó superficial.", "nivel": 4},
+                {"texto": "Solo se cubrió la mitad de lo previsto.", "nivel": 3},
+            ],
+        },
+        {
+            "key": "atencion",
+            "col": 19,
+            "titulo": "4. ¿Cuál fue el nivel de atención del instructor hacia tu conducción y la vía?",
+            "opciones": [
+                {"texto": "100% enfocado en mi aprendizaje y en la vía.", "nivel": 5},
+                {"texto": "Enfocado, con distracciones mínimas que no afectaron la clase.", "nivel": 4},
+                {"texto": "Distraído ocasionalmente (miraba el paisaje, hablaba de otros temas).", "nivel": 2},
+            ],
+        },
+        {
+            "key": "celular",
+            "col": 20,
+            "titulo": "5. Sobre el uso del teléfono celular por parte del instructor durante la práctica:",
+            "opciones": [
+                {"texto": "No utilizó el celular en absoluto.", "nivel": 5},
+                {"texto": "Lo usó brevemente para algo estrictamente necesario (mapas o reporte rápido).", "nivel": 4},
+                {"texto": "Lo usó varias veces para asuntos ajenos a la clase (chats, redes sociales, llamadas).", "nivel": 1},
+            ],
+        },
+        {
+            "key": "ensenanza",
+            "col": 5,
+            "titulo": "6. ¿El instructor te dio indicaciones, consejos y correcciones constantes mientras conducías?",
+            "opciones": [
+                {"texto": "Sí, me dio instrucciones, consejos y correcciones durante toda la clase.", "nivel": 5},
+                {"texto": "Me enseñó lo básico, pero hubo momentos de silencio prolongado.", "nivel": 3},
+                {"texto": "Se limitó a acompañarme sin dar ninguna instrucción o retroalimentación.", "nivel": 1},
+            ],
+        },
+        {
+            "key": "claridad",
+            "col": 7,
+            "titulo": "7. ¿El instructor explicó las maniobras (embrague, frenado, parqueo, giros) de forma sencilla y clara?",
+            "opciones": [
+                {"texto": "Excelente; usó ejemplos de la vida real que facilitaron mucho mi comprensión.", "nivel": 5},
+                {"texto": "Bueno; el lenguaje fue claro, aunque en algunos momentos fue demasiado técnico.", "nivel": 4},
+                {"texto": "Regular; sentí que el nivel de la clase era muy avanzado o confuso para mis conocimientos previos.", "nivel": 3},
+            ],
+        },
+        {
+            "key": "metodologia",
+            "col": 22,
+            "titulo": "8. ¿El instructor siguió un orden lógico y seguro para enseñarte las maniobras de hoy?",
+            "opciones": [
+                {"texto": "Excelente; explicó la teoría, me hizo una demostración y luego me acompañó en la práctica.", "nivel": 5},
+                {"texto": "Bueno; el orden fue adecuado y entendí la mayor parte de las instrucciones.", "nivel": 4},
+                {"texto": "Confuso; no sentí que hubiera un método, solo improvisación durante la clase.", "nivel": 2},
+            ],
+        },
+        {
+            "key": "disposicion",
+            "col": 11,
+            "titulo": "9. Ante tus dudas o nervios al conducir, ¿mostró disposición para que ganaras confianza?",
+            "opciones": [
+                {"texto": "Siempre; se toma el tiempo necesario y se asegura de que no queden dudas.", "nivel": 5},
+                {"texto": "Casi siempre; responde con claridad la mayoría de las veces.", "nivel": 4},
+                {"texto": "A veces; responde, pero no siempre aclara la duda o parece querer terminar rápido.", "nivel": 3},
+            ],
+        },
+        {
+            "key": "apoyo",
+            "col": 9,
+            "titulo": "10. ¿Cómo califica el estado, aseo y funcionamiento del vehículo (carro o moto) asignado?",
+            "opciones": [
+                {"texto": "Muy alta calidad; vehículo en excelente estado, limpio y seguro.", "nivel": 5},
+                {"texto": "Buena calidad; cumple adecuadamente, aunque podría mejorar algún detalle.", "nivel": 4},
+                {"texto": "Regular; el vehículo o equipo necesita mantenimiento o mejora.", "nivel": 3},
+            ],
+        },
+    ],
+    "TEORIA": [
+        {
+            "key": "trato",
+            "col": 16,
+            "titulo": "1. ¿Cómo calificaría el trato y la actitud del profesor durante la clase teórica?",
+            "opciones": [
+                {"texto": "Excelente: Fue respetuoso, paciente y mantuvo un lenguaje profesional en todo momento.", "nivel": 5},
+                {"texto": "Bueno: Fue respetuoso, aunque en algunos momentos mostró algo de impaciencia.", "nivel": 4},
+                {"texto": "Regular: Su trato fue frío o cortante, lo que me hizo sentir incómodo/a para preguntar.", "nivel": 3},
+            ],
+        },
+        {
+            "key": "tiempo",
+            "col": 17,
+            "titulo": "2. ¿Se cumplió con la totalidad del tiempo programado para la clase teórica?",
+            "opciones": [
+                {"texto": "Sí, se aprovechó cada minuto de la sesión.", "nivel": 5},
+                {"texto": "Casi todo el tiempo, terminó unos pocos minutos antes.", "nivel": 4},
+                {"texto": "Se perdió una parte considerable de la clase por distracciones o demoras.", "nivel": 2},
+            ],
+        },
+        {
+            "key": "objetivos",
+            "col": 18,
+            "titulo": "3. ¿Siente que se cubrieron todos los temas y objetivos teóricos programados para hoy?",
+            "opciones": [
+                {"texto": "Totalmente, el contenido fue completo y claro.", "nivel": 5},
+                {"texto": "En su mayoría, aunque algún punto quedó superficial.", "nivel": 4},
+                {"texto": "Solo se cubrió la mitad de lo previsto.", "nivel": 3},
+            ],
+        },
+        {
+            "key": "atencion",
+            "col": 19,
+            "titulo": "4. ¿Cuál fue el nivel de atención y compromiso del profesor con el grupo durante la clase?",
+            "opciones": [
+                {"texto": "100% enfocado en mi aprendizaje y en la vía.", "nivel": 5},
+                {"texto": "Enfocado, con distracciones mínimas que no afectaron la clase.", "nivel": 4},
+                {"texto": "Distraído ocasionalmente (miraba el paisaje, hablaba de otros temas).", "nivel": 2},
+            ],
+        },
+        {
+            "key": "celular",
+            "col": 20,
+            "titulo": "5. Sobre el uso del teléfono celular por parte del profesor en el salón:",
+            "opciones": [
+                {"texto": "No utilizó el celular en absoluto.", "nivel": 5},
+                {"texto": "Lo usó brevemente para algo estrictamente necesario (mapas o reporte rápido).", "nivel": 4},
+                {"texto": "Lo usó varias veces para asuntos ajenos a la clase (chats, redes sociales, llamadas).", "nivel": 1},
+            ],
+        },
+        {
+            "key": "ensenanza",
+            "col": 5,
+            "titulo": "6. ¿El profesor mantuvo una actitud de enseñanza activa y participativa durante toda la clase?",
+            "opciones": [
+                {"texto": "Sí, me dio instrucciones, consejos y correcciones durante toda la clase.", "nivel": 5},
+                {"texto": "Me enseñó lo básico, pero hubo momentos de silencio prolongado.", "nivel": 3},
+                {"texto": "Se limitó a acompañarme sin dar ninguna instrucción o retroalimentación.", "nivel": 1},
+            ],
+        },
+        {
+            "key": "claridad",
+            "col": 7,
+            "titulo": "7. ¿El profesor explicó las normas, señales y temas complejos de forma sencilla y clara?",
+            "opciones": [
+                {"texto": "Excelente; usó ejemplos de la vida real que facilitaron mucho mi comprensión.", "nivel": 5},
+                {"texto": "Bueno; el lenguaje fue claro, aunque en algunos momentos fue demasiado técnico.", "nivel": 4},
+                {"texto": "Regular; sentí que el nivel de la clase era muy avanzado o confuso para mis conocimientos previos.", "nivel": 3},
+            ],
+        },
+        {
+            "key": "metodologia",
+            "col": 22,
+            "titulo": "8. ¿El profesor siguió un orden lógico y claro para explicar los temas teóricos de hoy?",
+            "opciones": [
+                {"texto": "Excelente; explicó la teoría, me hizo una demostración y luego me acompañó en la práctica.", "nivel": 5},
+                {"texto": "Bueno; el orden fue adecuado y entendí la mayor parte de las instrucciones.", "nivel": 4},
+                {"texto": "Confuso; no sentí que hubiera un método, solo improvisación durante la clase.", "nivel": 2},
+            ],
+        },
+        {
+            "key": "disposicion",
+            "col": 11,
+            "titulo": "9. Ante tus preguntas o sugerencias, ¿el profesor mostró disposición para asegurar que comprendieras?",
+            "opciones": [
+                {"texto": "Siempre; se toma el tiempo necesario y se asegura de que no queden dudas.", "nivel": 5},
+                {"texto": "Casi siempre; responde con claridad la mayoría de las veces.", "nivel": 4},
+                {"texto": "A veces; responde, pero no siempre aclara la duda o parece querer terminar rápido.", "nivel": 3},
+            ],
+        },
+        {
+            "key": "apoyo",
+            "col": 9,
+            "titulo": "10. ¿Cómo califica la calidad y actualidad de las diapositivas y material de apoyo del salón?",
+            "opciones": [
+                {"texto": "Muy alta calidad; información actualizada y herramientas modernas.", "nivel": 5},
+                {"texto": "Buena calidad; cumple con los temas, aunque podría mejorar visualmente.", "nivel": 4},
+                {"texto": "Regular; el material o apoyo necesita actualización o mejora.", "nivel": 3},
+            ],
+        },
+    ],
+}
+PREGUNTAS_POR_MODALIDAD["TALLER"] = [
+    {**p, "titulo": p["titulo"].replace("clase teórica", "taller").replace("temas teóricos", "temas del taller").replace("diapositivas y material de apoyo del salón", "equipos, herramientas y material práctico del taller")}
+    for p in PREGUNTAS_POR_MODALIDAD["TEORIA"]
+]
+
+# Alias de compatibilidad
+PREGUNTAS_EVALUACION_FORM: List[Dict[str, Any]] = PREGUNTAS_POR_MODALIDAD["PRACTICA"]
 HEADERS_OBSERVACIONES = [
     "ID_Obs",
     "Timestamp",
@@ -560,25 +677,37 @@ class EvaluacionPedagogicaService:
         return extra
 
     def obtener_config_formulario_publico(self) -> Dict[str, Any]:
-        """Devuelve en tiempo real la lista de instructores ACTIVOS y las 10 preguntas oficiales para /evaluar."""
+        """Devuelve en tiempo real los instructores ACTIVOS, modalidades y preguntas adaptadas para /evaluar."""
         eval_data = self.obtener_evaluaciones_docentes(forzar=False)
-        _, instructores_activos = self._construir_directorio_instructores(eval_data, forzar=False)
+        directorio, instructores_activos = self._construir_directorio_instructores(eval_data, forzar=False)
+        activos_detalle = [
+            {"nombre": d["instructor"], "tipo": d.get("tipo", "PRÁCTICO / TEÓRICO")}
+            for d in directorio
+            if d["estado"] == "ACTIVO"
+        ]
+        activos_detalle.sort(key=lambda x: x["nombre"])
         return {
             "ok": True,
             "instructores_activos": instructores_activos,
-            "preguntas": PREGUNTAS_EVALUACION_FORM,
+            "instructores_activos_detalle": activos_detalle,
+            "modalidades": MODALIDADES_EVALUACION,
+            "preguntas_por_modalidad": PREGUNTAS_POR_MODALIDAD,
+            "preguntas": PREGUNTAS_POR_MODALIDAD["PRACTICA"],
             "texto_habeas_data": TEXTO_HABEAS_DATA,
         }
 
     def registrar_evaluacion_web(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
         Registra una evaluación enviada por un alumno desde el enlace público /evaluar.
-        Escribe exactamente con la estructura de columnas de 'Evaluación docente teórico (respuestas)'.
-        Si la hoja compartida solo tiene permisos de lectura, guarda automáticamente en 'Evaluacion_Docente_Web'
-        y respaldo local JSON para no perder ninguna evaluación.
+        Guarda la modalidad exacta (PRACTICA / TEORIA / TALLER) en la Columna AE (índice 30)
+        respetando intactas las 30 columnas originales de 'Evaluación docente teórico (respuestas)'.
         """
         alumno = str(payload.get("nombre_alumno", "")).strip()
         prof_in = str(payload.get("nombre_profesor", "")).strip()
+        mod_in = str(payload.get("modalidad", "PRACTICA")).strip().upper()
+        if mod_in not in ("PRACTICA", "TEORIA", "TALLER"):
+            mod_in = "PRACTICA"
+
         if not alumno or len(alumno) < 3:
             return {"ok": False, "message": "Por favor escribe tu nombre completo."}
         if not prof_in:
@@ -599,17 +728,19 @@ class EvaluacionPedagogicaService:
         fecha_str = ahora.strftime("%d/%m/%Y")
         comentario = str(payload.get("comentario", "")).strip()
 
-        fila = [""] * 23
+        fila = [""] * 31
         fila[0] = ts_str
         fila[2] = fecha_str
         fila[3] = alumno
         fila[4] = prof_canon
         fila[14] = "Sí"
         fila[15] = comentario
+        fila[30] = mod_in  # Columna AE: Modalidad_Clase (PRACTICA / TEORIA / TALLER)
 
+        preguntas_mod = PREGUNTAS_POR_MODALIDAD.get(mod_in, PREGUNTAS_EVALUACION_FORM)
         puntajes: List[float] = []
         faltantes = 0
-        for preg in PREGUNTAS_EVALUACION_FORM:
+        for preg in preguntas_mod:
             val_txt = str(respuestas_in.get(preg["key"], "")).strip()
             if not val_txt:
                 faltantes += 1
@@ -676,13 +807,15 @@ class EvaluacionPedagogicaService:
             except Exception:
                 pass
 
+        mod_lbl = {"PRACTICA": "Práctica", "TEORIA": "Teoría", "TALLER": "Taller"}.get(mod_in, mod_in)
         return {
             "ok": True,
             "promedio": promedio,
+            "modalidad": mod_in,
             "instructor": prof_canon,
             "alumno": alumno,
             "destino": destino,
-            "message": f"¡Gracias {alumno}! Tu calificación (⭐ {promedio:.2f}/5) para {prof_canon} fue registrada correctamente.",
+            "message": f"¡Gracias {alumno}! Tu calificación de clase {mod_lbl} (⭐ {promedio:.2f}/5) para {prof_canon} fue registrada correctamente.",
         }
 
     def obtener_evaluaciones_docentes(self, forzar: bool = False) -> Dict[str, Any]:
@@ -748,6 +881,8 @@ class EvaluacionPedagogicaService:
             fecha_iso = _parsear_fecha_eval(fecha_raw, ts_raw)
             comentario = str(r[15]).strip() if len(r) > 15 else ""
             habeas = str(r[14]).strip() if len(r) > 14 else ""
+            mod_raw = str(r[30]).strip().upper() if len(r) > 30 else ""
+            modalidad = mod_raw if mod_raw in ("PRACTICA", "TEORIA", "TALLER") else "TEORIA"
 
             puntajes_crit: Dict[str, float] = {}
             alertas_detalle: List[str] = []
@@ -777,6 +912,7 @@ class EvaluacionPedagogicaService:
                 "alumno": alumno or "Anónimo",
                 "instructor": prof,
                 "instructor_raw": prof_raw,
+                "modalidad": modalidad,
                 "promedio": promedio_resp,
                 "criterios": puntajes_crit,
                 "comentario": comentario if _es_comentario_mejora_real(comentario) else "",
@@ -797,6 +933,7 @@ class EvaluacionPedagogicaService:
                     "ultima_fecha": "",
                     "crit_sum": {},
                     "crit_cnt": {},
+                    "por_mod": {},
                 })
                 agg["total"] += 1
                 agg["suma_prom"] += promedio_resp
@@ -810,6 +947,27 @@ class EvaluacionPedagogicaService:
                     agg["crit_sum"][ck] = agg["crit_sum"].get(ck, 0.0) + cv
                     agg["crit_cnt"][ck] = agg["crit_cnt"].get(ck, 0) + 1
 
+                m_agg = agg["por_mod"].setdefault(modalidad, {
+                    "total": 0,
+                    "suma_prom": 0.0,
+                    "excelentes": 0,
+                    "alertas": 0,
+                    "ultima_fecha": "",
+                    "crit_sum": {},
+                    "crit_cnt": {},
+                })
+                m_agg["total"] += 1
+                m_agg["suma_prom"] += promedio_resp
+                if promedio_resp >= 4.5:
+                    m_agg["excelentes"] += 1
+                if tiene_alerta:
+                    m_agg["alertas"] += 1
+                if fecha_iso and fecha_iso > m_agg["ultima_fecha"]:
+                    m_agg["ultima_fecha"] = fecha_iso
+                for ck, cv in puntajes_crit.items():
+                    m_agg["crit_sum"][ck] = m_agg["crit_sum"].get(ck, 0.0) + cv
+                    m_agg["crit_cnt"][ck] = m_agg["crit_cnt"].get(ck, 0) + 1
+
         ranking: List[Dict[str, Any]] = []
         for prof, agg in por_prof.items():
             tot = max(1, agg["total"])
@@ -818,6 +976,20 @@ class EvaluacionPedagogicaService:
                 ck: round(agg["crit_sum"][ck] / max(1, agg["crit_cnt"][ck]), 2)
                 for ck in agg["crit_sum"]
             }
+            por_mod_out: Dict[str, Dict[str, Any]] = {}
+            for m_key, m_a in agg["por_mod"].items():
+                mt = max(1, m_a["total"])
+                por_mod_out[m_key] = {
+                    "total_evaluaciones": m_a["total"],
+                    "promedio": round(m_a["suma_prom"] / mt, 2),
+                    "pct_excelencia": int(round((m_a["excelentes"] / mt) * 100)),
+                    "alertas": m_a["alertas"],
+                    "ultima_fecha": m_a["ultima_fecha"],
+                    "criterios": {
+                        ck: round(m_a["crit_sum"][ck] / max(1, m_a["crit_cnt"][ck]), 2)
+                        for ck in m_a["crit_sum"]
+                    },
+                }
             ranking.append({
                 "instructor": prof,
                 "total_evaluaciones": agg["total"],
@@ -826,6 +998,7 @@ class EvaluacionPedagogicaService:
                 "alertas": agg["alertas"],
                 "ultima_fecha": agg["ultima_fecha"],
                 "criterios": desglose,
+                "por_modalidad": por_mod_out,
             })
 
         ranking.sort(key=lambda x: (0 if x["total_evaluaciones"] >= 5 else 1, -x["promedio"], -x["total_evaluaciones"], x["instructor"]))
